@@ -187,6 +187,7 @@ export default function AgentPanel({
               cwd={cwd}
               sessionId={sessionId}
               streaming={streaming}
+              isCreating={isCreating}
               send={(instruction, browserRefs) => {
                 send(instruction, { browserRefs });
               }}

@@ -1,6 +1,12 @@
 import { ImagePlus, X } from 'lucide-react';
 import { useRef } from 'react';
-import type { Answer } from './designBrief';
+import { toast } from '../../lib/toast';
+import {
+  isSupportedBriefImage,
+  MAX_BRIEF_IMAGE_BYTES,
+  SUPPORTED_BRIEF_IMAGE_TYPES,
+  type Answer,
+} from './designBrief';
 import type { InterviewQuestion } from './interviewQuestions';
 
 /** One interview question: pick options, write freely, and (where allowed) paste
@@ -29,9 +35,25 @@ export default function InterviewQuestionCard({
   };
 
   const addImages = async (files: FileList | File[]) => {
-    const imgs = Array.from(files).filter((f) => f.type.startsWith('image/'));
+    const available = Math.max(0, 8 - answer.images.length);
+    const candidates = Array.from(files);
+    const imgs = candidates
+      .filter(
+        (file) =>
+          SUPPORTED_BRIEF_IMAGE_TYPES.has(file.type) &&
+          file.size > 0 &&
+          file.size <= MAX_BRIEF_IMAGE_BYTES,
+      )
+      .slice(0, available);
+    if (imgs.length !== candidates.length) {
+      toast.error('References must be PNG, JPEG, WebP, or GIF images up to 20 MB.');
+    }
     const urls = await Promise.all(imgs.map(readAsDataUrl));
-    onChange({ ...answer, images: [...answer.images, ...urls].slice(0, 8) });
+    const supported = urls.filter((url) => isSupportedBriefImage(url));
+    if (supported.length !== imgs.length) {
+      toast.error('References must be PNG, JPEG, WebP, or GIF images up to 20 MB.');
+    }
+    onChange({ ...answer, images: [...answer.images, ...supported] });
   };
 
   return (

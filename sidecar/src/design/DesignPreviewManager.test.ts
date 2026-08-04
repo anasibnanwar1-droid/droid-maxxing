@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -110,6 +110,26 @@ test('workspace previews in one directory keep independent registrations', async
   assert.notEqual(first.url, second.url);
   assert.match(await (await fetch(first.url)).text(), /Variant A/);
   assert.match(await (await fetch(second.url)).text(), /Variant B/);
+});
+
+test('workspace previews reject HTML reached through a symlink outside the project', async (t) => {
+  const cwd = mkdtempSync(join(tmpdir(), 'droidex-preview-confined-'));
+  const outside = mkdtempSync(join(tmpdir(), 'droidex-preview-escape-'));
+  writeFileSync(join(outside, 'secret.html'), '<h1>Outside</h1>', 'utf8');
+  symlinkSync(join(outside, 'secret.html'), join(cwd, 'linked.html'));
+  const server = new PreviewServer();
+  t.after(async () => {
+    await server.close();
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  });
+
+  const rendered = await new DesignPreviewManager(() => undefined, server).render({
+    cwd,
+    path: 'linked.html',
+  });
+
+  assert.deepEqual(rendered, { ok: false, error: 'That path is outside the workspace.' });
 });
 
 test('library images resolve to stable confined HTTP assets without exposing file paths', async (t) => {

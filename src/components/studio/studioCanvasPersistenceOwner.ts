@@ -133,8 +133,9 @@ export class StudioCanvasPersistenceOwner {
     if (!serialize) return;
     const serialized = serialize();
     this.callbacks?.onSerialize?.(serialized.notices);
-    if (JSON.stringify(serialized.content) === this.ignoredHydrationContent) {
-      this.ignoredHydrationContent = null;
+    const ignoredHydrationContent = this.ignoredHydrationContent;
+    this.ignoredHydrationContent = null;
+    if (JSON.stringify(serialized.content) === ignoredHydrationContent) {
       return;
     }
     this.coordinator.update(serialized.content);

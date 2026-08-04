@@ -108,6 +108,7 @@ export async function openNativeBrowser(
   url: string,
   bounds?: NativeBrowserBounds,
   viewport?: { width: number; height: number; deviceScaleFactor: number },
+  contentZoom?: number,
 ): Promise<void> {
   if (!isDesktop()) return;
   await desktopBridge().nativeBrowserOpen(
@@ -115,6 +116,7 @@ export async function openNativeBrowser(
     url,
     bounds ? normalizeBounds(bounds) : undefined,
     viewport,
+    contentZoom,
   );
 }
 

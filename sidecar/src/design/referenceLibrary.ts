@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { DesignReference } from '../browser/types.js';
 import { referenceImageDir, referenceLibraryFile } from './designPaths.js';
@@ -6,6 +7,7 @@ import type { DesignLibraryItem } from './types.js';
 
 const MAX_ITEMS = 200;
 const MAX_IMPORTED_IMAGE_BYTES = 20 * 1024 * 1024;
+const MAX_IMPORTED_IMAGE_BASE64_LENGTH = 4 * Math.ceil(MAX_IMPORTED_IMAGE_BYTES / 3);
 const IMPORTED_IMAGE_TYPES = {
   'image/png': '.png',
   'image/jpeg': '.jpg',
@@ -127,6 +129,24 @@ export function getLibraryItem(
   return listLibraryItems(cwd, baseDir).find((item) => item.id === id);
 }
 
+export async function resolveReferenceImagePath(
+  cwd: string,
+  screenshotPath: string,
+  baseDir?: string,
+): Promise<string | undefined> {
+  try {
+    const [root, candidate] = await Promise.all([
+      realpath(referenceImageDir(cwd, baseDir)),
+      realpath(screenshotPath),
+    ]);
+    const info = await stat(candidate);
+    if (!info.isFile() || !isWithin(root, candidate)) return undefined;
+    return candidate;
+  } catch {
+    return undefined;
+  }
+}
+
 function writeItems(cwd: string, items: DesignLibraryItem[], baseDir?: string): void {
   const file = referenceLibraryFile(cwd, baseDir);
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -163,28 +183,64 @@ function persistScreenshot(
   const base64 = reference.screenshot?.base64;
   if (base64) {
     try {
+      if (
+        base64.length > MAX_IMPORTED_IMAGE_BASE64_LENGTH ||
+        base64.length % 4 !== 0 ||
+        !/^[A-Za-z0-9+/]+={0,2}$/.test(base64)
+      ) {
+        return undefined;
+      }
+      const bytes = Buffer.from(base64, 'base64');
+      if (bytes.length === 0 || bytes.length > MAX_IMPORTED_IMAGE_BYTES) return undefined;
       const dir = referenceImageDir(cwd, baseDir);
       fs.mkdirSync(dir, { recursive: true });
       const file = path.join(dir, `${id}.png`);
-      fs.writeFileSync(file, Buffer.from(base64, 'base64'));
+      fs.writeFileSync(file, bytes);
       return file;
     } catch {
       return undefined;
     }
   }
-  if (reference.anchor.screenshotPath && fs.existsSync(reference.anchor.screenshotPath)) {
+  if (reference.anchor.screenshotPath) {
     try {
+      const bytes = readBoundedImage(reference.anchor.screenshotPath);
+      if (!bytes) return undefined;
       const dir = referenceImageDir(cwd, baseDir);
       fs.mkdirSync(dir, { recursive: true });
       const file = path.join(
         dir,
         `${id}${path.extname(reference.anchor.screenshotPath) || '.png'}`,
       );
-      fs.copyFileSync(reference.anchor.screenshotPath, file);
+      fs.writeFileSync(file, bytes);
       return file;
     } catch {
       return undefined;
     }
   }
   return undefined;
+}
+
+function readBoundedImage(file: string): Buffer | undefined {
+  let descriptor: number | undefined;
+  try {
+    descriptor = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const info = fs.fstatSync(descriptor);
+    if (!info.isFile() || info.size === 0 || info.size > MAX_IMPORTED_IMAGE_BYTES) return undefined;
+    const bytes = Buffer.allocUnsafe(info.size);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const read = fs.readSync(descriptor, bytes, offset, bytes.length - offset, offset);
+      if (read === 0) return undefined;
+      offset += read;
+    }
+    return bytes;
+  } catch {
+    return undefined;
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+  }
+}
+
+function isWithin(root: string, candidate: string): boolean {
+  return candidate === root || candidate.startsWith(`${root}${path.sep}`);
 }

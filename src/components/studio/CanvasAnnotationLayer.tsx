@@ -70,6 +70,7 @@ const AnnotationShape = memo(function AnnotationShape({
   if (annotation.kind === 'pencil') {
     return (
       <polyline
+        pointerEvents="visibleStroke"
         points={points.map((point) => `${String(point.x)},${String(point.y)}`).join(' ')}
         fill="none"
         stroke={color}
@@ -102,6 +103,7 @@ const AnnotationShape = memo(function AnnotationShape({
     };
     return annotation.kind === 'ellipse' ? (
       <ellipse
+        pointerEvents="visiblePainted"
         cx={rect.x + rect.width / 2}
         cy={rect.y + rect.height / 2}
         rx={rect.width / 2}
@@ -110,6 +112,7 @@ const AnnotationShape = memo(function AnnotationShape({
       />
     ) : (
       <rect
+        pointerEvents="visiblePainted"
         x={rect.x}
         y={rect.y}
         width={rect.width}
@@ -121,7 +124,7 @@ const AnnotationShape = memo(function AnnotationShape({
   }
 
   return (
-    <g opacity={opacity}>
+    <g opacity={opacity} pointerEvents="visibleStroke">
       <line
         x1={start.x}
         y1={start.y}
@@ -173,7 +176,7 @@ function SelectionHandles({
   if (!bounds) return null;
   const handles = annotationHandlesFromGeometry(annotation, geometry);
   return (
-    <g>
+    <g pointerEvents="all">
       <rect
         x={bounds.x - 5}
         y={bounds.y - 5}

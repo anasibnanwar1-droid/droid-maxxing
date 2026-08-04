@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { resolveMotionPreview, resolveMotionTargets, resolveReducedMotion } from './MotionPreview';
+import {
+  resolveMotionColors,
+  resolveMotionPreview,
+  resolveMotionTargets,
+  resolveReducedMotion,
+} from './MotionPreview';
 
 test('motion preview uses the project duration, easing, and press scale', () => {
   assert.deepEqual(
@@ -16,6 +21,17 @@ test('motion preview uses the project duration, easing, and press scale', () => 
       ease: [0.16, 1, 0.3, 1],
       easingLabel: 'cubic-bezier(0.16, 1, 0.3, 1)',
       pressScale: 0.97,
+    },
+  );
+});
+
+test('motion preview respects preferred semantic color order over palette insertion order', () => {
+  assert.deepEqual(
+    resolveMotionColors({ primaryText: '#111111', primary: '#2255ff', accent: '#ff5500' }),
+    {
+      accent: '#ff5500',
+      surface: 'var(--droid-surface)',
+      text: '#111111',
     },
   );
 });

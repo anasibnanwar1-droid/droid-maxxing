@@ -67,6 +67,37 @@ test('listeners registered together on a ready socket bootstrap in order', async
   }
 });
 
+test('a listener registered during initial bootstrap runs exactly once', async () => {
+  const oldWindow = globalThis.window;
+  const OldWebSocket = globalThis.WebSocket;
+  FakeWebSocket.instances = [];
+  try {
+    Object.assign(globalThis, {
+      window: {
+        droidControl: {
+          bridgeInfo: async () => ({ port: 43130, token: 'bootstrap-listener-token' }),
+        },
+      },
+      WebSocket: FakeWebSocket,
+    });
+    const bridge = new Bridge();
+    bridge.subscribeOpen(() => [{ type: 'connect', apiKey: 'first' }]);
+    await bridge.start();
+    const socket = FakeWebSocket.instances[0];
+    assert.ok(socket);
+    socket.open();
+    bridge.subscribeOpen(() => [{ type: 'sessions.list', includePlainChats: true }]);
+    await nextTask();
+
+    assert.deepEqual(socket.sent.map(parseCommand), [
+      { type: 'connect', apiKey: 'first' },
+      { type: 'sessions.list', includePlainChats: true },
+    ]);
+  } finally {
+    Object.assign(globalThis, { window: oldWindow, WebSocket: OldWebSocket });
+  }
+});
+
 test('reconnect handshakes run before commands queued while disconnected', async () => {
   const oldWindow = globalThis.window;
   const OldWebSocket = globalThis.WebSocket;
@@ -152,6 +183,43 @@ test('native reset replay waits for the next bridge-ready socket', async () => {
 
     assert.deepEqual(second.sent.map(parseCommand), [
       { type: 'connect', apiKey: 'reconnect-key' },
+      {
+        type: 'browser.open',
+        appSessionId: 'browser-session',
+        url: 'http://127.0.0.1:3000',
+      },
+    ]);
+  } finally {
+    Object.assign(globalThis, { window: oldWindow, WebSocket: OldWebSocket });
+  }
+});
+
+test('next-open replay queued on a connecting socket runs when that socket opens', async () => {
+  const oldWindow = globalThis.window;
+  const OldWebSocket = globalThis.WebSocket;
+  FakeWebSocket.instances = [];
+  try {
+    Object.assign(globalThis, {
+      window: {
+        droidControl: {
+          bridgeInfo: async () => ({ port: 43131, token: 'connecting-replay-token' }),
+        },
+      },
+      WebSocket: FakeWebSocket,
+    });
+    const bridge = new Bridge();
+    await bridge.start();
+    const socket = FakeWebSocket.instances[0];
+    assert.ok(socket);
+    bridge.sendOnNextOpen({
+      type: 'browser.open',
+      appSessionId: 'browser-session',
+      url: 'http://127.0.0.1:3000',
+    });
+    socket.open();
+    await nextTask();
+
+    assert.deepEqual(socket.sent.map(parseCommand), [
       {
         type: 'browser.open',
         appSessionId: 'browser-session',

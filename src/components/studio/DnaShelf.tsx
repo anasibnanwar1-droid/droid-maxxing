@@ -24,7 +24,12 @@ import { useStudioCanvas } from './StudioCanvasContext';
 import { FontLine, Header, Swatches } from './DnaPrimitives';
 import DnaDraftProposal from './DnaDraftProposal';
 import DnaInterview from './DnaInterview';
-import { authoringInstruction, briefImageReferences, toBriefMarkdown } from './designBrief';
+import {
+  authoringInstruction,
+  briefImageReferences,
+  briefWithSupportedImages,
+  toBriefMarkdown,
+} from './designBrief';
 import { recordSessionStreamingState } from './dnaRefresh';
 import MotionPreview from './MotionPreview';
 
@@ -37,11 +42,13 @@ export default function DnaShelf({
   cwd,
   sessionId,
   streaming,
+  isCreating,
   send,
 }: {
   cwd: string;
   sessionId: string | null;
   streaming: boolean;
+  isCreating: boolean;
   send: (instruction: string, browserRefs?: BrowserTranscriptReference[]) => void;
 }) {
   const { design } = useDesignStore();
@@ -149,7 +156,8 @@ export default function DnaShelf({
               setInterview(false);
             }}
             onComplete={(brief, directions) => {
-              const references = briefImageReferences(brief, () => crypto.randomUUID());
+              const supportedBrief = briefWithSupportedImages(brief);
+              const references = briefImageReferences(supportedBrief, () => crypto.randomUUID());
               references.forEach((reference) => {
                 importDesignLibraryImage({
                   cwd,
@@ -164,7 +172,7 @@ export default function DnaShelf({
               // Agent tab so the user watches it work. With directions > 1 the
               // agent renders that many live specimens on the canvas and waits
               // for the user's pick before committing the DNA.
-              writeDesignDna(cwd, 'design', toBriefMarkdown(brief));
+              writeDesignDna(cwd, 'design', toBriefMarkdown(supportedBrief));
               send(
                 authoringInstruction(
                   directions,
@@ -175,6 +183,7 @@ export default function DnaShelf({
               studioDispatch({ type: 'SET_LEFT_TAB', tab: 'agent' });
               setInterview(false);
             }}
+            completionDisabled={isCreating}
           />
         )}
         {hasCurrent ? (

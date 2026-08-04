@@ -1,4 +1,4 @@
-import { WebSocketServer, type WebSocket } from 'ws';
+import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -12,6 +12,12 @@ const ALLOW_LOCAL_NO_TOKEN = process.env.BRIDGE_ALLOW_LOCAL_NO_TOKEN === '1';
 const EXIT_ON_STDIN_CLOSE = process.env.BRIDGE_EXIT_ON_STDIN_CLOSE !== '0';
 const HOST = '127.0.0.1';
 
+if (!TOKEN && !ALLOW_LOCAL_NO_TOKEN) {
+  throw new Error(
+    'BRIDGE_TOKEN is required. Set BRIDGE_ALLOW_LOCAL_NO_TOKEN=1 only for an explicitly trusted local fixture.',
+  );
+}
+
 const clients = new Set<WebSocket>();
 
 function broadcast(event: ServerEvent): void {
@@ -22,7 +28,7 @@ function broadcast(event: ServerEvent): void {
 }
 
 function browserAssetUrl(filePath: string): string {
-  const url = new URL(`http://${HOST}:${PORT}/browser-assets`);
+  const url = new URL(`http://${HOST}:${String(PORT)}/browser-assets`);
   url.searchParams.set('path', filePath);
   if (TOKEN) url.searchParams.set('token', TOKEN);
   return url.toString();
@@ -40,7 +46,7 @@ let shuttingDown = false;
 
 server.listen(PORT, HOST, () => {
   // Stdout line consumed by the desktop supervisor to confirm readiness.
-  process.stdout.write(`SIDECAR_READY ${PORT}\n`);
+  process.stdout.write(`SIDECAR_READY ${String(PORT)}\n`);
 });
 
 wss.on('connection', (ws, req) => {
@@ -53,34 +59,44 @@ wss.on('connection', (ws, req) => {
   }
   clients.add(ws);
 
-  ws.on('message', async (raw) => {
-    let cmd: ClientCommand;
-    try {
-      cmd = JSON.parse(raw.toString()) as ClientCommand;
-    } catch {
-      ws.send(
-        JSON.stringify({
-          type: 'error',
-          message: 'Invalid JSON command',
-        } satisfies ServerEvent),
-      );
-      return;
-    }
-    try {
-      await manager.handle(cmd);
-    } catch (err) {
-      ws.send(
-        JSON.stringify({
-          type: 'error',
-          message: err instanceof Error ? err.message : String(err),
-        } satisfies ServerEvent),
-      );
-    }
+  ws.on('message', (raw) => {
+    void handleCommand(ws, raw);
   });
 
   ws.on('close', () => clients.delete(ws));
   ws.on('error', () => clients.delete(ws));
 });
+
+async function handleCommand(ws: WebSocket, raw: RawData): Promise<void> {
+  let cmd: ClientCommand;
+  try {
+    cmd = JSON.parse(decodeMessage(raw)) as ClientCommand;
+  } catch {
+    ws.send(
+      JSON.stringify({
+        type: 'error',
+        message: 'Invalid JSON command',
+      } satisfies ServerEvent),
+    );
+    return;
+  }
+  try {
+    await manager.handle(cmd);
+  } catch (err) {
+    ws.send(
+      JSON.stringify({
+        type: 'error',
+        message: err instanceof Error ? err.message : String(err),
+      } satisfies ServerEvent),
+    );
+  }
+}
+
+function decodeMessage(raw: RawData): string {
+  if (Array.isArray(raw)) return Buffer.concat(raw).toString('utf8');
+  if (raw instanceof ArrayBuffer) return Buffer.from(raw).toString('utf8');
+  return raw.toString('utf8');
+}
 
 async function shutdown(): Promise<void> {
   if (shuttingDown) return;
@@ -100,7 +116,7 @@ async function shutdown(): Promise<void> {
 }
 
 function serveBrowserAsset(req: IncomingMessage, res: ServerResponse): boolean {
-  const url = new URL(req.url ?? '/', `http://${HOST}:${PORT}`);
+  const url = new URL(req.url ?? '/', `http://${HOST}:${String(PORT)}`);
   if (url.pathname !== '/browser-assets') return false;
   if (TOKEN && !ALLOW_LOCAL_NO_TOKEN && url.searchParams.get('token') !== TOKEN) {
     res.writeHead(401).end('unauthorized');
@@ -131,10 +147,18 @@ function contentType(filePath: string): string {
   return 'application/octet-stream';
 }
 
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+process.on('SIGINT', () => {
+  void shutdown();
+});
+process.on('SIGTERM', () => {
+  void shutdown();
+});
 if (EXIT_ON_STDIN_CLOSE) {
   process.stdin.resume();
-  process.stdin.once('end', shutdown);
-  process.stdin.once('close', shutdown);
+  process.stdin.once('end', () => {
+    void shutdown();
+  });
+  process.stdin.once('close', () => {
+    void shutdown();
+  });
 }

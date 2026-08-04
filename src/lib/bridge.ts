@@ -87,9 +87,10 @@ export class Bridge {
       this.flushQueue(ws);
       return;
     }
+    const openListeners = [...this.openListeners];
     this.enqueueBootstrap(ws, async () => {
       const handshakes = await Promise.all(
-        [...this.openListeners].map((listener) => Promise.resolve().then(listener)),
+        openListeners.map((listener) => Promise.resolve().then(listener)),
       );
       return handshakes.flat();
     });
@@ -123,7 +124,9 @@ export class Bridge {
   }
 
   sendOnNextOpen(cmd: ClientCommand): void {
-    this.nextOpenQueue.push({ command: cmd, excludedSocket: this.ws });
+    const ws = this.ws;
+    const excludedSocket = ws?.readyState === WebSocket.OPEN ? ws : null;
+    this.nextOpenQueue.push({ command: cmd, excludedSocket });
   }
 
   subscribe(l: Listener): () => void {

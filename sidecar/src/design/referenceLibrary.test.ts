@@ -4,7 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { referenceLibraryFile } from './designPaths.js';
-import { deleteLibraryItem, importReferenceImage, listLibraryItems } from './referenceLibrary.js';
+import {
+  deleteLibraryItem,
+  importReferenceImage,
+  listLibraryItems,
+  saveReference,
+} from './referenceLibrary.js';
 
 test('importReferenceImage preserves original bytes and canvas metadata', () => {
   const baseDir = mkdtempSync(join(tmpdir(), 'droidex-canvas-image-'));
@@ -108,4 +113,34 @@ test('importReferenceImage rejects untrusted ids and image formats', () => {
       }),
     /PNG, JPEG, WebP, or GIF/,
   );
+});
+
+test('saveReference refuses browser screenshots larger than 20 MB', () => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'droidex-browser-reference-limit-'));
+  const cwd = join(baseDir, 'product');
+  mkdirSync(cwd);
+
+  const [item] = saveReference({
+    cwd,
+    baseDir,
+    reference: {
+      id: 'ref-large',
+      anchor: {
+        id: 'ref-large',
+        kind: 'element',
+        label: 'Large screenshot',
+        box: { x: 0, y: 0, width: 10, height: 10 },
+      },
+      url: 'https://example.com',
+      viewport: { width: 100, height: 100, deviceScaleFactor: 1 },
+      scroll: { x: 0, y: 0 },
+      screenshot: {
+        base64: Buffer.alloc(20 * 1024 * 1024 + 1).toString('base64'),
+        box: { x: 0, y: 0, width: 10, height: 10 },
+      },
+      createdAt: new Date().toISOString(),
+    },
+  });
+
+  assert.equal(item.screenshotPath, undefined);
 });

@@ -9,6 +9,7 @@ import {
   onNativeBrowserLoadFailed,
   onNativeBrowserLoaded,
   reloadNativeBrowser,
+  openNativeBrowser,
   setNativeBrowserBounds,
   type NativeBrowserBounds,
 } from '../../lib/nativeBrowser';
@@ -32,12 +33,13 @@ export default function StudioFrameBody({
   const { studio, studioDispatch } = useStudioCanvas();
   const interacting = studio.interactingFrameId === frame.id;
   const size = sizeOf(frame);
-  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const surfaceRef = useRef<HTMLElement | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previousReloadRevision = useRef(frame.reloadRevision);
   const canvasZoomRef = useRef(studio.view.zoom);
   canvasZoomRef.current = studio.view.zoom;
   const nativeNavigationRef = useRef(false);
+  const previousNativeUrlRef = useRef(frame.url);
   const frameUrlRef = useRef(frame.url);
   frameUrlRef.current = frame.url;
   const hasUrl = !!frame.url && frame.url !== 'about:blank';
@@ -57,10 +59,7 @@ export default function StudioFrameBody({
   // to failed.
   useEffect(() => {
     if (!hasUrl || isSelf) return;
-    if (nativeNavigationRef.current) {
-      nativeNavigationRef.current = false;
-      return;
-    }
+    if (nativeNavigationRef.current) return;
     studioDispatch({ type: 'UPDATE_FRAME', id: frame.id, patch: { status: 'loading' } });
     timerRef.current = setTimeout(() => {
       studioDispatch({
@@ -70,7 +69,10 @@ export default function StudioFrameBody({
       });
     }, 12000);
     return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
     };
   }, [frame.id, frame.url, frame.reloadRevision, hasUrl, isSelf, studioDispatch]);
 
@@ -87,6 +89,10 @@ export default function StudioFrameBody({
     track(
       onNativeBrowserLoaded((event) => {
         if (event.browserSessionId !== nativeBrowserSessionId) return;
+        if (timerRef.current) {
+          clearTimeout(timerRef.current);
+          timerRef.current = null;
+        }
         nativeNavigationRef.current = event.url !== frameUrlRef.current;
         studioDispatch({
           type: 'UPDATE_FRAME',
@@ -98,6 +104,10 @@ export default function StudioFrameBody({
     track(
       onNativeBrowserLoadFailed((event) => {
         if (event.browserSessionId !== nativeBrowserSessionId) return;
+        if (timerRef.current) {
+          clearTimeout(timerRef.current);
+          timerRef.current = null;
+        }
         studioDispatch({
           type: 'UPDATE_FRAME',
           id: frame.id,
@@ -118,8 +128,8 @@ export default function StudioFrameBody({
   }, [frame.id, native, nativeBrowserSessionId, studioDispatch]);
 
   useLayoutEffect(() => {
-    if (!native || !interacting || !hasUrl || isSelf) return;
-    const bounds = nativeBounds(iframeRef.current);
+    if (!native || !interacting || !hasUrl || isSelf || frame.status === 'failed') return;
+    const bounds = nativeBounds(surfaceRef.current);
     if (!bounds) return;
     void attachNativeBrowser(
       nativeBrowserSessionId,
@@ -142,6 +152,7 @@ export default function StudioFrameBody({
   }, [
     browserResetGeneration,
     frame.id,
+    frame.status,
     hasUrl,
     interacting,
     isSelf,
@@ -151,11 +162,54 @@ export default function StudioFrameBody({
   ]);
 
   useEffect(() => {
+    if (!native || !interacting || !hasUrl || isSelf) return;
+    const changed = previousNativeUrlRef.current !== frame.url;
+    previousNativeUrlRef.current = frame.url;
+    if (!changed) return;
+    if (nativeNavigationRef.current) {
+      nativeNavigationRef.current = false;
+      return;
+    }
+    const bounds = nativeBounds(surfaceRef.current);
+    if (!bounds) return;
+    void openNativeBrowser(
+      nativeBrowserSessionId,
+      frame.url,
+      bounds,
+      undefined,
+      canvasZoomRef.current,
+    ).catch((error: unknown) => {
+      studioDispatch({
+        type: 'UPDATE_FRAME',
+        id: frame.id,
+        patch: {
+          status: 'failed',
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    });
+  }, [
+    frame.id,
+    frame.url,
+    hasUrl,
+    interacting,
+    isSelf,
+    native,
+    nativeBrowserSessionId,
+    studioDispatch,
+  ]);
+
+  useEffect(() => {
+    if (!native || !interacting || frame.status !== 'failed') return;
+    void detachNativeBrowser(nativeBrowserSessionId);
+  }, [frame.status, interacting, native, nativeBrowserSessionId]);
+
+  useEffect(() => {
     if (!native || !interacting) return;
     let animationFrame = 0;
     let previous: { bounds: NativeBrowserBounds; contentZoom: number } | null = null;
     const syncBounds = () => {
-      const bounds = nativeBounds(iframeRef.current);
+      const bounds = nativeBounds(surfaceRef.current);
       const contentZoom = canvasZoomRef.current;
       if (
         bounds &&
@@ -222,15 +276,25 @@ export default function StudioFrameBody({
         top: frame.y,
         width: size.width,
         height: size.height,
-        pointerEvents: interacting && !native ? 'auto' : 'none',
+        pointerEvents: frame.status === 'failed' || (interacting && !native) ? 'auto' : 'none',
       }}
     >
       {isSelf ? (
         <SelfEmbedError url={frame.url} />
+      ) : hasUrl && native && interacting ? (
+        <div
+          ref={(node) => {
+            surfaceRef.current = node;
+          }}
+          className="h-full w-full bg-white"
+          aria-label={frame.name}
+        />
       ) : hasUrl ? (
         <iframe
           key={frame.reloadRevision}
-          ref={iframeRef}
+          ref={(node) => {
+            surfaceRef.current = node;
+          }}
           title={frame.name}
           src={frame.url}
           className="h-full w-full border-0 bg-white"

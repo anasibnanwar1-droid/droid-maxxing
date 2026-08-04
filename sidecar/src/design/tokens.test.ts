@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   colorDistance,
+  compositeColor,
   nearestPaletteColor,
   nearestScaleValue,
   parseColor,
@@ -31,6 +32,18 @@ test('parseTokens reads a fenced design-tokens block', () => {
 test('parseTokens ignores malformed blocks and missing blocks', () => {
   assert.equal(parseTokens('# no tokens here'), undefined);
   assert.equal(parseTokens('```design-tokens\n{not json}\n```'), undefined);
+  assert.equal(parseTokens('```design-tokens\n[]\n```'), undefined);
+  assert.equal(parseTokens('```design-tokens\nnull\n```'), undefined);
+});
+
+test('serializeTokenBlock round-trips notes containing a triple backtick', () => {
+  const withFence: DesignTokens = {
+    ...sampleTokens,
+    allowlist: [{ selector: '.demo', note: 'Example: ```css' }],
+  };
+  const serialized = serializeTokenBlock(withFence);
+  assert.ok(serialized.startsWith('````design-tokens'));
+  assert.deepEqual(parseTokens(serialized)?.allowlist, withFence.allowlist);
 });
 
 test('parseTokens drops non-string colors and non-numeric scale values', () => {
@@ -72,7 +85,20 @@ test('parseColor handles hex, rgb and named colors', () => {
   assert.deepEqual(parseColor('rgb(10, 20, 30)'), [10, 20, 30, 1]);
   assert.deepEqual(parseColor('rgba(10, 20, 30, 0.5)'), [10, 20, 30, 0.5]);
   assert.deepEqual(parseColor('transparent'), [0, 0, 0, 0]);
+  assert.deepEqual(parseColor('rebeccapurple'), [102, 51, 153, 1]);
+  assert.deepEqual(parseColor('hsl(0 100% 50% / 50%)'), [255, 0, 0, 0.5]);
+  assert.equal(parseColor('#1z3456'), undefined);
   assert.equal(parseColor('bogus(1)'), undefined);
+});
+
+test('parseColor accepts percentage RGB and clamps computed CSS channels', () => {
+  assert.deepEqual(parseColor('rgb(100% 0% 50%)'), [255, 0, 127.5, 1]);
+  assert.deepEqual(parseColor('rgba(300 -20 64 / 150%)'), [255, 0, 64, 1]);
+  assert.deepEqual(parseColor('hsl(0 200% -10% / -1)'), [0, 0, 0, 0]);
+});
+
+test('compositeColor resolves translucent colors against their rendered surface', () => {
+  assert.deepEqual(compositeColor([0, 0, 0, 0.5], [255, 255, 255, 1]), [127.5, 127.5, 127.5, 1]);
 });
 
 test('colorDistance is zero for identical colors', () => {

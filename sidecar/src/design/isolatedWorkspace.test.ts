@@ -3,9 +3,9 @@ import test from 'node:test';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { existsSync } from 'node:fs';
-import { mkdtemp, mkdir, readFile, symlink, unlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, symlink, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative } from 'node:path';
+import { dirname, join, relative, sep } from 'node:path';
 import { prepareDesignWorkspace } from './isolatedWorkspace.js';
 
 const execFileAsync = promisify(execFile);
@@ -73,6 +73,31 @@ test('prepareDesignWorkspace is idempotent — a second call reuses the worktree
   const second = await prepareDesignWorkspace(repo);
   assert.equal(second.isWorktree, true);
   assert.equal(second.path, first.path);
+});
+
+test('prepareDesignWorkspace prunes stale worktree metadata before recreating it', async () => {
+  const repo = await makeRepo();
+  const first = await prepareDesignWorkspace(repo);
+  await rm(first.path, { recursive: true, force: true });
+
+  const recovered = await prepareDesignWorkspace(repo);
+
+  assert.equal(recovered.path, first.path);
+  assert.equal(existsSync(recovered.path), true);
+  assert.equal((await git(recovered.path, ['branch', '--show-current'])).trim(), 'droidex/design');
+});
+
+test('prepareDesignWorkspace preserves unrelated unavailable worktree registrations', async () => {
+  const repo = await makeRepo();
+  await prepareDesignWorkspace(repo);
+  const unrelated = join(repo, '.worktrees', 'unrelated');
+  await git(repo, ['worktree', 'add', '-b', 'unrelated-work', unrelated, 'HEAD']);
+  await rm(unrelated, { recursive: true, force: true });
+
+  await prepareDesignWorkspace(repo);
+
+  const registrations = await git(repo, ['worktree', 'list', '--porcelain']);
+  assert.equal(registrations.includes(`${sep}.worktrees${sep}unrelated\n`), true);
 });
 
 test('prepareDesignWorkspace never reuses the live checkout for the design branch', async () => {

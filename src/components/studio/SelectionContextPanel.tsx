@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { ChevronDown, Copy, ExternalLink, RotateCw, Trash2 } from 'lucide-react';
+import { openExternal } from '../../lib/onboarding';
 import {
   duplicateStudioFrame,
   useStudioCanvas,
@@ -115,7 +116,9 @@ export default function SelectionContextPanel() {
             <Action
               icon={<ExternalLink className="h-3.5 w-3.5" />}
               label="Open"
-              onClick={() => frame.url && window.open(frame.url, '_blank')}
+              onClick={() => {
+                if (frame.url) void openExternal(frame.url);
+              }}
             />
             <Action
               icon={<Trash2 className="h-3.5 w-3.5" />}

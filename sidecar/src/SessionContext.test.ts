@@ -468,17 +468,22 @@ test('overlapping refreshes share one provider read and preserve a persistence r
   );
 });
 
-test('a hung provider context read settles at the local deadline without duplicate calls', async () => {
-  const h = createHarness({ providerTimeoutMs: 0 });
+test('a hung provider context read settles locally and remains serialized until provider settlement', async () => {
+  const h = createHarness({ providerTimeoutMs: 5 });
   const { live, session } = registerLive(h, 'app-1');
   const target = primaryTarget(h, live);
   const gate = session.deferNextContextStats();
 
   await Promise.all([h.context.refresh(target), h.context.refresh(target)]);
+  await h.context.refresh(target);
 
   assert.equal(session.contextStatsCalls, 1);
   assert.equal(contextEvents(h).length, 0);
   gate.resolve();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  await h.context.refresh(target);
+  assert.equal(session.contextStatsCalls, 2);
 });
 
 test('a stale child runtime cannot stop its replacement poller', async (t) => {

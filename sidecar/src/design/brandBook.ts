@@ -1,6 +1,6 @@
 import { basename } from 'node:path';
 import type { DesignTokens } from './types.js';
-import { parseColor, type Rgba } from './tokens.js';
+import { compositeColor, parseColor, type Rgba } from './tokens.js';
 import { brandBookMotionCss, renderMotionSamples } from './brandBookMotion.js';
 import { parseMotionTokens } from './motionTokens.js';
 
@@ -125,10 +125,13 @@ function proseSection(p: ProseBlock, n: number): string {
 }
 
 function colorSection(swatches: [string, string][], theme: Theme, n: string): string {
+  const whiteSurface: Rgba = [255, 255, 255, 1];
+  const surface = compositeColor(parseColor(theme.surface) ?? whiteSurface, whiteSurface);
   const cards = swatches
     .map(([role, rawValue]) => {
       const value = safeColor(rawValue, 'transparent');
-      const rgb = parseColor(value);
+      const parsed = parseColor(value);
+      const rgb = parsed ? compositeColor(parsed, surface) : undefined;
       const ink = rgb ? readableInk(rgb) : '#000';
       const white = rgb ? contrastRatio(rgb, [255, 255, 255, 1]) : 0;
       const black = rgb ? contrastRatio(rgb, [0, 0, 0, 1]) : 0;
@@ -353,10 +356,7 @@ function safeColor(value: string | undefined, fallback: string): string {
   if (!value) return fallback;
   const v = value.trim();
   if (v.length > 64 || /[;{}"'<>]/.test(v)) return fallback;
-  if (/^#[0-9a-fA-F]{3,8}$/.test(v)) return v;
-  if (/^(rgb|rgba|hsl|hsla)\([0-9.,%\s/]+\)$/.test(v)) return v;
-  if (/^[a-zA-Z]{1,24}$/.test(v)) return v; // named color
-  if (/^color-mix\(in srgb,[^;{}"'<>]+\)$/.test(v)) return v; // our own derivations
+  if (parseColor(v)) return v;
   return fallback;
 }
 

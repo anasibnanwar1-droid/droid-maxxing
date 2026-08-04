@@ -4,6 +4,7 @@ import { toast } from '../../lib/toast';
 import { useStudioCanvas, type StudioCanvasImage } from './StudioCanvasContext';
 import { screenToWorld, type Point } from './studioCanvasMath';
 import { canvasImageName, fittedCanvasImageSize } from './studioCanvasImages';
+import { isStudioTypingTarget } from './studioCanvasKeyboard';
 
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 const SUPPORTED_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
@@ -14,6 +15,7 @@ export function useCanvasImageImport(rootRef: RefObject<HTMLDivElement | null>, 
   const lastPointerRef = useRef<Point | null>(null);
   const imageCountRef = useRef(studio.images.length);
   imageCountRef.current = studio.images.length;
+  const reservedSlotsRef = useRef(0);
   const viewRef = useRef(studio.view);
   viewRef.current = studio.view;
 
@@ -25,10 +27,11 @@ export function useCanvasImageImport(rootRef: RefObject<HTMLDivElement | null>, 
 
   const addFiles = useCallback(
     async (files: FileList | File[]) => {
-      const accepted = acceptedCanvasFiles(files, imageCountRef.current);
+      const initialCount = imageCountRef.current + reservedSlotsRef.current;
+      const accepted = acceptedCanvasFiles(files, initialCount);
       if (accepted.length === 0) return;
 
-      const initialCount = imageCountRef.current;
+      reservedSlotsRef.current += accepted.length;
       let placed = 0;
       for (const file of accepted) {
         try {
@@ -58,6 +61,7 @@ export function useCanvasImageImport(rootRef: RefObject<HTMLDivElement | null>, 
             naturalHeight: natural.height,
           };
           studioDispatch({ type: 'ADD_CANVAS_IMAGE', image });
+          imageCountRef.current += 1;
           importDesignLibraryImage({
             cwd,
             id,
@@ -69,6 +73,8 @@ export function useCanvasImageImport(rootRef: RefObject<HTMLDivElement | null>, 
         } catch (error) {
           console.error('[Studio] Canvas image import failed:', error);
           toast.error('That image could not be added to the canvas.');
+        } finally {
+          reservedSlotsRef.current = Math.max(0, reservedSlotsRef.current - 1);
         }
       }
       if (placed > 0) {
@@ -80,6 +86,7 @@ export function useCanvasImageImport(rootRef: RefObject<HTMLDivElement | null>, 
 
   useEffect(() => {
     const onPaste = (event: ClipboardEvent) => {
+      if (isStudioTypingTarget(event.target)) return;
       const images = Array.from(event.clipboardData?.files ?? []).filter((file) =>
         file.type.startsWith('image/'),
       );

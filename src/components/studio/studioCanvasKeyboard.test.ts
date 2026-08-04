@@ -5,10 +5,11 @@ import { shouldUndoCanvasAnnotation } from './studioCanvasKeyboard';
 function keyboardEvent(
   target: Partial<Pick<HTMLElement, 'isContentEditable' | 'tagName'>>,
   modifiers: Pick<KeyboardEvent, 'ctrlKey' | 'metaKey'> = { ctrlKey: false, metaKey: true },
-): Pick<KeyboardEvent, 'ctrlKey' | 'key' | 'metaKey' | 'target'> {
+): Pick<KeyboardEvent, 'ctrlKey' | 'key' | 'metaKey' | 'shiftKey' | 'target'> {
   return {
     ...modifiers,
     key: 'z',
+    shiftKey: false,
     target: target as EventTarget,
   };
 }
@@ -24,6 +25,16 @@ test('canvas undo leaves native text editing shortcuts with typing targets', () 
   assert.equal(shouldUndoCanvasAnnotation(keyboardEvent({ tagName: 'INPUT' }), 'draw'), false);
   assert.equal(
     shouldUndoCanvasAnnotation(keyboardEvent({ tagName: 'DIV', isContentEditable: true }), 'draw'),
+    false,
+  );
+});
+
+test('canvas undo reserves Cmd/Ctrl+Shift+Z for redo', () => {
+  assert.equal(
+    shouldUndoCanvasAnnotation(
+      { ...keyboardEvent({ tagName: 'DIV', isContentEditable: false }), shiftKey: true },
+      'draw',
+    ),
     false,
   );
 });

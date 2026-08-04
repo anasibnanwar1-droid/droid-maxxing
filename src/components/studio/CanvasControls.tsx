@@ -11,15 +11,18 @@ export default function CanvasControls({
   getSize,
   onRequestAddFrame,
   onRequestAddImage,
+  onViewMutation,
 }: {
   getSize: () => { width: number; height: number } | null;
   onRequestAddFrame: () => void;
   onRequestAddImage: () => void;
+  onViewMutation: () => void;
 }) {
   const { studio, studioDispatch } = useStudioCanvas();
   const { view, frames, images } = studio;
 
   const setView = (v: CanvasView) => {
+    onViewMutation();
     studioDispatch({ type: 'SET_VIEW', view: v });
   };
 

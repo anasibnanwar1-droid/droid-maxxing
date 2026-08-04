@@ -10,7 +10,7 @@ import { readDnaState } from './dnaFiles.js';
 import type { PreviewServer } from './previewServer.js';
 import { resolveDesignProjectIdentity } from './projectIdentity.js';
 import { listPrototypes } from './prototypes.js';
-import { getLibraryItem } from './referenceLibrary.js';
+import { getLibraryItem, resolveReferenceImagePath } from './referenceLibrary.js';
 
 interface PreviewResult {
   ok: true;
@@ -170,8 +170,9 @@ export class DesignPreviewManager {
     requestedName: string | undefined,
     shouldEmit: boolean | undefined,
   ): Promise<PreviewResult | PreviewFailure> {
-    const abs = resolve(cwd, path);
-    if (abs !== cwd && !abs.startsWith(cwd + sep)) {
+    const root = await realpath(cwd);
+    const abs = await realpath(resolve(root, path));
+    if (!isWithin(root, abs)) {
       return { ok: false, error: 'That path is outside the workspace.' };
     }
     if (!/\.html?$/i.test(abs)) {
@@ -188,7 +189,7 @@ export class DesignPreviewManager {
       label: requestedName ?? basename(abs),
       source: {
         type: 'workspace-html',
-        relativePath: relative(cwd, abs).split(sep).join('/'),
+        relativePath: relative(root, abs).split(sep).join('/'),
       },
       shouldEmit: shouldEmit ?? true,
     });
@@ -231,8 +232,14 @@ export class DesignPreviewManager {
     try {
       const [imageDirectory, imageFile] = await Promise.all([
         realpath(referenceImageDir(cwd, this.baseDir)),
-        realpath(item.screenshotPath),
+        resolveReferenceImagePath(cwd, item.screenshotPath, this.baseDir),
       ]);
+      if (!imageFile) {
+        return {
+          name: item.name,
+          error: 'The referenced library image is outside its asset store.',
+        };
+      }
       const imageInfo = await stat(imageFile);
       if (!imageInfo.isFile() || dirname(imageFile) !== imageDirectory) {
         return {
@@ -300,6 +307,10 @@ export class DesignPreviewManager {
 
 function previewId(cwd: string, key: string): string {
   return `preview-${createHash('sha1').update(`${cwd} ${key}`).digest('hex').slice(0, 12)}`;
+}
+
+function isWithin(root: string, candidate: string): boolean {
+  return candidate === root || candidate.startsWith(`${root}${sep}`);
 }
 
 const PREVIEW_ASSET_EXTENSIONS = new Set([

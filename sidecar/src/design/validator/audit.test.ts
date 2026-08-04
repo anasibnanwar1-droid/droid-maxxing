@@ -78,8 +78,26 @@ test('unknown font families are flagged, system stacks are skipped', () => {
     context,
   );
   assert.equal(flagged[0]?.rule, 'unknown-font-family');
+  const fallbackOnly = auditElements([element({ fontFamily: 'sans-serif' })], tokens, context);
+  assert.equal(fallbackOnly[0]?.rule, 'unknown-font-family');
   const system = auditElements([element({ fontFamily: 'system-ui, sans-serif' })], tokens, context);
   assert.deepEqual(system, []);
+});
+
+test('allowlist compares equivalent computed colors including alpha', () => {
+  const allowTokens: DesignTokens = {
+    ...tokens,
+    allowlist: [
+      { property: 'color', value: '#3366ff' },
+      { property: 'backgroundColor', value: '#3366ff80' },
+    ],
+  };
+  const findings = auditElements(
+    [element({ color: 'rgb(51, 102, 255)', backgroundColor: 'rgba(51, 102, 255, 0.502)' })],
+    allowTokens,
+    context,
+  );
+  assert.deepEqual(findings, []);
 });
 
 test('allowlist suppresses findings by selector and by property/value', () => {

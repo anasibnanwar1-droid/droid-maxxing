@@ -49,6 +49,26 @@ test('renderBrandBook themes the page in the DNA tokens', () => {
   assert.match(html, /#E0653A/); // swatch hex, uppercased
 });
 
+test('renderBrandBook measures named, HSL, and translucent swatches as rendered', () => {
+  const html = renderBrandBook({
+    cwd: '/tmp/colors',
+    tokens: {
+      ...tokens,
+      colors: {
+        surface: '#ffffff',
+        named: 'rebeccapurple',
+        hsl: 'hsl(0 100% 50%)',
+        overlay: '#00000080',
+      },
+    },
+    designMd,
+    motionMd,
+  });
+  assert.match(html, /background:rebeccapurple/);
+  assert.match(html, /background:hsl\(0 100% 50%\)/);
+  assert.match(html, /AA on #000000 · 5\.3:1/);
+});
+
 test('renderBrandBook uses the real brand name, prose, and type scale', () => {
   const html = renderBrandBook({ cwd: '/tmp/acme-app', tokens, designMd, motionMd });
   assert.match(html, /Acme/); // brand name from the H1

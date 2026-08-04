@@ -6,7 +6,7 @@ import type { PreviewServer } from './previewServer.js';
 import { AutomaticValidatorCoordinator } from './AutomaticValidatorCoordinator.js';
 import { CanvasDocumentManager } from './CanvasDocumentManager.js';
 import { DesignPreviewManager } from './DesignPreviewManager.js';
-import { dnaFilePath, readDnaState, writeDnaFile } from './dnaFiles.js';
+import { dnaFilePath, readDnaState, writeDnaFile, writeDnaFiles } from './dnaFiles.js';
 import { getDnaLibrary, listDnaLibraries } from './dnaLibraries.js';
 import { scanRepoForDna } from './dnaScan.js';
 import { commitDesignChange } from './gitCommit.js';
@@ -153,8 +153,7 @@ export class DesignManager {
       case 'design.dna.applyLibrary': {
         const library = getDnaLibrary(cmd.libraryId);
         if (!library) throw new Error(`Unknown DNA library: ${cmd.libraryId}`);
-        writeDnaFile(cmd.cwd, 'design', library.design);
-        writeDnaFile(cmd.cwd, 'motion', library.motion);
+        writeDnaFiles(cmd.cwd, { design: library.design, motion: library.motion });
         // Applying a curated starter clears "this is my saved direction" until
         // the user finalizes the result as their own entry.
         setActiveDna(cmd.cwd, null);
@@ -172,8 +171,7 @@ export class DesignManager {
       case 'design.dna.savedApply': {
         const entry = getSavedDna(cmd.cwd, cmd.id);
         if (!entry) throw new Error(`No saved DNA entry ${cmd.id}.`);
-        writeDnaFile(cmd.cwd, 'design', entry.design);
-        writeDnaFile(cmd.cwd, 'motion', entry.motion);
+        writeDnaFiles(cmd.cwd, { design: entry.design, motion: entry.motion });
         setActiveDna(cmd.cwd, entry.id);
         this.emitDnaState(cmd.cwd);
         this.emitSavedDna(cmd.cwd);

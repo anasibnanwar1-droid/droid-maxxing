@@ -9,7 +9,7 @@ import {
   MODEL_REFERENCE_MAX_RESPONSE_IMAGE_BYTES,
 } from './modelReferenceImage.js';
 import { listPrototypes, prototypePromptGuidance } from './prototypes.js';
-import { getLibraryItem, listLibraryItems } from './referenceLibrary.js';
+import { getLibraryItem, listLibraryItems, resolveReferenceImagePath } from './referenceLibrary.js';
 import { scanComponentRegistry } from './registryScan.js';
 import { nearestPaletteColor } from './tokens.js';
 import { DESIGN_GUIDELINES } from './guidelines.js';
@@ -298,8 +298,16 @@ export function createDesignMcpServer(
               );
               remainingImages -= 1;
               try {
+                const imagePath = await resolveReferenceImagePath(
+                  cwd(),
+                  item.screenshotPath,
+                  options.referenceLibraryBaseDir,
+                );
+                if (!imagePath) {
+                  throw new Error('The stored image is outside this project’s reference library.');
+                }
                 const derivative = await createModelReferenceDerivative({
-                  path: item.screenshotPath,
+                  path: imagePath,
                   maxBytes,
                 });
                 const base64 = derivative.data.toString('base64');

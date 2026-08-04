@@ -125,7 +125,7 @@ export function NativeBrowserSurface({
     attachedSessionRef.current = undefined;
     attachingSessionRef.current = undefined;
     lastBounds.current = null;
-    if (visibleBrowserSessionId && urlRef.current && !obscuredRef.current) {
+    if (visibleBrowserSessionId && urlRef.current) {
       reopenBrowserAfterReconnect({
         appSessionId: browserKey,
         url: urlRef.current,

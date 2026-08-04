@@ -91,6 +91,10 @@ export function useCanvasDrawing(rootRef: RefObject<HTMLDivElement | null>) {
   };
 
   const cancel = useCallback(() => {
+    const edit = editRef.current;
+    if (edit) {
+      studioDispatch({ type: 'UPDATE_ANNOTATION', id: edit.id, annotation: edit.original });
+    }
     draftRef.current = null;
     editRef.current = null;
     setDraft(null);
@@ -102,7 +106,7 @@ export function useCanvasDrawing(rootRef: RefObject<HTMLDivElement | null>) {
       rootRef.current.releasePointerCapture(pointerId);
     }
     pointerIdRef.current = null;
-  }, [rootRef]);
+  }, [rootRef, studioDispatch]);
 
   const beginDrawing = (event: ReactPointerEvent): boolean => {
     if (studio.tool !== 'draw' || event.button !== 0) return false;

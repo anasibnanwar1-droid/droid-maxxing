@@ -69,8 +69,14 @@ contextBridge.exposeInMainWorld('droidControl', {
   filesReveal: (accessToken, relative) =>
     ipcRenderer.invoke('files-reveal', { accessToken, relative }),
 
-  nativeBrowserOpen: (browserSessionId, url, bounds, viewport) =>
-    ipcRenderer.invoke('native-browser-open', { browserSessionId, url, bounds, viewport }),
+  nativeBrowserOpen: (browserSessionId, url, bounds, viewport, contentZoom) =>
+    ipcRenderer.invoke('native-browser-open', {
+      browserSessionId,
+      url,
+      bounds,
+      viewport,
+      contentZoom,
+    }),
   nativeBrowserAttach: (browserSessionId, bounds, url, contentZoom) =>
     ipcRenderer.invoke('native-browser-attach', { browserSessionId, bounds, url, contentZoom }),
   nativeBrowserDetach: (browserSessionId) =>

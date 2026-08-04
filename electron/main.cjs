@@ -278,10 +278,13 @@ function registerIpc() {
     return files.revealInFolder(filesRootAccess.resolve(accessToken), relative, shell);
   });
 
-  ipcMain.handle('native-browser-open', (event, { browserSessionId, url, bounds, viewport }) => {
-    assertMainRenderer(event);
-    return openNativeBrowser(browserSessionId, url, bounds, viewport);
-  });
+  ipcMain.handle(
+    'native-browser-open',
+    (event, { browserSessionId, url, bounds, viewport, contentZoom }) => {
+      assertMainRenderer(event);
+      return openNativeBrowser(browserSessionId, url, bounds, viewport, contentZoom);
+    },
+  );
   ipcMain.handle('native-browser-attach', (event, payload) => {
     assertMainRenderer(event);
     const { browserSessionId, bounds, url, contentZoom } = payload;
@@ -730,6 +733,7 @@ function createNativeBrowserEntry(browserSessionId) {
     networkEvents: [],
     consoleEvents: [],
     rendererCrashes: [],
+    contentZoom: 1,
   };
 }
 
@@ -810,14 +814,15 @@ function ensureNativeBrowserView(browserSessionId) {
   return entry;
 }
 
-async function openNativeBrowser(browserSessionId, url, bounds, viewport) {
+async function openNativeBrowser(browserSessionId, url, bounds, viewport, contentZoom) {
   const entry = ensureNativeBrowserView(browserSessionId);
   if (viewport) entry.viewport = normalizeBrowserViewport(viewport);
   rejectHostAppUrl(url);
   url = normalizeNativeBrowserUrl(entry, url);
   validateUrl(url);
-  if (bounds) await attachNativeBrowser(entry.browserSessionId, bounds, { restore: false });
-  else {
+  if (bounds) {
+    await attachNativeBrowser(entry.browserSessionId, bounds, { restore: false, contentZoom });
+  } else {
     setHiddenNativeBrowserBounds(entry, entry.viewport);
     addHiddenNativeBrowserViewToWindow(entry);
   }
@@ -879,9 +884,11 @@ function setNativeBrowserBounds(browserSessionId, bounds, contentZoom) {
 }
 
 function setNativeBrowserContentZoom(entry, contentZoom = 1) {
+  const normalizedZoom = normalizeNativeBrowserContentZoom(contentZoom);
+  entry.contentZoom = normalizedZoom;
   const contents = safeWebContents(entry.view);
   if (!contents) return;
-  contents.setZoomFactor(normalizeNativeBrowserContentZoom(contentZoom));
+  contents.setZoomFactor(normalizedZoom);
 }
 
 function setNativeBrowserVisible(browserSessionId, visible) {
@@ -1575,6 +1582,7 @@ function recoverNativeBrowserRenderer(entry, view, details) {
         attachNativeBrowserViewToMainWindow(entry);
         entry.attached = true;
         attachedBrowserSessionId = entry.browserSessionId;
+        setNativeBrowserContentZoom(entry, entry.contentZoom);
         entry.view.setBounds(bounds);
       } else {
         setHiddenNativeBrowserBounds(entry, entry.viewport);

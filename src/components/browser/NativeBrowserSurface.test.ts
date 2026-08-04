@@ -16,4 +16,5 @@ test('iframe lifecycle uses callback refs instead of callback dependencies', () 
 test('native reset defers browser replay until bridge reconnect', () => {
   assert.match(source, /reopenBrowserAfterReconnect\(\{/);
   assert.doesNotMatch(source, /openBrowser\(\{ appSessionId: browserKey/);
+  assert.doesNotMatch(source, /urlRef\.current && !obscuredRef\.current/);
 });

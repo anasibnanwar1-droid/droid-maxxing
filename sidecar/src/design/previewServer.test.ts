@@ -8,13 +8,15 @@ import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { PreviewServer } from './previewServer.js';
 
-function get(url: string): Promise<{ status: number; body: string }> {
+function get(
+  url: string,
+): Promise<{ status: number; body: string; headers: http.IncomingHttpHeaders }> {
   return new Promise((resolve, reject) => {
     http
       .get(url, (res) => {
         let body = '';
         res.on('data', (c) => (body += String(c)));
-        res.on('end', () => resolve({ status: res.statusCode ?? 0, body }));
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, body, headers: res.headers }));
       })
       .on('error', reject);
   });
@@ -44,6 +46,7 @@ test('PreviewServer serves a registered file and blocks unknown ids + traversal'
     const ok = await get(url);
     assert.equal(ok.status, 200);
     assert.match(ok.body, /brand book/);
+    assert.equal(ok.headers['content-security-policy'], "connect-src 'self' http: https: ws: wss:");
 
     const unknown = await get(url.replace('/abc/', '/nope/'));
     assert.equal(unknown.status, 404);

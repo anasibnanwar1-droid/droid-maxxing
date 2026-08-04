@@ -153,6 +153,7 @@ export class PreviewServer {
       res.writeHead(200, {
         'content-type': CONTENT_TYPES[extname(target).toLowerCase()] ?? 'application/octet-stream',
         'cache-control': 'no-store',
+        'content-security-policy': "connect-src 'self' http: https: ws: wss:",
       });
       await pipeline(this.openFile(target), res);
     } catch {

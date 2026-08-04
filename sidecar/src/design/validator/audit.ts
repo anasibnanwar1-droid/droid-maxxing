@@ -114,7 +114,7 @@ function checkFontFamily(element: AuditElement, tokens: DesignTokens, push: Push
   if (stacks.length === 0) return;
   const family = firstFamily(element.styles.fontFamily ?? '');
   if (!family) return;
-  const known = stacks.some((stack) => stack.toLowerCase().includes(family));
+  const known = stacks.some((stack) => firstFamily(stack) === family);
   if (known) return;
   if (allowedValue(element, tokens, 'fontFamily', element.styles.fontFamily ?? '')) return;
   push({
@@ -183,9 +183,20 @@ function allowedValue(
   return (tokens.allowlist ?? []).some((rule) => {
     if (rule.selector && !matchesSelector(rule.selector, element.selector)) return false;
     if (rule.property && rule.property !== property) return false;
-    if (rule.value && rule.value.trim().toLowerCase() !== value.trim().toLowerCase()) return false;
+    if (rule.value && !equivalentValue(rule.value, value)) return false;
     return Boolean(rule.selector) || Boolean(rule.property) || Boolean(rule.value);
   });
+}
+
+function equivalentValue(expected: string, actual: string): boolean {
+  if (expected.trim().toLowerCase() === actual.trim().toLowerCase()) return true;
+  const expectedColor = parseColor(expected);
+  const actualColor = parseColor(actual);
+  if (!expectedColor || !actualColor) return false;
+  return (
+    expectedColor.slice(0, 3).every((channel, index) => channel === actualColor[index]) &&
+    Math.abs(expectedColor[3] - actualColor[3]) <= 1 / 255
+  );
 }
 
 function matchesSelector(pattern: string | undefined, selector: string): boolean {

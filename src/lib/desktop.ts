@@ -188,6 +188,7 @@ interface DroidControlApi {
     url: string,
     bounds?: NativeBrowserBounds,
     viewport?: { width: number; height: number; deviceScaleFactor: number },
+    contentZoom?: number,
   ) => Promise<void>;
   nativeBrowserAttach: (
     browserSessionId: string,

@@ -221,7 +221,7 @@ export default function StudioFrameChrome({
       {/* Body hit area — captures select/drag only in the Select tool, and only
           when not interacting so clicks reach the live app. Double-click enters
           interact mode (configurable in Studio settings). */}
-      {tool === 'select' && !interacting && (
+      {tool === 'select' && !interacting && frame.status !== 'failed' && (
         <div
           className="absolute inset-0"
           style={{ pointerEvents: 'auto', cursor: active ? 'grab' : 'default' }}

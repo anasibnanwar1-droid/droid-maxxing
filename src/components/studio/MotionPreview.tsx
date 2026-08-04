@@ -47,6 +47,14 @@ export function resolveMotionPreview(tokens: MotionTokens): MotionPreviewSpec {
   };
 }
 
+export function resolveMotionColors(colors?: Record<string, string>) {
+  return {
+    accent: pick(colors, ['accent', 'brand', 'primary'], 'var(--droid-accent)'),
+    surface: pick(colors, ['surface', 'elevated', 'card', 'panel'], 'var(--droid-surface)'),
+    text: pick(colors, ['text', 'foreground', 'ink'], 'var(--droid-text)'),
+  };
+}
+
 /** Live samples driven by the parsed `motion-tokens` block in MOTION.md. */
 export default function MotionPreview({
   colors,
@@ -56,9 +64,7 @@ export default function MotionPreview({
   motionTokens?: MotionTokens;
 }) {
   const shouldReduceMotion = useReducedMotion();
-  const accent = pick(colors, ['accent', 'brand', 'primary'], 'var(--droid-accent)');
-  const surface = pick(colors, ['surface', 'elevated', 'card', 'panel'], 'var(--droid-surface)');
-  const text = pick(colors, ['text', 'foreground', 'ink'], 'var(--droid-text)');
+  const { accent, surface, text } = resolveMotionColors(colors);
   const [replay, setReplay] = useState(0);
 
   if (!motionTokens) {
@@ -191,8 +197,14 @@ function pick(
   fallback: string,
 ): string {
   if (!colors) return fallback;
-  for (const [name, value] of Object.entries(colors)) {
-    if (keys.some((key) => name.toLowerCase().includes(key))) return value;
+  const entries = Object.entries(colors);
+  for (const key of keys) {
+    const exact = entries.find(([name]) => name.toLowerCase() === key);
+    if (exact) return exact[1];
+  }
+  for (const key of keys) {
+    const match = entries.find(([name]) => name.toLowerCase().includes(key));
+    if (match) return match[1];
   }
   return fallback;
 }

@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { serializeTokenBlock } from './tokens.js';
+import { parseColor, serializeTokenBlock } from './tokens.js';
 import { serializeMotionTokenBlock } from './motionTokens.js';
 import type { DesignTokens, DnaDraft } from './types.js';
 
@@ -19,11 +19,14 @@ const SKIP_DIRS = new Set([
 ]);
 const MAX_FILES = 60;
 const MAX_FILE_BYTES = 512 * 1024;
+const MAX_DIRECTORIES = 200;
+const MAX_ENTRIES = 5_000;
 
-const HEX_COLOR = /#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b/g;
-const NAMED_HEX = /['"]?([a-zA-Z][\w-]{1,32})['"]?\s*:\s*['"](#[0-9a-fA-F]{3,8})['"]/g;
-const CUSTOM_PROP = /--([\w-]+)\s*:\s*([^;]+);/g;
-const FONT_FAMILY = /font-family\s*:\s*([^;]+);/g;
+const NAMED_HEX =
+  /['"]?([a-zA-Z][\w-]{1,32})['"]?\s*:\s*['"](#[0-9a-fA-F]{8}|#[0-9a-fA-F]{6}|#[0-9a-fA-F]{4}|#[0-9a-fA-F]{3})['"]/g;
+const CUSTOM_PROP = /--([\w-]+)\s*:\s*([^;}]+)(?:;|(?=\s*}))/g;
+const FONT_FAMILY = /font-family\s*:\s*([^;}]+)(?:;|(?=\s*}))/g;
+const DECLARATION = /([\w-]+)\s*:\s*([^;}]+)(?:;|(?=\s*}))/g;
 const PX_VALUE = /\b(\d+(?:\.\d+)?)px\b/g;
 
 export function scanRepoForDna(cwd: string): DnaDraft {
@@ -59,22 +62,27 @@ export function scanRepoForDna(cwd: string): DnaDraft {
     if (file.endsWith('.css')) {
       for (const match of text.matchAll(CUSTOM_PROP)) {
         const value = match[2].trim();
-        if (HEX_COLOR.test(value) || value.startsWith('rgb')) {
+        if (parseColor(value)) {
           colors.set(match[1], value);
           matched = true;
         }
-        HEX_COLOR.lastIndex = 0;
       }
       for (const match of text.matchAll(FONT_FAMILY)) {
         fonts.add(match[1].trim());
         matched = true;
       }
-      for (const match of text.matchAll(PX_VALUE)) {
-        const px = Number(match[1]);
-        if (px >= 10 && px <= 96) fontSizes.add(px);
-        if (px >= 0 && px <= 48) {
-          radii.add(px);
-          spacing.add(px);
+      for (const match of text.matchAll(DECLARATION)) {
+        const property = match[1].toLowerCase();
+        const value = match[2];
+        if (property === 'font-size') matched = addPxValues(value, fontSizes, 10, 96) || matched;
+        if (property === 'border-radius' || property.endsWith('-radius')) {
+          matched = addPxValues(value, radii, 0, 48) || matched;
+        }
+        if (
+          /^(?:margin|padding)(?:-|$)/.test(property) ||
+          /^(?:gap|row-gap|column-gap)$/.test(property)
+        ) {
+          matched = addPxValues(value, spacing, 0, 48) || matched;
         }
       }
     }
@@ -146,9 +154,12 @@ function defaultMotionMarkdown(): string {
 function collectFiles(cwd: string): string[] {
   const out: string[] = [];
   const queue = [cwd];
-  while (queue.length > 0 && out.length < MAX_FILES) {
+  let visitedDirectories = 0;
+  let visitedEntries = 0;
+  while (queue.length > 0 && out.length < MAX_FILES && visitedDirectories < MAX_DIRECTORIES) {
     const dir = queue.shift();
     if (!dir) break;
+    visitedDirectories += 1;
     let entries: fs.Dirent[];
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -156,6 +167,8 @@ function collectFiles(cwd: string): string[] {
       continue;
     }
     for (const entry of entries) {
+      visitedEntries += 1;
+      if (visitedEntries > MAX_ENTRIES) return out;
       if (entry.isDirectory()) {
         if (!SKIP_DIRS.has(entry.name) && !entry.name.startsWith('.')) {
           queue.push(path.join(dir, entry.name));
@@ -169,6 +182,17 @@ function collectFiles(cwd: string): string[] {
     }
   }
   return out;
+}
+
+function addPxValues(value: string, target: Set<number>, min: number, max: number): boolean {
+  let matched = false;
+  for (const match of value.matchAll(PX_VALUE)) {
+    const px = Number(match[1]);
+    if (px < min || px > max) continue;
+    target.add(px);
+    matched = true;
+  }
+  return matched;
 }
 
 function isTailwindConfig(file: string): boolean {

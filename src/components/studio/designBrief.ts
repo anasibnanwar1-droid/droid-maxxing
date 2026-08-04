@@ -1,6 +1,15 @@
 import { INTERVIEW_QUESTIONS, type InterviewQuestion } from './interviewQuestions';
 import type { BrowserTranscriptReference } from '../../types/bridge';
 
+export const MAX_BRIEF_IMAGE_BYTES = 20 * 1024 * 1024;
+export const SUPPORTED_BRIEF_IMAGE_TYPES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/gif',
+]);
+const SUPPORTED_BRIEF_IMAGE_HEADER = /^data:image\/(?:png|jpeg|webp|gif);base64$/;
+
 export interface Answer {
   selected: string[];
   text: string;
@@ -20,6 +29,32 @@ function briefImages(brief: DesignBrief): string[] {
   return Object.values(brief).flatMap((a) => a.images);
 }
 
+export function isSupportedBriefImage(dataUrl: string, maxBytes = MAX_BRIEF_IMAGE_BYTES): boolean {
+  const separator = dataUrl.indexOf(',');
+  if (separator < 0 || !SUPPORTED_BRIEF_IMAGE_HEADER.test(dataUrl.slice(0, separator)))
+    return false;
+  const encoded = dataUrl.slice(separator + 1);
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(encoded) || encoded.length % 4 !== 0) return false;
+  const padding = encoded.endsWith('==') ? 2 : encoded.endsWith('=') ? 1 : 0;
+  const decodedBytes = (encoded.length / 4) * 3 - padding;
+  return decodedBytes > 0 && decodedBytes <= maxBytes;
+}
+
+export function briefWithSupportedImages(
+  brief: DesignBrief,
+  maxBytes = MAX_BRIEF_IMAGE_BYTES,
+): DesignBrief {
+  return Object.fromEntries(
+    Object.entries(brief).map(([id, answer]) => [
+      id,
+      {
+        ...answer,
+        images: answer.images.filter((image) => isSupportedBriefImage(image, maxBytes)),
+      },
+    ]),
+  );
+}
+
 export interface BriefImageReference {
   id: string;
   name: string;
@@ -30,8 +65,9 @@ export interface BriefImageReference {
 export function briefImageReferences(
   brief: DesignBrief,
   createId: () => string,
+  maxBytes = MAX_BRIEF_IMAGE_BYTES,
 ): BriefImageReference[] {
-  return briefImages(brief).map((dataUrl, index) => {
+  return briefImages(briefWithSupportedImages(brief, maxBytes)).map((dataUrl, index) => {
     const id = `canvas-intake-${createId()}`;
     const name = `Intake reference ${String(index + 1)}`;
     return {

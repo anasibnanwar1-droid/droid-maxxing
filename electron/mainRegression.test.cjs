@@ -23,7 +23,8 @@ test('native browser invoke handlers authorize the main renderer', () => {
   ];
 
   for (const channel of channels) {
-    const start = mainSource.indexOf(`ipcMain.handle('${channel}'`);
+    const channelIndex = mainSource.indexOf(`'${channel}'`);
+    const start = mainSource.lastIndexOf('ipcMain.handle(', channelIndex);
     assert.notEqual(start, -1, `missing ${channel} handler`);
     const nextHandle = mainSource.indexOf('\n  ipcMain.handle(', start + 1);
     const nextListener = mainSource.indexOf('\n  ipcMain.on(', start + 1);
@@ -50,7 +51,12 @@ test('studio browser content zoom follows canvas scale and resets when detached'
   );
   assert.match(
     mainSource,
-    /contents\.setZoomFactor\(normalizeNativeBrowserContentZoom\(contentZoom\)\)/,
+    /const normalizedZoom = normalizeNativeBrowserContentZoom\(contentZoom\)[\s\S]*?contents\.setZoomFactor\(normalizedZoom\)/,
+  );
+  assert.match(mainSource, /entry\.contentZoom = normalizedZoom/);
+  assert.match(
+    mainSource,
+    /function recoverNativeBrowserRenderer[\s\S]*?setNativeBrowserContentZoom\(entry, entry\.contentZoom\)/,
   );
 });
 

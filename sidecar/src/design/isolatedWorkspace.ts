@@ -76,10 +76,18 @@ export async function prepareDesignWorkspace(liveCwd: string): Promise<Workspace
   const branchRef = `refs/heads/${BRANCH}`;
 
   // Reuse the worktree at our path, or wherever the design branch is already checked out.
-  const records = parseWorktrees(
-    (await tryGit(repoRoot, ['worktree', 'list', '--porcelain'])) ?? '',
-  );
+  let records = parseWorktrees((await tryGit(repoRoot, ['worktree', 'list', '--porcelain'])) ?? '');
   const liveRoot = resolve(repoRoot);
+  const staleDesignWorktree = records.find(
+    (record) =>
+      (record.path === worktreePath ||
+        (record.branch === branchRef && resolve(record.path) !== liveRoot)) &&
+      !existsSync(record.path),
+  );
+  if (staleDesignWorktree) {
+    await git(repoRoot, ['worktree', 'remove', '--force', '--force', staleDesignWorktree.path]);
+    records = parseWorktrees((await tryGit(repoRoot, ['worktree', 'list', '--porcelain'])) ?? '');
+  }
   const existing = records.find(
     (record) =>
       record.path === worktreePath ||

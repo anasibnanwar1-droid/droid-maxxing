@@ -25,6 +25,9 @@ test('scanRepoForDna extracts tailwind colors, css props and fonts', (t) => {
       'body { font-family: Inter, sans-serif; font-size: 14px; }',
       'code { font-family: JetBrains Mono, monospace; }',
       '.card { border-radius: 10px; padding: 16px; }',
+      '.layout { width: 48px; box-shadow: 0 2px 4px #000000; }',
+      ':root { --shadow: 0 2px 4px #000000; --overlay: #0008; --wash: #11223344 }',
+      '.final { font-family: Final Sans, sans-serif }',
     ].join('\n'),
     'node_modules/pkg/skip.css': ':root { --evil: #ff0000; }',
   });
@@ -34,15 +37,47 @@ test('scanRepoForDna extracts tailwind colors, css props and fonts', (t) => {
   assert.equal(draft.cwd, cwd);
   assert.equal(draft.tokens.colors.brand, '#e0653a');
   assert.equal(draft.tokens.colors.ink, '#f2f2f2');
+  assert.equal(draft.tokens.colors.overlay, '#0008');
+  assert.equal(draft.tokens.colors.wash, '#11223344');
+  assert.equal(draft.tokens.colors.shadow, undefined);
   assert.ok(!Object.values(draft.tokens.colors).includes('#ff0000'));
   assert.ok(draft.tokens.fonts.sans?.includes('Inter'));
   assert.ok(draft.tokens.fonts.mono?.includes('Mono'));
   assert.ok(draft.tokens.typeScale.includes(14));
   assert.ok(draft.tokens.radii.includes(10));
+  assert.ok(draft.tokens.spacing.includes(16));
+  assert.ok(!draft.tokens.radii.includes(48));
+  assert.ok(!draft.tokens.spacing.includes(48));
   assert.ok(draft.sources.includes('tailwind.config.js'));
   assert.ok(draft.content.includes('```design-tokens'));
   assert.ok(draft.content.includes('## Palette'));
   assert.deepEqual(parseMotionTokens(draft.motion)?.durations.micro, [120, 160]);
+});
+
+test('scanRepoForDna reads final declarations without semicolons', (t) => {
+  const cwd = makeRepo({
+    'src/final.css': ':root { --ink: #123456 }\nbody { font-family: Final Sans, sans-serif }',
+  });
+  t.after(() => fs.rmSync(cwd, { recursive: true, force: true }));
+
+  const draft = scanRepoForDna(cwd);
+  assert.equal(draft.tokens.colors.ink, '#123456');
+  assert.equal(draft.tokens.fonts.sans, 'Final Sans, sans-serif');
+});
+
+test('scanRepoForDna stops after its directory traversal budget', (t) => {
+  const cwd = makeRepo({});
+  t.after(() => fs.rmSync(cwd, { recursive: true, force: true }));
+  let nested = cwd;
+  for (let index = 0; index < 205; index += 1) {
+    nested = path.join(nested, 'd');
+    fs.mkdirSync(nested);
+  }
+  fs.writeFileSync(path.join(nested, 'late.css'), ':root { --late: #ff0000; }');
+
+  const draft = scanRepoForDna(cwd);
+  assert.equal(draft.tokens.colors.late, undefined);
+  assert.deepEqual(draft.sources, []);
 });
 
 test('scanRepoForDna produces a usable draft for an empty project', (t) => {

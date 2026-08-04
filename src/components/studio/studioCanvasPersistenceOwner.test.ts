@@ -173,6 +173,26 @@ test('rapid canvas updates serialize once after the persistence boundary', () =>
   harness.owner.destroy();
 });
 
+test('hydration suppression is consumed by the first local serialization', () => {
+  const harness = fixture();
+  harness.owner.attach({ onHydrate: () => undefined, onNotice: () => undefined });
+  harness.owner.open(target(), content(1));
+  harness.emit(stateEvent(document(1, 1)));
+
+  harness.owner.update(studio(1.4));
+  harness.runScheduled();
+  harness.emit(savedEvent(document(2, 1.4)));
+
+  harness.owner.update(studio(1));
+  harness.runScheduled();
+
+  assert.deepEqual(
+    harness.writes.map((write) => write.content.view.zoom),
+    [1.4, 1],
+  );
+  harness.owner.destroy();
+});
+
 function fixture() {
   const reads: { cwd: string; canvasId: string }[] = [];
   const writes: Parameters<CanvasPersistenceTransport['write']>[0][] = [];

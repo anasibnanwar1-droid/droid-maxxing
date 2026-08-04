@@ -34,7 +34,11 @@ import { useCanvasDrawing } from './useCanvasDrawing';
 import { useCanvasImageImport } from './useCanvasImageImport';
 import { hitTestAnnotation, topFrameAtPoint } from './studioAnnotations';
 import { CANVAS_IMAGE_INPUT_ID } from './studioCanvasImages';
-import { isStudioTypingTarget, shouldUndoCanvasAnnotation } from './studioCanvasKeyboard';
+import {
+  isStudioInteractiveTarget,
+  isStudioTypingTarget,
+  shouldUndoCanvasAnnotation,
+} from './studioCanvasKeyboard';
 import { useStudioFrameNavigation } from './useStudioFrameNavigation';
 
 type DragMode = 'pan' | 'marquee';
@@ -128,7 +132,11 @@ export default function StudioCanvas({
   // Space-to-pan, like every real canvas.
   useEffect(() => {
     const down = (e: KeyboardEvent) => {
-      if (e.code === 'Space' && !isStudioTypingTarget(e.target)) {
+      if (
+        e.code === 'Space' &&
+        !isStudioTypingTarget(e.target) &&
+        !isStudioInteractiveTarget(e.target)
+      ) {
         e.preventDefault();
         setSpaceHeld(true);
       }
@@ -404,6 +412,7 @@ export default function StudioCanvas({
         }}
         onRequestAddFrame={requestAddFrame}
         onRequestAddImage={imageImport.requestFilePicker}
+        onViewMutation={stopAnimation}
       />
     </div>
   );

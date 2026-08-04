@@ -13,9 +13,11 @@ import { answered, emptyAnswer, type Answer, type DesignBrief } from './designBr
 export default function DnaInterview({
   onClose,
   onComplete,
+  completionDisabled = false,
 }: {
   onClose: () => void;
   onComplete: (brief: DesignBrief, directions: number) => void;
+  completionDisabled?: boolean;
 }) {
   const [step, setStep] = useState(0);
   const [brief, setBrief] = useState<DesignBrief>({});
@@ -133,9 +135,14 @@ export default function DnaInterview({
           )}
           <button
             onClick={next}
-            className="flex items-center gap-1.5 rounded-lg bg-droid-accent px-4 py-1.5 text-[12.5px] font-medium text-droid-bg transition-opacity hover:opacity-90"
+            disabled={last && completionDisabled}
+            className="flex items-center gap-1.5 rounded-lg bg-droid-accent px-4 py-1.5 text-[12.5px] font-medium text-droid-bg transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45"
           >
-            {last ? `Create my system · ${String(answeredCount)} answered` : 'Next'}
+            {last
+              ? completionDisabled
+                ? 'Starting design session…'
+                : `Create my system · ${String(answeredCount)} answered`
+              : 'Next'}
             {!last && <ArrowRight className="h-3.5 w-3.5" />}
           </button>
         </div>

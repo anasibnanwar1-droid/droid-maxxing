@@ -181,7 +181,10 @@ export class SessionContext {
     const current = this.refreshes.get(key);
     if (current?.session === target.session && current.generation === generation) {
       current.persist ||= options.persist !== false;
-      return current.promise;
+      return withTimeout(
+        current.promise,
+        this.dependencies.providerTimeoutMs ?? DEFAULT_PROVIDER_TIMEOUT_MS,
+      ).catch(() => undefined);
     }
 
     const refresh: ContextRefresh = {
@@ -194,7 +197,10 @@ export class SessionContext {
       if (this.refreshes.get(key) === refresh) this.refreshes.delete(key);
     });
     this.refreshes.set(key, refresh);
-    return refresh.promise;
+    return withTimeout(
+      refresh.promise,
+      this.dependencies.providerTimeoutMs ?? DEFAULT_PROVIDER_TIMEOUT_MS,
+    ).catch(() => undefined);
   }
 
   private async runRefresh(
@@ -203,17 +209,11 @@ export class SessionContext {
     refresh: ContextRefresh,
   ): Promise<void> {
     try {
-      const stats = await withTimeout(
-        target.session.getContextStats(),
-        this.dependencies.providerTimeoutMs ?? DEFAULT_PROVIDER_TIMEOUT_MS,
-      );
+      const stats = await target.session.getContextStats();
       if (!this.isCurrent(target, epoch)) return;
       let breakdown: unknown;
       try {
-        breakdown = await withTimeout(
-          this.dependencies.runtime.readContextBreakdown(target.session),
-          this.dependencies.providerTimeoutMs ?? DEFAULT_PROVIDER_TIMEOUT_MS,
-        );
+        breakdown = await this.dependencies.runtime.readContextBreakdown(target.session);
       } catch {
         breakdown = undefined;
       }

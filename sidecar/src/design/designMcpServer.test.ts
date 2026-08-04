@@ -1,8 +1,8 @@
 import { createCanvas, loadImage } from '@napi-rs/canvas';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { createDesignMcpServer } from './designMcpServer.js';
 import { serializeMotionTokenBlock } from './motionTokens.js';
@@ -14,6 +14,7 @@ import {
 } from './modelReferenceImage.js';
 import { importReferenceImage } from './referenceLibrary.js';
 import { serializeTokenBlock } from './tokens.js';
+import { referenceLibraryFile } from './designPaths.js';
 
 interface ToolImageContent {
   type: 'image';
@@ -301,6 +302,39 @@ test('design_reference_library never falls back to original bytes', async (t) =>
   assert.equal(imageContent(content).length, 0);
   assert.match(metadata.item.modelImage.error, /image|decode|format/i);
   assert.deepEqual(readFileSync(saved.screenshotPath ?? ''), original);
+});
+
+test('design_reference_library rejects tampered image paths outside the asset store', async (t) => {
+  const baseDir = mkdtempSync(join(tmpdir(), 'droidex-model-reference-confined-'));
+  const cwd = join(baseDir, 'project');
+  mkdirSync(cwd);
+  t.after(() => rmSync(baseDir, { recursive: true, force: true }));
+  const [saved] = importReferenceImage({
+    cwd,
+    id: 'canvas-confined-reference',
+    name: 'Confined reference',
+    category: 'reference',
+    dataUrl: 'data:image/png;base64,YWJj',
+    baseDir,
+  });
+  const outside = join(baseDir, 'outside.png');
+  writeFileSync(outside, 'private image');
+  assert.ok(saved.screenshotPath);
+  const linked = join(dirname(saved.screenshotPath), 'linked.png');
+  symlinkSync(outside, linked);
+  writeFileSync(
+    referenceLibraryFile(cwd, baseDir),
+    JSON.stringify({ items: [{ ...saved, screenshotPath: linked }] }),
+  );
+
+  const result = await referenceTool(cwd, baseDir).handler({ id: saved.id });
+  const content = resultContent(result);
+  const metadata = JSON.parse(textContent(content).text) as {
+    item: { modelImage: { error: string } };
+  };
+
+  assert.equal(imageContent(content).length, 0);
+  assert.match(metadata.item.modelImage.error, /outside.*reference library/i);
 });
 
 function referenceTool(cwd: string, baseDir: string) {
