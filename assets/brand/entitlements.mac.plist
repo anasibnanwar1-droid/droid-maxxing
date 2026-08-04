@@ -4,12 +4,12 @@
   <dict>
     <!-- V8 requires JIT; node-pty's spawn-helper and .node bindings need
          unsigned-executable memory and relaxed library validation. Standard
-         Electron hardened-runtime set, only applied when signing is enabled. -->
+         Electron runtime set, applied to Developer ID and ad-hoc signatures. -->
     <key>com.apple.security.cs.allow-jit</key>
-    <true />
+    <true/>
     <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
-    <true />
+    <true/>
     <key>com.apple.security.cs.disable-library-validation</key>
-    <true />
+    <true/>
   </dict>
 </plist>
