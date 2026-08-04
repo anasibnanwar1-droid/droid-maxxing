@@ -52,6 +52,10 @@ test('manual bug reports carry support ids without default PII', async () => {
         events.push(['message', message, context]);
         return 'event-123';
       },
+      flush: async (timeoutMs) => {
+        events.push(['flush', timeoutMs]);
+        return true;
+      },
     },
   });
 
@@ -65,6 +69,30 @@ test('manual bug reports carry support ids without default PII', async () => {
     true,
   );
   assert.deepEqual(events.find(([kind]) => kind === 'message')?.[2], { level: 'error' });
+  assert.deepEqual(
+    events.find(([kind]) => kind === 'flush'),
+    ['flush', 5_000],
+  );
+});
+
+test('manual bug reports fail when Sentry does not confirm delivery', async () => {
+  const diagnostics = createDiagnostics({
+    app: { getPath: () => '/tmp/droidex-test', getVersion: () => '1.2.3', isPackaged: true },
+    dsn: 'https://public@example.invalid/1',
+    randomUUID: () => '12345678-1234-1234-1234-123456789abc',
+    fs: {
+      readFile: async () => JSON.stringify({ version: 1, userId: 'USR-123456781234' }),
+      mkdir: async () => undefined,
+      writeFile: async () => undefined,
+    },
+    sentry: {
+      withScope: (callback) => callback({ setUser: () => undefined, setTags: () => undefined }),
+      captureMessage: () => 'event-123',
+      flush: async () => false,
+    },
+  });
+
+  await assert.rejects(() => diagnostics.reportBug('update button froze'), /delivery timed out/);
 });
 
 test('diagnostic payloads remove requests, breadcrumbs, and user fields except id', () => {
