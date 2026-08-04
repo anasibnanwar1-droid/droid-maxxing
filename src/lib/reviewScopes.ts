@@ -48,6 +48,18 @@ export function nextReviewFocusScope(scope: DiffScope): DiffScope | null {
     : null;
 }
 
+// Resolve "." and ".." segments in an absolute path purely lexically, so a
+// cwd-relative focus path like "../shared/foo.ts" still suffix-matches its
+// repo-root-relative git path. Segments above the root are clamped away.
+function canonicalizeAbsolutePath(path: string): string {
+  const segments: string[] = [];
+  for (const segment of path.split('/')) {
+    if (segment === '..') segments.pop();
+    else if (segment !== '' && segment !== '.') segments.push(segment);
+  }
+  return (path.startsWith('/') ? '/' : '') + segments.join('/');
+}
+
 // The most specific suffix match for an absolute path: the longest git path
 // it ends with. A longer match pins the repo root more precisely, which
 // decides between nested duplicates like "web/src/app.ts" versus
@@ -84,14 +96,16 @@ export function matchReviewFocusPath(
   if (!norm) return null;
   const isAbsolute = norm.startsWith('/') || /^[A-Za-z]:\//.test(norm);
   if (!isAbsolute && cwd) {
-    const resolved = `${cwd.replace(/\\/g, '/').replace(/\/+$/, '')}/${norm}`;
+    const resolved = canonicalizeAbsolutePath(
+      `${cwd.replace(/\\/g, '/').replace(/\/+$/, '')}/${norm}`,
+    );
     const match = longestSuffixMatch(files, resolved);
     if (match) return match;
   }
   for (const file of files) {
     if (file.path === focusPath || file.path === norm) return file.path;
   }
-  if (isAbsolute) return longestSuffixMatch(files, norm);
+  if (isAbsolute) return longestSuffixMatch(files, canonicalizeAbsolutePath(norm));
   for (const file of files) {
     if (norm.endsWith(`/${file.path}`) || file.path.endsWith(`/${norm}`)) return file.path;
   }

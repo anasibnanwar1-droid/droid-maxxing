@@ -441,7 +441,9 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose?: () => voi
       return;
     }
     const nextScope = nextReviewFocusScope(state.reviewScope);
-    const attemptKey = `${state.reviewScope}→${focus}`;
+    // The request id keeps a repeated click on the same file (a new request)
+    // from being swallowed by the dedupe of the previous in-flight chain.
+    const attemptKey = `${String(state.reviewFocusRequestId)}:${state.reviewScope}→${focus}`;
     if (nextScope && focusFallbackRef.current !== attemptKey) {
       // Guard against dispatching the same fallback twice when this effect
       // re-runs (e.g. a poll tick) while the next scope's list loads.
@@ -456,7 +458,13 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose?: () => voi
     dispatch({ type: 'CLEAR_REVIEW_FOCUS' });
     toast.info(`No current diff for ${focus.replace(/\\/g, '/').split('/').pop() ?? focus}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.reviewFocusPath, state.reviewScope, review.signature, review.loadingList]);
+  }, [
+    state.reviewFocusPath,
+    state.reviewFocusRequestId,
+    state.reviewScope,
+    review.signature,
+    review.loadingList,
+  ]);
 
   const copyPatch = () => {
     setMoreOpen(false);

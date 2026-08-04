@@ -78,6 +78,17 @@ test('matchReviewFocusPath picks the longest suffix for absolute paths', () => {
   );
 });
 
+test('matchReviewFocusPath canonicalizes dot segments in cwd-relative paths', () => {
+  // An edit reported as ../shared/foo.ts from cwd packages/web really edits
+  // packages/shared/foo.ts; without canonicalizing '..', the suffix match
+  // never lands and the click ends in the no-diff toast.
+  const files = [{ path: 'packages/shared/foo.ts' }];
+  assert.equal(
+    matchReviewFocusPath(files, '../shared/foo.ts', '/repo/packages/web'),
+    'packages/shared/foo.ts',
+  );
+});
+
 test('matchReviewFocusPath returns null when nothing matches', () => {
   const files = [{ path: 'src/app.ts' }];
   assert.equal(matchReviewFocusPath(files, 'src/other.ts'), null);

@@ -197,6 +197,10 @@ export interface AppState {
   // A file path the Review pane should jump to once its list loads, set when a
   // per-turn changes summary (or diff card) is clicked. Cleared after the jump.
   reviewFocusPath: string | null;
+  // Generation counter for focus requests: every OPEN_REVIEW_AT bumps it so
+  // the Review pane can tell a fresh click apart from a re-render of the
+  // previous request (a repeated click must re-arm the scope-fallback dedupe).
+  reviewFocusRequestId: number;
   diffView: DiffViewMode;
   sidebarCollapsed: boolean;
   specMode: boolean;
@@ -925,6 +929,7 @@ export const initialState: AppState = {
   reviewOpenAppSessionId: null,
   reviewScope: loadReviewScope(),
   reviewFocusPath: null,
+  reviewFocusRequestId: 0,
   diffView: loadDiffView(),
   sessionSettingOverrides: {},
   skills: [],
@@ -1144,6 +1149,10 @@ function baseReducer(state: AppState, action: Action): AppState {
         draftChat: null,
         draftAutonomy: null,
         selectedChild: null,
+        // A pending review-focus request belongs to the session that issued
+        // it; a different session becoming active must not inherit it.
+        reviewFocusPath:
+          action.session.appSessionId === state.activeAppSessionId ? state.reviewFocusPath : null,
         childAccess,
         childRuntime,
         pendingCompose,
@@ -2031,6 +2040,7 @@ function baseReducer(state: AppState, action: Action): AppState {
           ...state,
           reviewScope: saveReviewScope(action.scope),
           reviewFocusPath: action.path ?? null,
+          reviewFocusRequestId: state.reviewFocusRequestId + 1,
         };
       }
       return {
@@ -2039,6 +2049,7 @@ function baseReducer(state: AppState, action: Action): AppState {
         reviewOpenAppSessionId: state.activeAppSessionId,
         reviewScope: saveReviewScope(action.scope),
         reviewFocusPath: action.path ?? null,
+        reviewFocusRequestId: state.reviewFocusRequestId + 1,
         utilityPanels: {
           ...state.utilityPanels,
           [state.activeAppSessionId]: openUtilityTool(
@@ -2105,6 +2116,8 @@ function baseReducer(state: AppState, action: Action): AppState {
         activeAppSessionId: null,
         missionControlMode: false,
         selectedChild: null,
+        // Leaving for a fresh draft orphans any pending review-focus request.
+        reviewFocusPath: null,
         sessionLastSeen,
       };
     }
