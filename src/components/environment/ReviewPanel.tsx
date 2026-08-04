@@ -25,26 +25,35 @@ import { DiffFileSection } from './DiffFileSection';
 import { CommitSheet } from './CommitSheet';
 import { CreatePrSheet } from './CreatePrSheet';
 import { useReviewDiff } from '../../hooks/useReviewDiff';
-import { useReviewFileDiffs } from '../../hooks/useReviewFileDiffs';
+import { useReviewFileDiffs, type FileDiffEntry } from '../../hooks/useReviewFileDiffs';
 import { useGitEnvironment } from '../../hooks/useGitEnvironment';
 import { useStore } from '../../hooks/useStore';
 import { toast } from '../../lib/toast';
 import { detectPullRequest } from '../../lib/github';
-import { REVIEW_SCOPE_OPTIONS, reviewScopeLabel } from '../../lib/reviewScopes';
+import {
+  REVIEW_SCOPE_OPTIONS,
+  matchReviewFocusPath,
+  nextReviewFocusScope,
+  reviewScopeLabel,
+} from '../../lib/reviewScopes';
 import type { DiffFile } from '../../types/vcs';
 import { FileTypeIcon } from '../FileTypeIcon';
 
 function ScopeSelector() {
   const { state, dispatch } = useStore();
   const [open, setOpen] = useState(false);
-  const ref = usePopover<HTMLDivElement>(
+  const ref = usePopover(
     open,
-    useCallback(() => setOpen(false), []),
+    useCallback(() => {
+      setOpen(false);
+    }, []),
   );
   return (
     <div className="relative" ref={ref}>
       <button
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          setOpen((v) => !v);
+        }}
         className="flex items-center gap-1.5 rounded-lg bg-droid-elevated px-2.5 py-1.5 text-[12px] text-droid-text transition-colors hover:bg-droid-elevated/70"
       >
         <span>{reviewScopeLabel(state.reviewScope)}</span>
@@ -87,7 +96,9 @@ function ViewToggle() {
       {VIEW_TOGGLE_ITEMS.map(({ mode, icon: Icon, title }) => (
         <button
           key={mode}
-          onClick={() => dispatch({ type: 'SET_DIFF_VIEW', mode })}
+          onClick={() => {
+            dispatch({ type: 'SET_DIFF_VIEW', mode });
+          }}
           title={title}
           className={`rounded-md p-1.5 transition-colors ${
             state.diffView === mode
@@ -177,7 +188,9 @@ const FileRow = memo(function FileRow({
   const name = slash >= 0 ? file.path.slice(slash + 1) : file.path;
   return (
     <button
-      onClick={() => onSelect(file.path)}
+      onClick={() => {
+        onSelect(file.path);
+      }}
       title={file.path}
       className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors ${
         selected ? 'bg-droid-active' : 'hover:bg-droid-elevated/50'
@@ -238,6 +251,9 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose?: () => voi
   const scrollRef = useRef<HTMLDivElement>(null);
   const sectionRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const seen = useRef<Set<string>>(new Set());
+  // Last scope-fallback dispatched for the in-flight focus request, so a
+  // re-run of the focus effect can't dispatch the same fallback twice.
+  const focusFallbackRef = useRef<string | null>(null);
 
   useEffect(() => {
     const root = rootRef.current;
@@ -250,7 +266,9 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose?: () => voi
       setCompact(entry.contentRect.width <= 540);
     });
     observer.observe(root);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+    };
   }, []);
 
   const appSessionId = state.activeAppSessionId ?? undefined;
@@ -288,7 +306,7 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose?: () => voi
       if (stale) return;
       // Settle on failure too so a gh hiccup can't hide the button forever.
       setPrChecked(true);
-      if (res.ok && res.pr && res.pr.state.toLowerCase() === 'open') {
+      if (res.ok && res.pr?.state.toLowerCase() === 'open') {
         setHasPr(true);
         // If the create form was already open when an existing PR turned up,
         // close it rather than leaving a submit that is guaranteed to fail.
@@ -343,7 +361,6 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose?: () => voi
     if (!activePath) return;
     const idx = filesRef.current.findIndex((f) => f.path === activePath);
     if (idx >= 0) setRenderLimit((cur) => (idx < cur ? cur : idx + FILE_RENDER_JUMP_BUFFER));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePath, review.signature]);
 
   // Fetch the diff for every open section that is actually rendered; ensure()
@@ -400,33 +417,54 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose?: () => voi
 
   // Honor a focus request (e.g. a per-turn changes summary clicked in chat):
   // once the diff list contains the requested file, expand and scroll to it,
-  // then clear the request so a later poll can't re-trigger the jump. Transcript
-  // edit paths are often absolute while git lists paths relative to the repo
-  // root, so match on an exact hit or a path-suffix rather than strict equality.
+  // then clear the request so a later poll can't re-trigger the jump. The
+  // request targets the last-turn baseline, which only covers the latest turn;
+  // when the file is absent from a settled list, walk broader scopes so a file
+  // from an older turn (or a restored session without a baseline) still opens
+  // on its current diff instead of leaving the user to hunt through the list.
   useEffect(() => {
     const focus = state.reviewFocusPath;
-    if (!focus) return;
-    const norm = focus.replace(/\\/g, '/');
-    const target = review.files.find(
-      (f) => f.path === focus || f.path === norm || norm.endsWith(`/${f.path}`),
-    );
-    if (!target) {
-      // A settled list without the file means the request can't be honored in
-      // this scope. Drop it now; keeping it would re-run this effect on every
-      // poll (signature changes) and surprise-jump if the file appears after
-      // the user has navigated elsewhere.
-      if (!review.loadingList) dispatch({ type: 'CLEAR_REVIEW_FOCUS' });
+    if (!focus) {
+      focusFallbackRef.current = null;
       return;
     }
-    jumpTo(target.path);
+    // Match only against the current scope's settled list: on a scope
+    // transition the hook still serves the previous scope's files, and acting
+    // on that stale list could jump to a file the new scope doesn't have and
+    // would skip the fallback chain below.
+    if (review.loadingList) return;
+    const targetPath = matchReviewFocusPath(review.files, focus, cwd);
+    if (targetPath) {
+      focusFallbackRef.current = null;
+      jumpTo(targetPath);
+      dispatch({ type: 'CLEAR_REVIEW_FOCUS' });
+      return;
+    }
+    const nextScope = nextReviewFocusScope(state.reviewScope);
+    const attemptKey = `${state.reviewScope}→${focus}`;
+    if (nextScope && focusFallbackRef.current !== attemptKey) {
+      // Guard against dispatching the same fallback twice when this effect
+      // re-runs (e.g. a poll tick) while the next scope's list loads.
+      focusFallbackRef.current = attemptKey;
+      dispatch({ type: 'OPEN_REVIEW_AT', scope: nextScope, path: focus });
+      return;
+    }
+    // No scope lists the file: it was reverted or its diff is otherwise gone.
+    // Drop the request; keeping it would re-run this effect on every poll and
+    // surprise-jump if the file reappears after the user navigated elsewhere.
+    focusFallbackRef.current = null;
     dispatch({ type: 'CLEAR_REVIEW_FOCUS' });
+    toast.info(`No current diff for ${focus.replace(/\\/g, '/').split('/').pop() ?? focus}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.reviewFocusPath, review.signature, review.loadingList]);
+  }, [state.reviewFocusPath, state.reviewScope, review.signature, review.loadingList]);
 
   const copyPatch = () => {
     setMoreOpen(false);
-    const path = activePath ?? review.files[0]?.path ?? null;
-    const diff = path ? (diffEntries[path]?.diff ?? '') : '';
+    // at()/the explicit undefined branch keep the empty-list and
+    // not-yet-loaded cases typed honestly (index lookups claim always-present).
+    const path = activePath ?? review.files.at(0)?.path ?? null;
+    const entry: FileDiffEntry | undefined = path ? diffEntries[path] : undefined;
+    const diff = entry?.diff ?? '';
     if (!diff) {
       toast.info('Open a file to copy its diff');
       return;
@@ -448,7 +486,9 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose?: () => voi
           title="Commit changes"
           innerRef={commitRef}
           active={commitOpen}
-          onClick={() => setCommitOpen((v) => !v)}
+          onClick={() => {
+            setCommitOpen((v) => !v);
+          }}
         />
         {isGitHub && prChecked && !prCreated && !hasPr && (
           <ToolbarButton
@@ -457,7 +497,9 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose?: () => voi
             title="Open a pull request"
             innerRef={prRef}
             active={prOpen}
-            onClick={() => setPrOpen((v) => !v)}
+            onClick={() => {
+              setPrOpen((v) => !v);
+            }}
           />
         )}
         <ViewToggle />
@@ -470,14 +512,18 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose?: () => voi
           icon={filesOpen ? PanelLeftClose : PanelLeftOpen}
           title={filesOpen ? 'Hide file list' : 'Show file list'}
           active={!filesOpen}
-          onClick={() => setFilesOpen((v) => !v)}
+          onClick={() => {
+            setFilesOpen((v) => !v);
+          }}
         />
         <ToolbarButton
           icon={MoreHorizontal}
           title="More options"
           innerRef={moreRef}
           active={moreOpen}
-          onClick={() => setMoreOpen((v) => !v)}
+          onClick={() => {
+            setMoreOpen((v) => !v);
+          }}
         />
         {onClose && (
           <button
@@ -491,7 +537,9 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose?: () => voi
 
         <Popover
           open={commitOpen}
-          onClose={() => setCommitOpen(false)}
+          onClose={() => {
+            setCommitOpen(false);
+          }}
           anchorRef={commitRef}
           label="Commit changes"
           width={320}
@@ -506,7 +554,9 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose?: () => voi
         </Popover>
         <Popover
           open={prOpen}
-          onClose={() => setPrOpen(false)}
+          onClose={() => {
+            setPrOpen(false);
+          }}
           anchorRef={prRef}
           label="Create pull request"
           width={340}
@@ -515,7 +565,9 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose?: () => voi
             cwd={cwd}
             env={git.env}
             branches={git.branches}
-            onCreated={() => setPrCreated(true)}
+            onCreated={() => {
+              setPrCreated(true);
+            }}
             onDone={() => {
               setPrOpen(false);
               afterAction();
@@ -524,7 +576,9 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose?: () => voi
         </Popover>
         <Popover
           open={moreOpen}
-          onClose={() => setMoreOpen(false)}
+          onClose={() => {
+            setMoreOpen(false);
+          }}
           anchorRef={moreRef}
           label="Review options"
           width={224}
@@ -542,13 +596,17 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose?: () => voi
               icon={WrapText}
               label="Word wrap"
               active={wrap}
-              onClick={() => setWrap((v) => !v)}
+              onClick={() => {
+                setWrap((v) => !v);
+              }}
             />
             <MenuItem
               icon={Eye}
               label="Hide whitespace"
               active={hideWhitespace}
-              onClick={() => setHideWhitespace((v) => !v)}
+              onClick={() => {
+                setHideWhitespace((v) => !v);
+              }}
             />
             <MenuItem icon={Copy} label="Copy patch" onClick={copyPatch} />
           </div>
@@ -566,7 +624,9 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose?: () => voi
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.16 }}
-              onClick={() => setFilesOpen(false)}
+              onClick={() => {
+                setFilesOpen(false);
+              }}
             />
           )}
           {filesOpen && (
@@ -604,7 +664,9 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose?: () => voi
                     ))}
                     {review.files.length > renderLimit && (
                       <button
-                        onClick={() => setRenderLimit((cur) => cur + FILE_RENDER_CAP)}
+                        onClick={() => {
+                          setRenderLimit((cur) => cur + FILE_RENDER_CAP);
+                        }}
                         className="w-full px-2.5 py-2 text-left text-[12px] text-droid-accent transition-colors hover:bg-droid-elevated/50"
                       >
                         Show {Math.min(FILE_RENDER_CAP, review.files.length - renderLimit)} more
@@ -646,7 +708,9 @@ export function ReviewPanel({ cwd, onClose }: { cwd: string; onClose?: () => voi
               ))}
               {review.files.length > renderLimit && (
                 <button
-                  onClick={() => setRenderLimit((cur) => cur + FILE_RENDER_CAP)}
+                  onClick={() => {
+                    setRenderLimit((cur) => cur + FILE_RENDER_CAP);
+                  }}
                   className="w-full px-3 py-2.5 text-left text-[12.5px] text-droid-accent transition-colors hover:bg-droid-elevated/40"
                 >
                   Show {Math.min(FILE_RENDER_CAP, review.files.length - renderLimit)} more files…

@@ -1875,6 +1875,9 @@ function baseReducer(state: AppState, action: Action): AppState {
         draftChat: null,
         draftAutonomy: null,
         selectedChild: null,
+        // A pending review-focus request belongs to the session that issued
+        // it; never let it fire in another session's panel after a switch.
+        reviewFocusPath: action.id === state.activeAppSessionId ? state.reviewFocusPath : null,
       };
     }
 

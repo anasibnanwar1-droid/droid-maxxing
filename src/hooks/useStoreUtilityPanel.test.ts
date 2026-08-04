@@ -146,3 +146,21 @@ test('browser updates preserve an explicitly hidden browser pane', () => {
     false,
   );
 });
+
+test('a session switch drops a pending review-focus request', () => {
+  let state = reducer(activeState('session-a'), {
+    type: 'OPEN_REVIEW_AT',
+    scope: 'last_turn',
+    path: 'src/app.ts',
+  });
+  assert.equal(state.reviewFocusPath, 'src/app.ts');
+
+  // The request belongs to session-a; it must not fire in session-b's panel.
+  state = reducer(state, { type: 'SET_ACTIVE_SESSION', id: 'session-b' });
+  assert.equal(state.reviewFocusPath, null);
+
+  // Re-selecting the already-active session keeps an in-flight request alive.
+  state = reducer(state, { type: 'OPEN_REVIEW_AT', scope: 'last_turn', path: 'src/b.ts' });
+  state = reducer(state, { type: 'SET_ACTIVE_SESSION', id: 'session-b' });
+  assert.equal(state.reviewFocusPath, 'src/b.ts');
+});
