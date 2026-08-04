@@ -13,7 +13,7 @@ The previous title-based Design Studio characterization is excluded. The verifie
 - Baseline SHA: `14866e759104970b0f39a42d33941c97704c8268`
 - Remote: `origin/main` at the same SHA
 - Branch: `refactor/mission-manager-baseline`
-- Dedicated worktree: `/Users/anas/Documents/droid-control/.worktrees/refactor-mission-manager-baseline`
+- Dedicated worktree: `refactor-mission-manager-baseline`
 - Baseline working tree: clean
 - Validation runtime: Node 22
 - Frontend tests: 292 passed, 0 failed

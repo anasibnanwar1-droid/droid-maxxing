@@ -240,6 +240,9 @@ visibility:
 - review module ownership against `docs/architecture.md`, delete superseded
   paths, and document any intentional debt that cannot be removed safely;
 - run a full history secret scan, not only a scan of the current files;
+- scan the current tracked tree for personal paths, email addresses, private
+  repository names, internal plans, reviewer artifacts, and machine-specific
+  instructions; remove or rewrite anything that is not public documentation;
 - rotate or revoke any credential that ever entered Git history, CI output, or
   an issue;
 - confirm the app contains no privileged server credentials or private source

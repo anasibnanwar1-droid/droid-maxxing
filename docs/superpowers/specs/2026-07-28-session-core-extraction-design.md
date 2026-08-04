@@ -9,7 +9,7 @@ Approved and implemented by PR 3.
 - Repository source: latest fetched `origin/main`
 - Baseline SHA: `eb9aff89948380743b8cea311f93a8eb55f30662`
 - Branch: `refactor/session-core-extraction`
-- Worktree: `/Users/anas/.codex/worktrees/71aa/droid-control`
+- Worktree: dedicated feature worktree
 - Primary checkout: out of scope and untouched
 - Runtime for validation: Node 22
 - Focused characterization baseline: 34 passed, 0 failed, 2 approved PR 5

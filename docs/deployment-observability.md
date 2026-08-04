@@ -47,6 +47,13 @@ release-repository checks during preflight, the final publish step, and
 marker-gated failed-draft cleanup. Private source checks continue to use the
 source repository's scoped workflow token.
 
+Release secrets also require a real approval boundary. Before pushing a release
+tag, configure a required environment reviewer and protected `main`/tag rules.
+If the repository plan cannot enforce those controls, keep release-capable
+write access owner-only or remove the release secrets between supervised
+releases. A `v*` deployment policy limits eligible refs; it does not stop a
+write collaborator from changing a workflow.
+
 Run `npm run release:preflight:unsigned` for the current free distribution path.
 It verifies the private/public repository boundary, immutable public releases,
 the unsigned disclosure, exact private remote commit, Sparkle configuration,

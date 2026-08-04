@@ -104,10 +104,10 @@ Out of scope for the first build:
 
 ## Current-State Constraints
 
-- `/Users/anas/Documents/droid-control` is the original checkout. The user has active frontend edits there. Do not touch it.
-- `/Users/anas/Documents/droid-control-browser-mcp` is the feature worktree.
+- The primary checkout is out of scope and must remain untouched.
+- Use a dedicated feature worktree.
 - Branch: `feature/browser-mcp-design-mode`.
-- Repo: `droidex-anas/droid-maxxing`.
+- Repository: `origin`.
 - Baseline `main` has already been pushed.
 - The implementation must use one canonical current-state path. No compatibility shims for historical local states.
 
@@ -348,8 +348,8 @@ Use `Runtime.evaluate` for a small visible-DOM snapshot:
 
 ### Task 1: Worktree Guard
 
-- [ ] Confirm `/Users/anas/Documents/droid-control-browser-mcp` is on `feature/browser-mcp-design-mode`.
-- [ ] Confirm `/Users/anas/Documents/droid-control` only contains the user's existing frontend edits.
+- [ ] Confirm the dedicated worktree is on `feature/browser-mcp-design-mode`.
+- [ ] Confirm the primary checkout remains untouched.
 - [ ] Run all commits from the feature worktree only.
 
 ### Task 2: Sidecar Test Harness
@@ -366,7 +366,7 @@ Use `Runtime.evaluate` for a small visible-DOM snapshot:
 - [ ] Unit test canonical path resolution and missing Chrome diagnostics.
 - [ ] Unit test Chrome launch args and readiness timeout.
 - [ ] Unit test CDP request id matching, response errors, timeout handling, and websocket cleanup with a fake transport.
-- [ ] Run `cd /Users/anas/Documents/droid-control-browser-mcp/sidecar && npm run test`.
+- [ ] Run `npm --prefix sidecar run test` from the feature worktree.
 
 ### Task 4: Reusable Canvas Primitive
 
@@ -471,9 +471,9 @@ User instruction:
 
 ### Task 12: Verification
 
-- [ ] `cd /Users/anas/Documents/droid-control-browser-mcp/sidecar && npm run test`
-- [ ] `cd /Users/anas/Documents/droid-control-browser-mcp/sidecar && npm run build`
-- [ ] `cd /Users/anas/Documents/droid-control-browser-mcp && npm run build`
+- [ ] `npm --prefix sidecar run test`
+- [ ] `npm --prefix sidecar run build`
+- [ ] `npm run build`
 - [ ] Manual Browser smoke in Fit mode.
 - [ ] Manual Browser smoke in Desktop, Tablet, and Mobile presets.
 - [ ] Open a local app URL.
