@@ -146,32 +146,39 @@ export default function Sidebar() {
   // the window sits idle; activity already triggers its own renders.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    const timer = setInterval(() => { setNow(Date.now()); }, 30_000);
-    return () => { clearInterval(timer); };
+    const timer = setInterval(() => {
+      setNow(Date.now());
+    }, 30_000);
+    return () => {
+      clearInterval(timer);
+    };
   }, []);
 
-  const toggleCollapse = (key: string) =>
-    { setCollapsed((prev) => {
+  const toggleCollapse = (key: string) => {
+    setCollapsed((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
       else next.add(key);
       return next;
-    }); };
+    });
+  };
 
   const visibleCountFor = (key: string) => shownCount.get(key) ?? SIDEBAR_VISIBLE_SESSION_LIMIT;
 
-  const showMore = (key: string) =>
-    { setShownCount((prev) => {
+  const showMore = (key: string) => {
+    setShownCount((prev) => {
       const cur = prev.get(key) ?? SIDEBAR_VISIBLE_SESSION_LIMIT;
       return new Map(prev).set(key, cur + SIDEBAR_VISIBLE_SESSION_LIMIT);
-    }); };
+    });
+  };
 
-  const showLess = (key: string) =>
-    { setShownCount((prev) => {
+  const showLess = (key: string) => {
+    setShownCount((prev) => {
       const next = new Map(prev);
       next.delete(key);
       return next;
-    }); };
+    });
+  };
 
   // A session reads as unread when the model has newer activity than the last
   // time the user opened it. The active session is always considered read.
@@ -179,7 +186,9 @@ export default function Sidebar() {
     m.appSessionId !== state.activeAppSessionId &&
     m.updatedAt > (state.sessionLastSeen[m.appSessionId] ?? m.updatedAt);
 
-  const startChat = (cwd: string) => { dispatch({ type: 'START_CHAT', cwd }); };
+  const startChat = (cwd: string) => {
+    dispatch({ type: 'START_CHAT', cwd });
+  };
 
   const pickAndChat = async () => {
     const dir = await pickDirectory();
@@ -207,15 +216,15 @@ export default function Sidebar() {
 
   // The sidecar publishes top-level sessions only; children live in the right panel.
   const chatSessions = useMemo<SessionSummary[]>(() => {
-    return (state.sessionOrder.map((id) => state.sessions[id]).filter(Boolean))
+    return state.sessionOrder
+      .map((id) => state.sessions[id])
+      .filter(Boolean)
       .filter((m) => !m.cwd)
       .sort((a, b) => b.updatedAt - a.updatedAt);
   }, [state.sessionOrder, state.sessions]);
 
   const workspaces = useMemo(() => {
-    const sessions = state.sessionOrder
-      .map((id) => state.sessions[id])
-      .filter(Boolean);
+    const sessions = state.sessionOrder.map((id) => state.sessions[id]).filter(Boolean);
     return buildWorkspaceSections(state.workspaceCwds, sessions);
   }, [state.sessionOrder, state.sessions, state.workspaceCwds]);
 
@@ -258,7 +267,9 @@ export default function Sidebar() {
           <div className="flex items-center gap-3 pl-3 pr-2 pt-0.5">
             {remaining > 0 && (
               <button
-                onClick={() => { showMore(sectionKey); }}
+                onClick={() => {
+                  showMore(sectionKey);
+                }}
                 className="text-[12px] text-droid-text-muted hover:text-droid-text transition-colors"
               >
                 Show more
@@ -266,7 +277,9 @@ export default function Sidebar() {
             )}
             {isExpanded && (
               <button
-                onClick={() => { showLess(sectionKey); }}
+                onClick={() => {
+                  showLess(sectionKey);
+                }}
                 className="text-[12px] text-droid-text-muted hover:text-droid-text transition-colors"
               >
                 Show less
@@ -309,7 +322,9 @@ export default function Sidebar() {
             <div>
               <div className="group/header flex items-center gap-1 px-1 pt-1 pb-1.5">
                 <button
-                  onClick={() => { toggleCollapse('__workspaces__'); }}
+                  onClick={() => {
+                    toggleCollapse('__workspaces__');
+                  }}
                   className="flex items-center gap-2 min-w-0 flex-1 text-left rounded-lg px-1 py-0.5 hover:bg-droid-elevated/40 transition-colors"
                 >
                   <ChevronRight
@@ -338,7 +353,9 @@ export default function Sidebar() {
                       <div key={ws.cwd}>
                         <div className="group flex items-center gap-1 px-1 py-1">
                           <button
-                            onClick={() => { toggleCollapse(ws.cwd); }}
+                            onClick={() => {
+                              toggleCollapse(ws.cwd);
+                            }}
                             className="flex items-center gap-2 min-w-0 flex-1 text-left rounded-lg px-1 py-0.5 hover:bg-droid-elevated/40 transition-colors"
                           >
                             <ChevronRight
@@ -350,7 +367,9 @@ export default function Sidebar() {
                             </span>
                           </button>
                           <button
-                            onClick={() => { startChat(ws.cwd); }}
+                            onClick={() => {
+                              startChat(ws.cwd);
+                            }}
                             title="New chat here"
                             className="p-0.5 rounded-md text-droid-text-muted/0 group-hover:text-droid-text-muted hover:text-droid-text hover:bg-droid-elevated/60 transition-colors shrink-0"
                           >
@@ -386,7 +405,9 @@ export default function Sidebar() {
             <div>
               <div className="group/header flex items-center gap-1 px-1 pt-1 pb-1.5">
                 <button
-                  onClick={() => { toggleCollapse('__chats__'); }}
+                  onClick={() => {
+                    toggleCollapse('__chats__');
+                  }}
                   className="flex items-center gap-2 min-w-0 flex-1 text-left rounded-lg px-1 py-0.5 hover:bg-droid-elevated/40 transition-colors"
                 >
                   <ChevronRight
@@ -425,7 +446,9 @@ export default function Sidebar() {
         </AnimatePresence>
         <div className="flex items-center gap-1">
           <button
-            onClick={() => { dispatch({ type: 'TOGGLE_SETTINGS' }); }}
+            onClick={() => {
+              dispatch({ type: 'TOGGLE_SETTINGS' });
+            }}
             className="flex min-w-0 flex-1 items-center gap-2.5 px-2 py-2 rounded-lg text-droid-text-secondary hover:text-droid-text hover:bg-droid-elevated transition-colors text-left"
             title="Open settings"
           >

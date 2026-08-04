@@ -59,7 +59,9 @@ export function useAppUpdate(): {
 } {
   const [, force] = useState(0);
   useEffect(() => {
-    const listener = () => { force((n) => n + 1); };
+    const listener = () => {
+      force((n) => n + 1);
+    };
     listeners.add(listener);
     return () => {
       listeners.delete(listener);

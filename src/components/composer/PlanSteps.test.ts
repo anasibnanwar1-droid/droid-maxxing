@@ -29,11 +29,20 @@ test('lists every step as a ring: filled when done, spinning when active, empty 
     { status: 'pending', text: 'Implement the tracker' },
   ]);
   // No numeric fractions anywhere.
-  assert.doesNotMatch(html, /[123]\/3/);
+  assert.doesNotMatch(html, /\d+\/\d+/);
   // The one completed step is the only filled ring with a check.
   assert.equal(html.match(/rounded-full bg-droid-accent/g)?.length, 1);
   assert.equal(html.match(/lucide-check/g)?.length, 1);
   // Header + active row rings spin at a medium pace; the pending ring stays empty.
+  const rows = [
+    ...html.matchAll(
+      /<div class="flex min-w-0 items-center gap-2\.5 px-4 py-1\.5[^>]*>.*?<\/div>/gs,
+    ),
+  ].map(([row]) => row);
+  const activeRow = rows.find((row) => row.includes('Start a new app'));
+  const pendingRow = rows.find((row) => row.includes('Implement the tracker'));
+  assert.match(activeRow ?? '', /animate-spin/);
+  assert.doesNotMatch(pendingRow ?? '', /animate-spin/);
   assert.equal(html.match(/animate-spin/g)?.length, 2);
   assert.equal(html.match(/animation-duration:1\.4s/g)?.length, 2);
   assert.equal(html.match(/border-\[1\.5px\]/g)?.length, 3);
@@ -49,9 +58,10 @@ test('the collapsed header keeps the current step visible with the spinning ring
   const html = render(steps, true);
   assert.match(html, /aria-expanded="false"/);
   // The collapsed row is the third step, spinning — not a generic counter.
-  assert.match(html, /Implement the tracker/);
-  assert.match(html, /animate-spin/);
-  assert.doesNotMatch(html, /3\/4/);
+  const header = /<button[^>]*aria-expanded="false"[^>]*>.*?<\/button>/s.exec(html)?.[0];
+  assert.match(header ?? '', /Implement the tracker/);
+  assert.match(header ?? '', /animate-spin/);
+  assert.doesNotMatch(html, /\d+\/\d+/);
 });
 
 test('the header ring only spins while the session is generating', () => {

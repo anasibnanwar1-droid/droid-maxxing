@@ -1,5 +1,5 @@
 import { ArrowLeft, Check, Loader2, RefreshCw } from 'lucide-react';
-import type { ReactNode } from 'react';
+import type { ReactNode, Ref } from 'react';
 import { Switch } from '../Switch';
 
 // Shared furniture for the first-run wizard, built entirely from the app's own
@@ -42,22 +42,33 @@ interface BtnProps {
   children: ReactNode;
   onClick: () => void;
   disabled?: boolean;
+  buttonRef?: Ref<HTMLButtonElement>;
 }
 
 const btnLayout =
   'w-full h-10 flex items-center justify-center gap-2 text-[13px] disabled:opacity-40 disabled:pointer-events-none focus:outline-none focus-visible:ring-2 focus-visible:ring-droid-accent/70 focus-visible:ring-offset-2 focus-visible:ring-offset-droid-bg';
 
-export function PrimaryButton({ children, onClick, disabled }: BtnProps) {
+export function PrimaryButton({ children, onClick, disabled, buttonRef }: BtnProps) {
   return (
-    <button onClick={onClick} disabled={disabled} className={`droid-button-primary ${btnLayout}`}>
+    <button
+      ref={buttonRef}
+      onClick={onClick}
+      disabled={disabled}
+      className={`droid-button-primary ${btnLayout}`}
+    >
       {children}
     </button>
   );
 }
 
-export function GhostButton({ children, onClick, disabled }: BtnProps) {
+export function GhostButton({ children, onClick, disabled, buttonRef }: BtnProps) {
   return (
-    <button onClick={onClick} disabled={disabled} className={`droid-button ${btnLayout}`}>
+    <button
+      ref={buttonRef}
+      onClick={onClick}
+      disabled={disabled}
+      className={`droid-button ${btnLayout}`}
+    >
       {children}
     </button>
   );
