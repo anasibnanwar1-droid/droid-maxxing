@@ -111,11 +111,11 @@ export interface SessionSummary {
   maxContextTokens?: number;
   // The auto-compaction trigger the sidecar last armed on the daemon for this
   // session (already clamped below the model window), cleared when arming
-  // failed. Recorded as diagnostic/persisted truth; the meter itself renders
-  // the context window only and compaction announces itself in the transcript.
+  // failed. Recorded as diagnostic/persisted truth; compaction itself is
+  // announced by the daemon and rendered in the transcript.
   compactionTokenLimit?: number;
-  // In-place daemon auto-compactions completed on this session; the UI uses it
-  // (plus the swap chain length) as the compaction generation for meter resets.
+  // In-place daemon auto-compactions completed on this session; the renderer
+  // uses it as a monotonic generation when invalidating stale context telemetry.
   autoCompactions?: number;
   createdAt: number;
   updatedAt: number;

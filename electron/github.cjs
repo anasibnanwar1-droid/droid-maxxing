@@ -168,38 +168,109 @@ async function prChecks(dir, { prNumber } = {}) {
   return { ok: true, checks };
 }
 
-async function prComments(dir, { prNumber } = {}) {
-  const selector = prSelector(prNumber);
-  if (selector == null) return { ok: false, reason: 'missing_pr', comments: [] };
-  const res = await gh(dir, ['pr', 'view', '--json', 'comments,reviews', '--', selector]);
-  if (res.spawnFailed) return { ok: false, reason: 'gh_unavailable', comments: [] };
-  if (res.code !== 0)
-    return { ok: false, reason: 'gh_error', message: res.stderr.trim(), comments: [] };
-  const data = parseJson(res.stdout, { comments: [], reviews: [] });
-  const comments = (data.comments || []).map((c, i) => ({
-    id: `comment-${i}-${c.createdAt || ''}`,
+function normalizePrComments(data, inlineRows = []) {
+  const normalizeReactionGroups = (groups) => {
+    if (!Array.isArray(groups)) return [];
+    return groups
+      .map((group) => ({
+        content: String(group?.content || '').toUpperCase(),
+        count: Number(group?.users?.totalCount || 0),
+      }))
+      .filter((reaction) => reaction.content && reaction.count > 0);
+  };
+  const normalizeRestReactions = (reactions) => {
+    const contentByField = {
+      '+1': 'THUMBS_UP',
+      '-1': 'THUMBS_DOWN',
+      laugh: 'LAUGH',
+      hooray: 'HOORAY',
+      confused: 'CONFUSED',
+      heart: 'HEART',
+      rocket: 'ROCKET',
+      eyes: 'EYES',
+    };
+    if (!reactions || typeof reactions !== 'object') return [];
+    return Object.entries(contentByField)
+      .map(([field, content]) => ({ content, count: Number(reactions[field] || 0) }))
+      .filter((reaction) => reaction.count > 0);
+  };
+  const comments = (Array.isArray(data?.comments) ? data.comments : []).map((c, i) => ({
+    id: `comment-${String(c.databaseId || c.id || `${i}-${c.createdAt || ''}`)}`,
     kind: 'comment',
     author: c.author?.login || 'unknown',
     body: c.body || '',
     createdAt: c.createdAt || null,
     url: c.url || null,
     state: null,
+    reactions: normalizeReactionGroups(c.reactionGroups),
   }));
-  const reviews = (data.reviews || [])
+  const reviews = (Array.isArray(data?.reviews) ? data.reviews : [])
     .filter((r) => (r.body && r.body.trim()) || (r.state && r.state !== 'COMMENTED'))
     .map((r, i) => ({
-      id: `review-${i}-${r.submittedAt || ''}`,
+      id: `review-${String(r.databaseId || r.id || `${i}-${r.submittedAt || ''}`)}`,
       kind: 'review',
       author: r.author?.login || 'unknown',
       body: r.body || '',
       createdAt: r.submittedAt || null,
-      url: null,
+      url: r.url || null,
       state: r.state ? String(r.state).toLowerCase() : null,
+      reactions: normalizeReactionGroups(r.reactionGroups),
     }));
-  const all = [...comments, ...reviews].sort(
+  const inline = (Array.isArray(inlineRows) ? inlineRows : []).map((comment, i) => ({
+    id: `inline-${String(comment.id || `${i}-${comment.created_at || ''}`)}`,
+    kind: 'inline',
+    author: comment.user?.login || 'unknown',
+    body: comment.body || '',
+    createdAt: comment.created_at || null,
+    url: comment.html_url || null,
+    state: null,
+    path: comment.path || null,
+    line: comment.line ?? comment.original_line ?? null,
+    diffHunk: comment.diff_hunk || null,
+    reactions: normalizeRestReactions(comment.reactions),
+  }));
+  return [...comments, ...reviews, ...inline].sort(
     (a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime(),
   );
-  return { ok: true, comments: all };
+}
+
+async function prComments(dir, { prNumber } = {}, runGh = gh) {
+  const selector = prSelector(prNumber);
+  if (selector == null) return { ok: false, reason: 'missing_pr', comments: [] };
+  const [view, inline] = await Promise.all([
+    runGh(dir, ['pr', 'view', '--json', 'comments,reviews', '--', selector]),
+    runGh(dir, ['api', '--paginate', '--slurp', `repos/{owner}/{repo}/pulls/${selector}/comments`]),
+  ]);
+  const viewSucceeded = !view.spawnFailed && view.code === 0;
+  const inlineSucceeded = !inline.spawnFailed && inline.code === 0;
+  if (!viewSucceeded && !inlineSucceeded) {
+    const message = [view.stderr, inline.stderr]
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .join('\n');
+    return {
+      ok: false,
+      reason: view.spawnFailed || inline.spawnFailed ? 'gh_unavailable' : 'gh_error',
+      message,
+      comments: [],
+    };
+  }
+  const data = viewSucceeded
+    ? parseJson(view.stdout, { comments: [], reviews: [] })
+    : { comments: [], reviews: [] };
+  const pages = inlineSucceeded ? parseJson(inline.stdout, []) : [];
+  const inlineRows = Array.isArray(pages)
+    ? pages.flatMap((page) => (Array.isArray(page) ? page : []))
+    : [];
+  const failures = [
+    ...(viewSucceeded ? [] : [view.stderr.trim() || 'Could not load PR conversation comments']),
+    ...(inlineSucceeded ? [] : [inline.stderr.trim() || 'Could not load inline review comments']),
+  ];
+  return {
+    ok: true,
+    ...(failures.length === 0 ? {} : { partial: true, message: failures.join('\n') }),
+    comments: normalizePrComments(data, inlineRows),
+  };
 }
 
 async function createPr(dir, { title, body = '', base, draft = false, head } = {}) {
@@ -233,6 +304,7 @@ module.exports = {
   available,
   // Exported for unit tests: the validation boundary for PR selectors.
   prSelector,
+  normalizePrComments,
   detectPr,
   prChecks,
   prComments,

@@ -492,8 +492,8 @@ export class ChildSessions {
       this.persist(child);
       this.d.timeline.replayChild(parentAppSessionId, childSessionId, loaded.sessionId);
       this.publish(child);
-      // Seed the child's context meter immediately; without this it stays
-      // blank until the first turn settles.
+      // Seed child context telemetry immediately so compaction policy can learn
+      // a provider-reported model window before the first turn settles.
       void this.d.context.refresh(this.contextTarget(parent, child, runtime));
       if (requestId) this.emitReady(runtime, child, requestId);
     } catch (error) {
@@ -770,6 +770,7 @@ export class ChildSessions {
     } catch {
       // Cleanup remains authoritative even when cancellation cannot resolve its target.
     }
+    this.d.compaction.forgetChild(child.identity);
     child.runtime = undefined;
     // The confirmed autonomy belonged to the closed runtime; a later open
     // re-reads it from the new provider session's init result.

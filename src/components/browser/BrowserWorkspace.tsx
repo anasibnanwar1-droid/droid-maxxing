@@ -63,7 +63,6 @@ export default function BrowserWorkspace({
     externalObscured ||
     state.settingsOpen ||
     state.commandPaletteOpen ||
-    state.contextMeterOpen ||
     !!state.pendingQuestion ||
     state.pendingPermission?.kind === 'spec';
   const frameRef = useRef<HTMLDivElement>(null);

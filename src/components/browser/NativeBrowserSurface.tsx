@@ -407,7 +407,7 @@ async function performNativeRequest(
       };
     }
     const bounds = options.bounds();
-    // While a full-screen overlay (settings, context meter, spec/question modal)
+    // While a full-screen overlay (settings or a spec/question modal)
     // obscures the pane, the BrowserView is detached; treat the surface as not
     // visible so an `open`/`reload` doesn't reattach the OS layer over the overlay.
     const visible =

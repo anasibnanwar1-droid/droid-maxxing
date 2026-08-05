@@ -86,6 +86,45 @@ test('syncSummaries persists autoCompactions and loadHistoricalSessions restores
   assert.equal(row?.summary.autoCompactions, 3);
 });
 
+test('historical compaction markers hydrate the summary generation', () => {
+  const cwd = join(home, 'workspace-external-compactions');
+  writeSession('external-compactions', cwd);
+  const index = new HistoryIndex();
+  index.syncSummaries([summary('external-compactions', cwd)]);
+  for (let i = 0; i < 4; i++) {
+    index.recordEvent({
+      id: `external-compaction-${String(i)}`,
+      appSessionId: 'external-compactions',
+      sourceSessionId: 'primary',
+      role: 'primary',
+      kind: 'compaction',
+      ts: i,
+    });
+    index.recordEvent({
+      id: `compaction-external-compactions-summary-${String(i)}`,
+      appSessionId: 'external-compactions',
+      sourceSessionId: 'external-compactions',
+      role: 'primary',
+      kind: 'compaction',
+      ts: i,
+    });
+  }
+  index.recordEvent({
+    id: 'compaction-worker-summary',
+    appSessionId: 'external-compactions',
+    sourceSessionId: 'worker-1',
+    role: 'worker',
+    kind: 'compaction',
+    ts: 5,
+  });
+  index.close();
+
+  const rows = loadHistoricalSessions({ workspaceCwds: [cwd] });
+
+  const row = rows.find((item) => item.summary.appSessionId === 'external-compactions');
+  assert.equal(row?.summary.autoCompactions, 4);
+});
+
 test('loadHistoricalSessions hides a Task-spawned child from its raw parent link', () => {
   const cwd = join(home, 'workspace-child');
   writeSession('real-session', cwd);

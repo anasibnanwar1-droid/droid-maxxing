@@ -163,14 +163,14 @@ test('primary refresh normalizes breakdown and persists estimated context', asyn
   );
 });
 
-test('exact primary usage wins while child usage changes totals only', async () => {
+test('plausible exact primary usage wins while child usage changes totals only', async () => {
   const h = createHarness();
   const { live, session } = registerLive(h, 'app-1');
   live.summary.maxContextTokens = 1_000;
   h.context.recordUsage('app-1', 'app-1', {
     tokensIn: 10,
     tokensOut: 3,
-    contextTokens: 1_200,
+    contextTokens: 800,
   });
   h.context.recordUsage('app-1', 'child-backend', {
     tokensIn: 20,
@@ -179,9 +179,9 @@ test('exact primary usage wins while child usage changes totals only', async () 
   });
   assert.equal(live.summary.tokensIn, 20);
   assert.equal(live.summary.tokensOut, 5);
-  assert.equal(live.summary.contextTokens, 1_200);
+  assert.equal(live.summary.contextTokens, 800);
   assert.equal(h.history.summaryPatches().get('app-1')?.tokensIn, 20);
-  assert.equal(h.history.summaryPatches().get('app-1')?.contextTokens, 1_200);
+  assert.equal(h.history.summaryPatches().get('app-1')?.contextTokens, 800);
 
   session.nextContextStats = {
     used: 100,
@@ -193,9 +193,157 @@ test('exact primary usage wins while child usage changes totals only', async () 
   await h.context.refresh(primaryTarget(h, live));
 
   const event = contextEvents(h).at(-1);
-  assert.equal(event?.stats.used, 1_000);
-  assert.equal(event?.stats.remaining, 0);
+  assert.equal(event?.stats.used, 800);
+  assert.equal(event?.stats.remaining, 200);
   assert.equal(event?.stats.accuracy, 'exact');
+});
+
+test('provider context wins over an impossible persisted exact reading', async () => {
+  const h = createHarness();
+  const { live, session } = registerLive(h, 'app-1');
+  live.summary.maxContextTokens = 1_000;
+  live.summary.contextTokens = 13_105_406;
+  live.summary.contextAccuracy = 'exact';
+  session.nextContextStats = {
+    used: 320,
+    remaining: 680,
+    limit: 1_000,
+    accuracy: ContextStatsAccuracy.Estimated,
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  };
+
+  await h.context.refresh(primaryTarget(h, live));
+
+  const event = contextEvents(h).at(-1);
+  assert.equal(event?.stats.used, 320);
+  assert.equal(event?.stats.remaining, 680);
+  assert.equal(live.summary.contextTokens, 320);
+  assert.equal(live.summary.contextAccuracy, 'estimated');
+});
+
+test('cumulative provider estimates rebase after restored in-place compactions', async () => {
+  const h = createHarness();
+  const { live, session } = registerLive(h, 'app-1');
+  live.summary.autoCompactions = 5;
+  session.nextContextStats = {
+    used: 397_000,
+    remaining: 0,
+    limit: 196_608,
+    accuracy: ContextStatsAccuracy.Estimated,
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  };
+  h.runtime.contextBreakdowns.set('app-1', {
+    modelId: 'model-default',
+    contextBudget: 100_000,
+    usedTokens: 397_000,
+    freeTokens: 0,
+    categories: [{ name: 'Messages', tokens: 380_000, colorKey: 'messages' }],
+  });
+
+  await h.context.refresh(primaryTarget(h, live));
+
+  const reset = contextEvents(h).at(-1)?.stats;
+  assert.equal(reset?.used, 0);
+  assert.equal(reset?.remaining, 196_608);
+  assert.equal(reset?.breakdown, undefined);
+  assert.equal(live.summary.contextTokens, 0);
+
+  session.nextContextStats = {
+    ...session.nextContextStats,
+    used: 409_000,
+  };
+  await h.context.refresh(primaryTarget(h, live));
+
+  const advanced = contextEvents(h).at(-1)?.stats;
+  assert.equal(advanced?.used, 12_000);
+  assert.equal(advanced?.remaining, 184_608);
+});
+
+test('a live compaction rebases a sub-window provider counter until the counter resets', async () => {
+  const h = createHarness();
+  const { live, session } = registerLive(h, 'app-1');
+  session.nextContextStats = {
+    used: 900,
+    remaining: 100,
+    limit: 1_000,
+    accuracy: ContextStatsAccuracy.Estimated,
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  };
+  await h.context.refresh(primaryTarget(h, live));
+
+  h.context.recordCompaction(primaryTarget(h, live));
+  session.nextContextStats = {
+    ...session.nextContextStats,
+    used: 950,
+    remaining: 50,
+  };
+  await h.context.refresh(primaryTarget(h, live));
+
+  const rebased = contextEvents(h).at(-1)?.stats;
+  assert.equal(rebased?.used, 50);
+  assert.equal(rebased?.remaining, 950);
+  assert.equal(live.summary.autoCompactions, 1);
+
+  session.nextContextStats = {
+    ...session.nextContextStats,
+    used: 40,
+    remaining: 960,
+  };
+  await h.context.refresh(primaryTarget(h, live));
+
+  const reset = contextEvents(h).at(-1)?.stats;
+  assert.equal(reset?.used, 40);
+  assert.equal(reset?.remaining, 960);
+});
+
+test('a zero-limit provider reading cannot poison a live compaction baseline', async () => {
+  const h = createHarness();
+  const { live, session } = registerLive(h, 'app-1');
+  session.nextContextStats = {
+    used: 900,
+    remaining: 100,
+    limit: 1_000,
+    accuracy: ContextStatsAccuracy.Estimated,
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  };
+  await h.context.refresh(primaryTarget(h, live));
+  h.context.recordCompaction(primaryTarget(h, live));
+
+  const eventCount = contextEvents(h).length;
+  session.nextContextStats = {
+    ...session.nextContextStats,
+    used: 0,
+    remaining: 0,
+    limit: 0,
+  };
+  await h.context.refresh(primaryTarget(h, live));
+  assert.equal(contextEvents(h).length, eventCount);
+
+  session.nextContextStats = {
+    ...session.nextContextStats,
+    used: 950,
+    remaining: 50,
+    limit: 1_000,
+  };
+  await h.context.refresh(primaryTarget(h, live));
+
+  const rebased = contextEvents(h).at(-1)?.stats;
+  assert.equal(rebased?.used, 50);
+  assert.equal(rebased?.remaining, 950);
+});
+
+test('usage without current-context telemetry updates totals only', () => {
+  const h = createHarness();
+  const { live } = registerLive(h, 'app-1');
+  live.summary.contextTokens = 320;
+  live.summary.contextAccuracy = 'estimated';
+
+  h.context.recordUsage('app-1', 'app-1', { tokensIn: 900, tokensOut: 40 });
+
+  assert.equal(live.summary.tokensIn, 900);
+  assert.equal(live.summary.tokensOut, 40);
+  assert.equal(live.summary.contextTokens, 320);
+  assert.equal(live.summary.contextAccuracy, 'estimated');
 });
 
 test('usage persistence failure keeps live telemetry and does not fail the turn', () => {
@@ -332,6 +480,59 @@ test('a refresh in flight across a primary compaction never republishes stale st
   await inFlight;
   assert.equal(contextEvents(h).length, 0);
   assert.equal(live.summary.contextTokens, 0);
+});
+
+test('compaction bookkeeping survives persistence failure without double incrementing', () => {
+  const h = createHarness();
+  const { live } = registerLive(h, 'app-1');
+  live.summary.contextTokens = 900;
+  h.history.nextSyncError = new Error('disk unavailable');
+
+  assert.throws(
+    () => h.context.recordCompaction(primaryTarget(h, live), 'summary-1'),
+    /disk unavailable/,
+  );
+  assert.equal(live.summary.contextTokens, 0);
+  assert.equal(live.summary.autoCompactions, 1);
+
+  h.context.recordCompaction(primaryTarget(h, live), 'summary-1');
+  assert.equal(live.summary.autoCompactions, 1);
+});
+
+test('an older compaction retry cannot roll back a newer generation', () => {
+  const h = createHarness();
+  const { live } = registerLive(h, 'app-1');
+  h.history.nextSyncError = new Error('disk unavailable');
+
+  assert.throws(
+    () => h.context.recordCompaction(primaryTarget(h, live), 'summary-1'),
+    /disk unavailable/,
+  );
+  h.context.recordCompaction(primaryTarget(h, live), 'summary-2');
+  h.context.recordCompaction(primaryTarget(h, live), 'summary-1');
+
+  assert.equal(live.summary.autoCompactions, 2);
+  assert.equal(live.summary.contextTokens, 0);
+});
+
+test('the same compaction ID remains distinct across provider sessions', async () => {
+  const h = createHarness();
+  const { live } = registerLive(h, 'app-1');
+  const first = addChild(h, live, 'worker-1', 'provider-a');
+  h.context.recordCompaction(first.target, 'summary-1');
+
+  const replacement = addChild(h, live, 'worker-1', 'provider-b');
+  h.context.recordCompaction(replacement.target, 'summary-1');
+  replacement.session.nextContextStats = {
+    used: 100,
+    remaining: 900,
+    limit: 1_000,
+    accuracy: ContextStatsAccuracy.Estimated,
+    updatedAt: '2026-08-05T09:00:00.000Z',
+  };
+  await h.context.refresh(replacement.target);
+
+  assert.equal(contextEvents(h).at(-1)?.stats.compactions, 2);
 });
 
 test('queued pre-compaction exact usage cannot undo the reset before a new turn', async () => {

@@ -206,11 +206,6 @@ export interface AppState {
   specMode: boolean;
   settingsOpen: boolean;
   commandPaletteOpen: boolean;
-  // The context-usage popover portals over the app; the native browser view is
-  // an OS layer painted above the DOM, so we track this flag to detach the
-  // browser while the popover is open (otherwise it renders behind it and
-  // swallows outside-click dismissal).
-  contextMeterOpen: boolean;
   theme: ThemeConfig;
   missionControlMode: boolean;
   draftChat: { cwd: string; branch?: string } | null;
@@ -386,6 +381,7 @@ type Action =
       tool: UtilityTool;
       tabId?: string;
       terminalId?: string;
+      cwd?: string;
       filePath?: string;
     }
   | { type: 'CLOSE_UTILITY_TAB'; tabId: string; appSessionId?: string }
@@ -395,6 +391,7 @@ type Action =
       tabId: string;
       appSessionId?: string;
       terminalId?: string;
+      cwd?: string;
       filePath?: string;
       label?: string;
     }
@@ -406,7 +403,6 @@ type Action =
   | { type: 'SET_DIFF_VIEW'; mode: DiffViewMode }
   | { type: 'TOGGLE_COMMAND_PALETTE' }
   | { type: 'CLOSE_COMMAND_PALETTE' }
-  | { type: 'SET_CONTEXT_METER_OPEN'; open: boolean }
   | { type: 'TOGGLE_SIDEBAR' }
   | { type: 'TOGGLE_SPEC_MODE' }
   | {
@@ -902,7 +898,6 @@ export const initialState: AppState = {
   specMode: persistedUiState.specMode ?? false,
   settingsOpen: false,
   commandPaletteOpen: false,
-  contextMeterOpen: false,
   theme: loadTheme(),
   missionControlMode: persistedUiState.missionControlMode ?? false,
   draftChat: null,
@@ -1061,6 +1056,44 @@ function invalidateSelectedChildOpening(state: AppState): AppState {
     : state;
 }
 
+function withHistoricalCompactionGeneration(
+  state: AppState,
+  appSessionId: string,
+  transcript: TranscriptEvent[],
+): AppState {
+  const session = state.sessions[appSessionId];
+  if (!session) return state;
+
+  const compactionMarkers = transcript.filter(
+    (event) => event.kind === 'compaction' && event.role === 'primary',
+  );
+  const restoredCompactions = Math.max(
+    compactionMarkers.filter((event) => event.id.startsWith('compaction-')).length,
+    compactionMarkers.filter((event) => !event.id.startsWith('compaction-')).length,
+  );
+  const currentCompactions = session.autoCompactions ?? 0;
+  if (restoredCompactions <= currentCompactions) return state;
+
+  const primaryContext = Object.fromEntries(
+    Object.entries(state.contextStats.primary).filter(([id]) => id !== appSessionId),
+  );
+  return {
+    ...state,
+    sessions: {
+      ...state.sessions,
+      [appSessionId]: {
+        ...session,
+        autoCompactions: restoredCompactions,
+        contextTokens: 0,
+        contextRemainingTokens: undefined,
+        contextAccuracy: undefined,
+        contextUpdatedAt: undefined,
+      },
+    },
+    contextStats: { ...state.contextStats, primary: primaryContext },
+  };
+}
+
 export function reducer(state: AppState, action: Action): AppState {
   return syncBrowserOpen(baseReducer(state, action));
 }
@@ -1176,10 +1209,24 @@ function baseReducer(state: AppState, action: Action): AppState {
 
     case 'SESSION_UPDATED': {
       const previous = state.sessions[action.session.appSessionId];
-      const m = applySessionOverride(
+      const incoming = applySessionOverride(
         action.session,
         state.sessionSettingOverrides[action.session.appSessionId],
       );
+      // Compaction generations are monotonic. A delayed resume summary must not
+      // put a restored session back on generation zero after history already
+      // proved that compactions occurred.
+      const m =
+        previous && (previous.autoCompactions ?? 0) > (incoming.autoCompactions ?? 0)
+          ? {
+              ...incoming,
+              autoCompactions: previous.autoCompactions,
+              contextTokens: previous.contextTokens,
+              contextRemainingTokens: previous.contextRemainingTokens,
+              contextAccuracy: previous.contextAccuracy,
+              contextUpdatedAt: previous.contextUpdatedAt,
+            }
+          : incoming;
       const previousCompactions =
         (previous?.compactedFromProviderSessionIds?.length ?? 0) + (previous?.autoCompactions ?? 0);
       const nextCompactions =
@@ -1704,22 +1751,26 @@ function baseReducer(state: AppState, action: Action): AppState {
         const changed = older.length > 0 || kept.length !== existing.length;
         const merged = changed ? [...older, ...kept] : existing;
         const hasMore = Boolean(action.olderCursor);
-        return {
-          ...state,
-          transcripts: changed
-            ? { ...state.transcripts, [action.appSessionId]: merged }
-            : state.transcripts,
-          historyCursor: { ...state.historyCursor, [action.appSessionId]: action.olderCursor },
-          historyLoadingOlder: { ...state.historyLoadingOlder, [action.appSessionId]: false },
-          sessionRestore: {
-            ...state.sessionRestore,
-            [action.appSessionId]: {
-              status: hasMore ? 'paged' : 'loaded',
-              loadedCount: merged.length,
-              hasMore,
+        return withHistoricalCompactionGeneration(
+          {
+            ...state,
+            transcripts: changed
+              ? { ...state.transcripts, [action.appSessionId]: merged }
+              : state.transcripts,
+            historyCursor: { ...state.historyCursor, [action.appSessionId]: action.olderCursor },
+            historyLoadingOlder: { ...state.historyLoadingOlder, [action.appSessionId]: false },
+            sessionRestore: {
+              ...state.sessionRestore,
+              [action.appSessionId]: {
+                status: hasMore ? 'paged' : 'loaded',
+                loadedCount: merged.length,
+                hasMore,
+              },
             },
           },
-        };
+          action.appSessionId,
+          merged,
+        );
       }
       // No-clobber replace: reconcile the authoritative, correctly-ordered
       // replay page with any live events already in state (a reconnect to a
@@ -1841,23 +1892,27 @@ function baseReducer(state: AppState, action: Action): AppState {
       // replayed progress when it actually carries entries.
       const existingProgress = state.progress[action.appSessionId] ?? [];
       const mergedProgress = action.progress.length > 0 ? action.progress : existingProgress;
-      return {
-        ...state,
-        progress: { ...state.progress, [action.appSessionId]: mergedProgress },
-        transcripts,
-        childSessions,
-        historyLoaded: { ...state.historyLoaded, [action.appSessionId]: true },
-        historyCursor: { ...state.historyCursor, [action.appSessionId]: action.olderCursor },
-        historyLoadingOlder: { ...state.historyLoadingOlder, [action.appSessionId]: false },
-        sessionRestore: {
-          ...state.sessionRestore,
-          [action.appSessionId]: {
-            status: hasMore ? 'paged' : 'loaded',
-            loadedCount: mergedTranscript.length,
-            hasMore,
+      return withHistoricalCompactionGeneration(
+        {
+          ...state,
+          progress: { ...state.progress, [action.appSessionId]: mergedProgress },
+          transcripts,
+          childSessions,
+          historyLoaded: { ...state.historyLoaded, [action.appSessionId]: true },
+          historyCursor: { ...state.historyCursor, [action.appSessionId]: action.olderCursor },
+          historyLoadingOlder: { ...state.historyLoadingOlder, [action.appSessionId]: false },
+          sessionRestore: {
+            ...state.sessionRestore,
+            [action.appSessionId]: {
+              status: hasMore ? 'paged' : 'loaded',
+              loadedCount: mergedTranscript.length,
+              hasMore,
+            },
           },
         },
-      };
+        action.appSessionId,
+        mergedTranscript,
+      );
     }
 
     case 'CLEAR_PERMISSION':
@@ -1902,7 +1957,7 @@ function baseReducer(state: AppState, action: Action): AppState {
         state.utilityPanels[appSessionId],
         action.tool,
         () => action.tabId ?? `${action.tool}:${appSessionId}`,
-        { terminalId: action.terminalId, filePath: action.filePath },
+        { terminalId: action.terminalId, cwd: action.cwd, filePath: action.filePath },
       );
       return {
         ...state,
@@ -1958,6 +2013,7 @@ function baseReducer(state: AppState, action: Action): AppState {
       const current = state.utilityPanels[appSessionId];
       const panel = updateUtilityTab(current, action.tabId, {
         terminalId: action.terminalId,
+        cwd: action.cwd,
         filePath: action.filePath,
         label: action.label,
       });
@@ -2071,9 +2127,6 @@ function baseReducer(state: AppState, action: Action): AppState {
 
     case 'CLOSE_COMMAND_PALETTE':
       return { ...state, commandPaletteOpen: false };
-
-    case 'SET_CONTEXT_METER_OPEN':
-      return { ...state, contextMeterOpen: action.open };
 
     case 'TOGGLE_SIDEBAR':
       return { ...state, sidebarCollapsed: !state.sidebarCollapsed };

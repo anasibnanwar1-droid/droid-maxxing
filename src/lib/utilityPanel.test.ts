@@ -76,9 +76,11 @@ test('terminal tabs are never persisted across app restarts', () => {
 });
 
 test('running terminal tabs pin their session worktree', () => {
-  let panel = openUtilityTool(undefined, 'terminal', () => 'terminal');
+  let panel = openUtilityTool(undefined, 'terminal', () => 'terminal', {
+    cwd: '/repo/original-worktree',
+  });
   panel = updateUtilityTab(panel, 'terminal', { terminalId: 'pty-1' });
-  assert.deepEqual(utilityTerminalCwds({ session: panel }, { session: '/repo/worktree' }), [
-    '/repo/worktree',
+  assert.deepEqual(utilityTerminalCwds({ session: panel }, { session: '/repo/new-worktree' }), [
+    '/repo/original-worktree',
   ]);
 });

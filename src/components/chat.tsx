@@ -2406,7 +2406,7 @@ export function MessageFeed({
   const showSpecCard = (specContent?.length ?? 0) > 0;
 
   // Compaction is in progress when the latest status line announces it and no
-  // completion line has arrived yet. Drives the centered "Compacting…" shimmer.
+  // completion marker has arrived yet. Drives the centered "Compacting…" shimmer.
   const compacting = last?.type === 'status' && isCompactingStatus(last.event.text);
 
   // A child session line self-indicates only while it is still running (it shows its

@@ -185,6 +185,13 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
           args: [target.kind === 'primary' ? target.appSessionId : target.childSessionId],
         });
       },
+      forgetSession: (appSessionId) => {
+        calls.push({
+          target: 'cleanup',
+          method: 'compaction.forgetSession',
+          args: [appSessionId],
+        });
+      },
     },
     isShutdownStarted: () => shutdownStarted,
     applyPendingSettingsToSummary: (item) => ({ ...item, ...projection }),
@@ -546,6 +553,29 @@ test('send lazily resumes once and sends the prompt exactly once', async () => {
   assert.deepEqual(provider.prompts, ['only once']);
 });
 
+test('an eager resume and immediate send share one provider load', async () => {
+  const harness = createHarness([summary('warm-app', 'warm-provider')]);
+  const provider = queueLoad(harness, 'warm-provider');
+  let releaseLimit: (limit: number) => void = () => undefined;
+  harness.setCompactionLimit(
+    () =>
+      new Promise<number>((resolve) => {
+        releaseLimit = resolve;
+      }),
+  );
+
+  const warming = harness.lifecycle.resume('warm-app');
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const sending = harness.lifecycle.send('warm-app', 'send while warming');
+
+  assert.equal(harness.runtime.loadCalls.length, 1);
+  releaseLimit(800);
+  assert.equal(await warming, true);
+  await sending;
+  assert.deepEqual(provider.prompts, ['send while warming']);
+  assert.equal(harness.runtime.loadCalls.length, 1);
+});
+
 test('failed lazy resume emits only the original load error', async () => {
   const harness = createHarness([summary('lazy-failure-app', 'lazy-failure-provider')]);
   harness.runtime.loadQueue.set('lazy-failure-provider', [new Error('provider load failed')]);
@@ -807,6 +837,7 @@ test('close follows ownership order and closeAll closes its initial snapshot', a
         'session.close',
         'mcp.close',
         'browser.close',
+        'compaction.forgetSession',
         'runtimeCaches.clear',
       ].includes(call.method),
     )
@@ -814,6 +845,7 @@ test('close follows ownership order and closeAll closes its initial snapshot', a
   assert.deepEqual(closeTrace, [
     'unsubscribe:child',
     'session.close:child',
+    'compaction.forgetSession:owner',
     'unsubscribe:owner',
     'mcp.close:mcp-1',
     'session.close:owner',

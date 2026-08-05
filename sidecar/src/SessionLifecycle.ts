@@ -77,7 +77,7 @@ export interface SessionLifecycleDependencies {
   makeAskUserHandler: (ref: { id: string }) => AskUserHandler;
   compaction: Pick<
     SessionCompaction,
-    'resolveLimit' | 'arm' | 'subscribePrimary' | 'afterTurn' | 'cancel'
+    'resolveLimit' | 'arm' | 'subscribePrimary' | 'afterTurn' | 'cancel' | 'forgetSession'
   >;
   isShutdownStarted: () => boolean;
   childSessions: Pick<ChildSessions, 'attachParent' | 'closeParent'>;
@@ -96,6 +96,7 @@ export interface SessionLifecycleDependencies {
 }
 export class SessionLifecycle {
   private readonly deferredCloses = new WeakMap<LiveSession, DeferredClose>();
+  private readonly resumeOperations = new Map<string, Promise<boolean>>();
 
   constructor(private readonly dependencies: SessionLifecycleDependencies) {}
   async create(command: SessionCreateCommand): Promise<void> {
@@ -188,6 +189,21 @@ export class SessionLifecycle {
   }
 
   async resume(requestedAppSessionId: string): Promise<boolean> {
+    const d = this.dependencies;
+    const historical = d.registry.getCanonicalSummary(requestedAppSessionId);
+    const appSessionId = historical?.appSessionId ?? requestedAppSessionId;
+    const pending = this.resumeOperations.get(appSessionId);
+    if (pending) return pending;
+
+    const operation = this.resumeOnce(requestedAppSessionId).finally(() => {
+      if (this.resumeOperations.get(appSessionId) === operation)
+        this.resumeOperations.delete(appSessionId);
+    });
+    this.resumeOperations.set(appSessionId, operation);
+    return operation;
+  }
+
+  private async resumeOnce(requestedAppSessionId: string): Promise<boolean> {
     const d = this.dependencies;
     d.ensureConnected();
     const historical = d.registry.getCanonicalSummary(requestedAppSessionId);
@@ -438,6 +454,9 @@ export class SessionLifecycle {
       d.compaction.cancel(this.primaryAutomaticCompactionTarget(liveSession));
     });
     await run(() => {
+      d.compaction.forgetSession(liveSession.summary.appSessionId);
+    });
+    await run(() => {
       liveSession.unsubscribe?.();
     });
     for (const server of liveSession.mcpServers) {
@@ -549,6 +568,7 @@ export class SessionLifecycle {
       await runBestEffortAsync(() =>
         this.dependencies.childSessions.closeParent(liveSession.summary.appSessionId),
       );
+    if (liveSession) this.dependencies.compaction.forgetSession(liveSession.summary.appSessionId);
     await Promise.all(mcpServers.map((server) => runBestEffortAsync(() => server.close())));
     if (session) await runBestEffortAsync(() => session.close());
     if (

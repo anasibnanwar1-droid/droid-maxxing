@@ -4,7 +4,6 @@ import {
   classifyPermission,
   confirmationType,
   extractCompactionNotification,
-  extractDroidWorkingState,
   mapProgress,
   permissionSignature,
   normalizeStreamEvent,
@@ -53,14 +52,14 @@ test('extractCompactionNotification detects the compaction completion with remov
         notification: { type: 'session_compacted', summaryId: 's1', removedCount: 42 },
       },
     }),
-    { kind: 'completed', removedCount: 42 },
+    { kind: 'completed', removedCount: 42, summaryId: 's1' },
   );
   // A missing or malformed count falls back to zero instead of NaN.
   assert.deepEqual(
     extractCompactionNotification({
       params: { notification: { type: 'session_compacted', summaryId: 's1' } },
     }),
-    { kind: 'completed', removedCount: 0 },
+    { kind: 'completed', removedCount: 0, summaryId: 's1' },
   );
 });
 
@@ -78,21 +77,6 @@ test('extractCompactionNotification ignores unrelated notifications', () => {
     null,
   );
   assert.equal(extractCompactionNotification({}), null);
-});
-
-test('extractDroidWorkingState detects transitions that settle compaction', () => {
-  assert.equal(
-    extractDroidWorkingState({
-      params: { notification: { type: 'droid_working_state_changed', newState: 'streaming' } },
-    }),
-    'streaming',
-  );
-  assert.equal(
-    extractDroidWorkingState({
-      params: { notification: { type: 'message', role: 'assistant' } },
-    }),
-    undefined,
-  );
 });
 
 test('token usage maps context to the daemon threshold formula (in + out + cacheRead)', () => {
@@ -118,6 +102,29 @@ test('token usage maps context to the daemon threshold formula (in + out + cache
     tokensIn: 150,
     tokensOut: 40,
     contextTokens: 17,
+  });
+});
+
+test('cumulative session usage never masquerades as current context usage', () => {
+  const normalized = normalizeStreamEvent('app-session-1', 'app-session-1', 'primary', {
+    type: 'session_token_usage_changed',
+    inclusiveTokenUsage: {
+      inputTokens: 1_235_355,
+      outputTokens: 242_687,
+      cacheReadTokens: 12_864_536,
+      cacheCreationTokens: 0,
+    },
+    tokenUsage: {
+      inputTokens: 979_933,
+      outputTokens: 179_985,
+      cacheReadTokens: 11_945_488,
+      cacheCreationTokens: 0,
+    },
+  } as never);
+
+  assert.deepEqual(normalized?.tokens, {
+    tokensIn: 14_099_891,
+    tokensOut: 242_687,
   });
 });
 

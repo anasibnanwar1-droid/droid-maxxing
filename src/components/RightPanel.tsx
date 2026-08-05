@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useStore } from '../hooks/useStore';
 import { useSessionLive } from '../hooks/useSessionLive';
 import { useGitEnvironment } from '../hooks/useGitEnvironment';
+import { useSessionWorkingDirectory } from '../hooks/useSessionWorkingDirectory';
 import { usePullRequest } from '../hooks/usePullRequest';
 import { interruptChild } from '../lib/commands';
 import { resolveReasoningEffortDisplay } from '../lib/reasoningEffort';
@@ -96,7 +97,7 @@ function ChildSessionRow({
 export default function RightPanel() {
   const { state, dispatch } = useStore();
   const activeSession = state.activeAppSessionId ? state.sessions[state.activeAppSessionId] : null;
-  const cwd = activeSession?.cwd ?? '';
+  const cwd = useSessionWorkingDirectory(activeSession);
 
   const [diffMode, setDiffMode] = useState<DiffStatMode>('worktree');
   const [view, setView] = useState<'context' | 'pr'>('context');
@@ -164,7 +165,7 @@ export default function RightPanel() {
       data-testid="right-context-panel"
       className="shrink-0 w-[300px] pt-11 pb-3 pr-3 h-full flex items-start"
     >
-      <div className="droid-card w-full max-h-full">
+      <div className={`droid-card w-full max-h-full ${view === 'pr' ? 'h-full min-h-0' : ''}`}>
         {/* Header (no close button — the top toolbar button toggles this panel) */}
         <div className="flex items-center justify-between pl-3 pr-3 h-11 shrink-0">
           <span className="text-[13px] font-semibold text-droid-text">Context</span>
@@ -172,7 +173,7 @@ export default function RightPanel() {
         </div>
 
         {view === 'pr' && pr.pr ? (
-          <div className="min-h-0 flex-1">
+          <div className="min-h-0 flex-1 overflow-hidden">
             <PullRequestPanel
               cwd={cwd}
               pr={pr.pr}
@@ -194,7 +195,7 @@ export default function RightPanel() {
               <div>
                 <SectionHeader label="Environment" />
                 <EnvironmentSection
-                  cwd={activeSession.cwd}
+                  cwd={cwd}
                   env={git.env}
                   branches={git.branches}
                   worktrees={git.worktrees}

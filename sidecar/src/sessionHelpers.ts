@@ -500,16 +500,10 @@ function resumedUsage(historical?: SessionSummary): ResumedUsage {
   return {
     tokensIn: historical?.tokensIn ?? 0,
     tokensOut: historical?.tokensOut ?? 0,
-    contextTokens: historical?.contextTokens ?? 0,
-    ...(historical?.contextRemainingTokens !== undefined
-      ? { contextRemainingTokens: historical.contextRemainingTokens }
-      : {}),
-    ...(historical?.contextAccuracy !== undefined
-      ? { contextAccuracy: historical.contextAccuracy }
-      : {}),
-    ...(historical?.contextUpdatedAt !== undefined
-      ? { contextUpdatedAt: historical.contextUpdatedAt }
-      : {}),
+    // Current-context telemetry is live provider state, not durable session
+    // history. A resumed session refreshes it immediately; carrying an old
+    // exact stream reading across clients can pin the meter at 100% forever.
+    contextTokens: 0,
     ...(historical?.autoCompactions !== undefined
       ? { autoCompactions: historical.autoCompactions }
       : {}),

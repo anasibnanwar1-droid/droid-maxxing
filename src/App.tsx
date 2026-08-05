@@ -8,6 +8,7 @@ import {
   listFactoryDefaults,
   listSessions,
   loadSessionHistory,
+  resumeSession,
   sendNativeBrowserResult,
   openChild,
   newChildOpenRequestId,
@@ -47,6 +48,7 @@ import { FilesWorkspace } from './components/files/FilesWorkspace';
 import { closeTerminalForTab } from './lib/terminal';
 import { utilityPanelForSession, type UtilityTool } from './lib/utilityPanel';
 import { isTerminalInputTarget, isTerminalTabShortcut } from './lib/keyboardShortcuts';
+import { useSessionWorkingDirectory } from './hooks/useSessionWorkingDirectory';
 
 function ContextListIcon({ className }: { className?: string }) {
   return (
@@ -85,7 +87,8 @@ export default function App() {
   const showWizard =
     !embedded && onboard.ready && (forceWizard || shouldShowOnboarding(onboard.onboarding));
   const activeSession = state.activeAppSessionId ? state.sessions[state.activeAppSessionId] : null;
-  const repoStatus = useRepoStatus(activeSession?.cwd ?? '');
+  const workingDirectory = useSessionWorkingDirectory(activeSession);
+  const repoStatus = useRepoStatus(workingDirectory);
   // Mission Control is active only for a session explicitly created for it,
   // not merely because the compose preview is open.
   const isMissionControlView = activeSession?.sessionPurpose === 'mission-control';
@@ -132,9 +135,10 @@ export default function App() {
         type: 'OPEN_UTILITY_TOOL',
         tool,
         tabId: tool === 'terminal' ? crypto.randomUUID() : undefined,
+        cwd: tool === 'terminal' ? workingDirectory : undefined,
       });
     },
-    [dispatch],
+    [dispatch, workingDirectory],
   );
 
   useEffect(() => {
@@ -287,6 +291,15 @@ export default function App() {
     dispatch({ type: 'SESSION_RESTORE_START', appSessionId: activeSession.appSessionId });
     loadSessionHistory(activeSession.appSessionId);
   }, [activeSession, embedded, state.historyLoaded, dispatch]);
+
+  useEffect(() => {
+    if (embedded || !activeSession) return;
+    if (!['paused', 'completed', 'failed'].includes(activeSession.phase)) return;
+    // Warm a historical provider session as soon as the user opens it. The
+    // history request above is sent first, so external compaction markers are
+    // restored before resume publishes its fresh live context snapshot.
+    resumeSession(activeSession.appSessionId);
+  }, [activeSession?.appSessionId, activeSession?.phase, embedded]);
 
   useEffect(() => {
     if (embedded || !activeSession) return;
@@ -470,7 +483,7 @@ export default function App() {
                     }}
                     renderTab={(tab, { overlayOpen }) => {
                       if (tab.tool === 'review') {
-                        return <ReviewPanel cwd={activeSession.cwd} />;
+                        return <ReviewPanel cwd={workingDirectory} />;
                       }
                       if (tab.tool === 'browser') {
                         return (
@@ -491,7 +504,7 @@ export default function App() {
                             tabId={tab.id}
                             terminalId={tab.terminalId}
                             appSessionId={activeSession.appSessionId}
-                            cwd={activeSession.cwd}
+                            cwd={tab.cwd ?? workingDirectory}
                             onCreated={(terminalId, label) => {
                               dispatch({
                                 type: 'UPDATE_UTILITY_TAB',
@@ -506,7 +519,7 @@ export default function App() {
                       }
                       return (
                         <FilesWorkspace
-                          root={activeSession.cwd}
+                          root={workingDirectory}
                           selectedPath={tab.filePath}
                           onSelectPath={(filePath) => {
                             dispatch({
@@ -569,8 +582,8 @@ export default function App() {
           data-electron-drag-region
           className="absolute top-0 right-0 h-9 z-40 flex items-center gap-1 pr-3"
         >
-          {activeSession?.cwd && (
-            <EditorOpenMenu cwd={activeSession.cwd} hasRepo={!!repoStatus} variant="toolbar" />
+          {workingDirectory && (
+            <EditorOpenMenu cwd={workingDirectory} hasRepo={!!repoStatus} variant="toolbar" />
           )}
           {canToggleContext && (
             <button

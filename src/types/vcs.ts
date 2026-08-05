@@ -193,16 +193,26 @@ export interface PrChecksResult {
 
 export interface PrComment {
   id: string;
-  kind: 'comment' | 'review';
+  kind: 'comment' | 'review' | 'inline';
   author: string;
   body: string;
   createdAt: string | null;
   url: string | null;
   state: string | null;
+  reactions: PrReaction[];
+  path?: string | null;
+  line?: number | null;
+  diffHunk?: string | null;
+}
+
+export interface PrReaction {
+  content: string;
+  count: number;
 }
 
 export interface PrCommentsResult {
   ok: boolean;
+  partial?: boolean;
   reason?: string;
   message?: string;
   comments: PrComment[];

@@ -491,6 +491,26 @@ test('status appends keep unique IDs, clock behavior, compact type, source, and 
   assert.equal(second.compactType, undefined);
 });
 
+test('automatic compaction appends a persistent provider-identified divider', () => {
+  const harness = createHarness({ now: () => 200 });
+
+  harness.timeline.appendCompaction('app-1', 42, 'worker-1', 'worker', 'summary-1');
+
+  assert.deepEqual(harness.recorded, [
+    {
+      id: 'compaction-worker-1-summary-1',
+      appSessionId: 'app-1',
+      sourceSessionId: 'worker-1',
+      role: 'worker',
+      ts: 200,
+      kind: 'compaction',
+      removedCount: 42,
+      compactType: 'auto',
+    },
+  ]);
+  assert.deepEqual(harness.trace, ['record:compaction-worker-1-summary-1', 'emit:event.appended']);
+});
+
 test('history listing preserves loader ordering and reports loader failures', () => {
   const sessions = [historyEntry('newer', 2), historyEntry('older', 1)];
   let fail = false;

@@ -1,7 +1,7 @@
 // Watchdog timers for the daemon's in-place auto-compaction. The
 // "compacting" flag on a session is set by a compacting_conversation
-// notification and normally cleared by session_compacted (or an idle working
-// state). If that completion never arrives (dropped notification, daemon
+// notification and cleared only by the authoritative session_compacted event.
+// If that completion never arrives (dropped notification, daemon
 // error, subscription swap), the flag would latch forever and the session
 // would ignore every send and interrupt. These timers bound how long the flag
 // may stay up before the owner is forced to settle it.

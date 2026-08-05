@@ -1,15 +1,14 @@
-import type { ContextBreakdownResult, GetContextStatsResult } from '@factory/droid-sdk';
-
 import type { FactoryRuntime, FactorySession } from './DroidRuntime.js';
-import type {
-  ContextBreakdownSnapshot,
-  ContextStatsSnapshot,
-  ServerEvent,
-  SessionSummary,
-} from './protocol.js';
+import {
+  applyExactUsage,
+  cappedContextSnapshot,
+  contextBreakdownSnapshot,
+  contextStatsSnapshot,
+  rebasedContextSnapshot,
+} from './contextSnapshots.js';
+import type { ContextStatsSnapshot, ServerEvent, SessionSummary } from './protocol.js';
 import type { SessionRegistry } from './SessionRegistry.js';
 import type { LiveSession } from './SessionLifecycle.js';
-import { numberValue, stringValue } from './values.js';
 
 export interface ProviderOperationTarget {
   session: FactorySession;
@@ -39,7 +38,7 @@ export type ContextOperationTarget = LiveOperationTarget | ChildOperationTarget;
 export interface NormalizedTokenUsage {
   tokensIn: number;
   tokensOut: number;
-  contextTokens: number;
+  contextTokens?: number;
 }
 
 export interface UsageOffset {
@@ -65,6 +64,12 @@ interface ContextPoller {
 export class SessionContext {
   private readonly usageOffsets = new Map<string, UsageOffset>();
   private readonly snapshots = new Map<string, ContextStatsSnapshot>();
+  // Some daemon versions keep getContextStats().used cumulative across
+  // in-place compactions even though limit remains the model window. Remember
+  // the raw counter at each compaction generation so the UI can show growth in
+  // the current generation instead of an impossible used > limit snapshot.
+  private readonly providerUsageBaselines = new Map<string, { generation: number; used: number }>();
+  private readonly latestProviderUsage = new Map<string, number>();
   // Compactions recorded per context resource. The count doubles as a staleness
   // generation: stats fetched before a compaction must never be published after
   // it, or the meter would jump back to the pre-compaction reading.
@@ -77,6 +82,7 @@ export class SessionContext {
   // a late pre-compaction usage event delivered after the poll can never
   // resurrect the old meter.
   private readonly pendingCompactionResets = new Set<string>();
+  private readonly recordedCompactions = new Map<string, Map<string, number>>();
   private readonly pollers = new Map<string, ContextPoller>();
   private epoch = 0;
 
@@ -95,16 +101,17 @@ export class SessionContext {
     };
 
     // Child turns contribute to cumulative usage, but the primary summary owns
-    // the context meter. Child meters are published from their own refreshes.
+    // current-context telemetry. Children publish their own refreshes.
     // While a compaction reset is pending, usage events that were queued before
     // the compaction carry pre-compaction context tokens; applying them would
     // undo the reset, so context fields wait for the next provider refresh.
-    const publishContext =
+    const canPublishContext =
       sourceSessionId === stableAppSessionId &&
       !this.pendingCompactionResets.has(primaryResourceKey(stableAppSessionId));
-    if (publishContext) {
-      nextSummary.contextTokens = usage.contextTokens;
-      if (usage.contextTokens > 0) {
+    const currentContextTokens = canPublishContext ? usage.contextTokens : undefined;
+    if (currentContextTokens !== undefined) {
+      nextSummary.contextTokens = currentContextTokens;
+      if (currentContextTokens > 0) {
         nextSummary.contextAccuracy = 'exact';
         nextSummary.contextUpdatedAt = new Date().toISOString();
       }
@@ -117,7 +124,7 @@ export class SessionContext {
       this.dependencies.registry.updateSummary(stableAppSessionId, {
         tokensIn: nextSummary.tokensIn,
         tokensOut: nextSummary.tokensOut,
-        ...(publishContext
+        ...(currentContextTokens !== undefined
           ? {
               contextTokens: nextSummary.contextTokens,
               contextAccuracy: nextSummary.contextAccuracy,
@@ -185,28 +192,62 @@ export class SessionContext {
     }
   }
 
-  recordCompaction(target: ContextOperationTarget): void {
+  recordCompaction(target: ContextOperationTarget, compactionId?: string): void {
+    const key = contextResourceKey(target);
+    const retryKey = compactionRetryKey(target);
+    const recordedGeneration = compactionId
+      ? this.recordedCompactions.get(retryKey)?.get(compactionId)
+      : undefined;
     if (isChildTarget(target)) {
       // Completion settlement may synchronously detach a standalone child before
       // accounting runs. Preserve that established generation residue; the
       // captured target still keeps refreshes inert, while top-level teardown
       // clears all owned generations after blocking new notifications.
-      const key = childIdentityKey(target);
-      this.compactions.set(key, (this.compactions.get(key) ?? 0) + 1);
+      if (
+        recordedGeneration !== undefined &&
+        (this.compactions.get(key) ?? 0) >= recordedGeneration
+      )
+        return;
+      const generation = (this.compactions.get(key) ?? 0) + 1;
+      this.compactions.set(key, generation);
+      this.captureProviderUsageBaseline(key, generation);
+      this.rememberCompaction(retryKey, compactionId, generation);
       return;
     }
 
     if (!target.isCurrent()) return;
     const liveSession = this.dependencies.registry.getLive(target.appSessionId);
     if (liveSession?.session !== target.session || !target.isCurrent()) return;
-    const key = contextResourceKey(target);
-    this.compactions.set(key, (this.compactions.get(key) ?? 0) + 1);
-    this.pendingCompactionResets.add(key);
-    this.dependencies.registry.updateSummary(target.appSessionId, {
+    if (
+      recordedGeneration !== undefined &&
+      (liveSession.summary.autoCompactions ?? 0) > recordedGeneration
+    )
+      return;
+    const generation = recordedGeneration ?? (liveSession.summary.autoCompactions ?? 0) + 1;
+    if (recordedGeneration === undefined) {
+      this.compactions.set(key, (this.compactions.get(key) ?? 0) + 1);
+      this.captureProviderUsageBaseline(key, generation);
+      this.pendingCompactionResets.add(key);
+      this.rememberCompaction(retryKey, compactionId, generation);
+    }
+    const patch = {
       contextTokens: 0,
       contextAccuracy: undefined,
-      autoCompactions: (liveSession.summary.autoCompactions ?? 0) + 1,
-    });
+      autoCompactions: generation,
+    } as const;
+    try {
+      this.dependencies.registry.updateSummary(target.appSessionId, patch);
+    } catch (error) {
+      // Runtime telemetry must advance even when its historical snapshot cannot
+      // be persisted. A retry with the same compactionId reuses this generation
+      // and only retries persistence, so the meter cannot double-increment.
+      liveSession.summary = { ...liveSession.summary, ...patch };
+      this.dependencies.emit({
+        type: 'session.updated',
+        session: { ...liveSession.summary, updatedAt: Date.now() },
+      });
+      throw error;
+    }
   }
 
   // A new primary turn begins: pre-compaction stream events from the previous
@@ -225,6 +266,9 @@ export class SessionContext {
     const key = childIdentityKey(identity);
     this.snapshots.delete(key);
     this.compactions.delete(key);
+    this.providerUsageBaselines.delete(key);
+    this.latestProviderUsage.delete(key);
+    this.forgetRecordedCompactions(key);
   }
 
   stopSession(liveSession: LiveSession): void {
@@ -237,7 +281,10 @@ export class SessionContext {
     const key = primaryResourceKey(appSessionId);
     this.snapshots.delete(key);
     this.compactions.delete(key);
+    this.providerUsageBaselines.delete(key);
+    this.latestProviderUsage.delete(key);
     this.pendingCompactionResets.delete(key);
+    this.forgetRecordedCompactions(key);
   }
 
   clearAll(): void {
@@ -246,7 +293,10 @@ export class SessionContext {
     this.pollers.clear();
     this.snapshots.clear();
     this.compactions.clear();
+    this.providerUsageBaselines.clear();
+    this.latestProviderUsage.clear();
     this.pendingCompactionResets.clear();
+    this.recordedCompactions.clear();
     this.usageOffsets.clear();
   }
 
@@ -274,6 +324,10 @@ export class SessionContext {
     if (!target.isCurrent()) return;
     const liveSession = this.dependencies.registry.getLive(target.appSessionId);
     if (!liveSession) return;
+    // A zero window is a transient/invalid provider reading, not a real empty
+    // context. Ignore it without disturbing the last valid cumulative counter
+    // or the post-compaction baseline used to rebase the next reading.
+    if (providerSnapshot.limit <= 0) return;
 
     const windowModelId =
       providerSnapshot.breakdown?.modelId ??
@@ -281,12 +335,17 @@ export class SessionContext {
     if (windowModelId !== undefined && providerSnapshot.limit > 0)
       this.dependencies.noteContextWindow(windowModelId, providerSnapshot.limit);
 
+    const normalizedProviderSnapshot = this.normalizeProviderWindowSnapshot(
+      key,
+      providerSnapshot,
+      isChildTarget(target) ? generation : (liveSession.summary.autoCompactions ?? generation),
+    );
     const snapshot = isChildTarget(target)
       ? {
-          ...providerSnapshot,
+          ...normalizedProviderSnapshot,
           compactions: this.compactions.get(key) ?? 0,
         }
-      : applyExactUsage(providerSnapshot, liveSession.summary);
+      : applyExactUsage(normalizedProviderSnapshot, liveSession.summary);
 
     if (!target.isCurrent()) return;
     // Do NOT clear pendingCompactionResets here: a late pre-compaction usage
@@ -354,6 +413,55 @@ export class SessionContext {
       stats: snapshot,
     });
   }
+
+  private captureProviderUsageBaseline(key: string, generation: number): void {
+    const used = this.latestProviderUsage.get(key);
+    if (used !== undefined) this.providerUsageBaselines.set(key, { generation, used });
+  }
+
+  private rememberCompaction(key: string, compactionId: string | undefined, generation: number) {
+    if (compactionId === undefined) return;
+    let entries = this.recordedCompactions.get(key);
+    if (!entries) {
+      entries = new Map();
+      this.recordedCompactions.set(key, entries);
+    }
+    entries.set(compactionId, generation);
+  }
+
+  private forgetRecordedCompactions(resourceKey: string): void {
+    const prefix = `${resourceKey}:provider:`;
+    for (const key of this.recordedCompactions.keys()) {
+      if (key.startsWith(prefix)) this.recordedCompactions.delete(key);
+    }
+  }
+
+  private normalizeProviderWindowSnapshot(
+    key: string,
+    snapshot: ContextStatsSnapshot,
+    generation: number,
+  ): ContextStatsSnapshot {
+    this.latestProviderUsage.set(key, snapshot.used);
+    let baseline = this.providerUsageBaselines.get(key);
+    if (baseline?.generation === generation) {
+      if (snapshot.used >= baseline.used) return rebasedContextSnapshot(snapshot, baseline.used);
+      this.providerUsageBaselines.delete(key);
+      baseline = undefined;
+    }
+
+    if (snapshot.used <= snapshot.limit) {
+      this.providerUsageBaselines.delete(key);
+      return snapshot;
+    }
+
+    if (generation <= 0) return cappedContextSnapshot(snapshot);
+
+    if (baseline?.generation !== generation) {
+      baseline = { generation, used: snapshot.used };
+      this.providerUsageBaselines.set(key, baseline);
+    }
+    return rebasedContextSnapshot(snapshot, baseline.used);
+  }
 }
 
 function isChildTarget(target: ContextOperationTarget): target is ChildOperationTarget {
@@ -374,68 +482,7 @@ function contextResourceKey(target: ContextOperationTarget): string {
     : primaryResourceKey(target.sourceSessionId);
 }
 
-function applyExactUsage(
-  snapshot: ContextStatsSnapshot,
-  summary: SessionSummary,
-): ContextStatsSnapshot {
-  const exact =
-    summary.contextAccuracy === 'exact' && summary.contextTokens > 0
-      ? summary.contextTokens
-      : undefined;
-  if (exact === undefined || snapshot.limit <= 0) return snapshot;
-  const used = Math.min(exact, snapshot.limit);
-  return {
-    ...snapshot,
-    used,
-    remaining: Math.max(0, snapshot.limit - used),
-    accuracy: 'exact',
-    breakdown: snapshot.breakdown
-      ? {
-          ...snapshot.breakdown,
-          usedTokens: used,
-          freeTokens: Math.max(0, snapshot.limit - used),
-        }
-      : undefined,
-  };
-}
-
-function contextStatsSnapshot(
-  stats: GetContextStatsResult,
-  breakdown: ContextBreakdownSnapshot | undefined,
-): ContextStatsSnapshot {
-  return {
-    used: stats.used,
-    remaining: stats.remaining,
-    limit: stats.limit,
-    accuracy: stats.accuracy,
-    updatedAt: stats.updatedAt,
-    breakdown,
-  };
-}
-
-function contextBreakdownSnapshot(raw: unknown): ContextBreakdownSnapshot | undefined {
-  const value = raw as Partial<ContextBreakdownResult> | undefined;
-  if (!value) return undefined;
-  const categories = Array.isArray(value.categories)
-    ? value.categories
-        .map((item) => ({
-          name: stringValue(item.name) ?? 'Context',
-          tokens: numberValue(item.tokens) ?? 0,
-          colorKey: stringValue(item.colorKey),
-        }))
-        .filter((item) => item.tokens > 0)
-    : [];
-  const usedTokens =
-    numberValue(value.usedTokens) ?? categories.reduce((sum, item) => sum + item.tokens, 0);
-  const contextBudget =
-    numberValue(value.contextBudget) ?? usedTokens + (numberValue(value.freeTokens) ?? 0);
-  if (contextBudget <= 0 && usedTokens <= 0 && categories.length === 0) return undefined;
-  return {
-    modelId: stringValue(value.modelId),
-    modelDisplayName: stringValue(value.modelDisplayName),
-    contextBudget,
-    usedTokens,
-    freeTokens: numberValue(value.freeTokens) ?? Math.max(0, contextBudget - usedTokens),
-    categories,
-  };
+function compactionRetryKey(target: ContextOperationTarget): string {
+  const providerSessionId = target.providerSessionId;
+  return `${contextResourceKey(target)}:provider:${String(providerSessionId.length)}:${providerSessionId}`;
 }

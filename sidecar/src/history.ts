@@ -515,7 +515,9 @@ export class HistoryIndex {
 
   summaryPatches(): Map<string, Partial<SessionSummary>> {
     const rows = this.db.prepare('SELECT * FROM app_sessions').all() as Record<string, unknown>[];
-    return summaryPatchesFromRows(rows);
+    const patches = summaryPatchesFromRows(rows);
+    applyStoredCompactionGenerations(this.db, patches);
+    return patches;
   }
 
   hiddenProviderSessionIds(): Set<string> {
@@ -875,9 +877,37 @@ function readStoredSummaryPatches(): Map<string, Partial<SessionSummary>> {
   try {
     assertCanonicalHistorySchema(db);
     const rows = db.prepare('SELECT * FROM app_sessions').all() as Record<string, unknown>[];
-    return summaryPatchesFromRows(rows);
+    const patches = summaryPatchesFromRows(rows);
+    applyStoredCompactionGenerations(db, patches);
+    return patches;
   } finally {
     db.close();
+  }
+}
+
+function applyStoredCompactionGenerations(
+  db: DatabaseSync,
+  patches: Map<string, Partial<SessionSummary>>,
+): void {
+  const rows = db
+    .prepare(
+      `SELECT app_session_id,
+              SUM(CASE WHEN id LIKE 'compaction-%' THEN 1 ELSE 0 END) AS live_count,
+              SUM(CASE WHEN id NOT LIKE 'compaction-%' THEN 1 ELSE 0 END) AS history_count
+       FROM events
+       WHERE kind = 'compaction'
+         AND app_session_id IS NOT NULL
+         AND (source_session_id = app_session_id OR source_session_id = 'primary')
+       GROUP BY app_session_id`,
+    )
+    .all() as Record<string, unknown>[];
+  for (const row of rows) {
+    const appSessionId = stringValue(row.app_session_id);
+    const liveCount = numberValue(row.live_count) ?? 0;
+    const historyCount = numberValue(row.history_count) ?? 0;
+    const patch = appSessionId ? patches.get(appSessionId) : undefined;
+    if (!patch) continue;
+    patch.autoCompactions = Math.max(patch.autoCompactions ?? 0, liveCount, historyCount);
   }
 }
 

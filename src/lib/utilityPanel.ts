@@ -5,6 +5,7 @@ export interface UtilityTab {
   tool: UtilityTool;
   label: string;
   terminalId?: string;
+  cwd?: string;
   filePath?: string;
 }
 
@@ -34,7 +35,7 @@ export function openUtilityTool(
   panel: UtilityPanelState | undefined,
   tool: UtilityTool,
   createId: () => string,
-  details: Partial<Pick<UtilityTab, 'terminalId' | 'filePath'>> = {},
+  details: Partial<Pick<UtilityTab, 'terminalId' | 'cwd' | 'filePath'>> = {},
 ): UtilityPanelState {
   const current = panel ?? CLOSED_UTILITY_PANEL;
   const existing = SINGLETON_TOOLS.has(tool)
@@ -88,7 +89,7 @@ export function activateUtilityTab(
 export function updateUtilityTab(
   panel: UtilityPanelState | undefined,
   tabId: string,
-  details: Partial<Pick<UtilityTab, 'terminalId' | 'filePath' | 'label'>>,
+  details: Partial<Pick<UtilityTab, 'terminalId' | 'cwd' | 'filePath' | 'label'>>,
 ): UtilityPanelState {
   const current = panel ?? CLOSED_UTILITY_PANEL;
   const index = current.tabs.findIndex((tab) => tab.id === tabId);
@@ -192,8 +193,11 @@ export function utilityTerminalCwds(
   sessionCwds: Record<string, string | undefined>,
 ): string[] {
   return Object.entries(panels)
-    .filter(([, panel]) => panel.tabs.some((tab) => tab.tool === 'terminal'))
-    .map(([appSessionId]) => sessionCwds[appSessionId])
+    .flatMap(([appSessionId, panel]) =>
+      panel.tabs
+        .filter((tab) => tab.tool === 'terminal')
+        .map((tab) => tab.cwd ?? sessionCwds[appSessionId]),
+    )
     .filter((cwd): cwd is string => Boolean(cwd));
 }
 

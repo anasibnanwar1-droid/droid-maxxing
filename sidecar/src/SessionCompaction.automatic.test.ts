@@ -43,7 +43,9 @@ interface ChildTestState {
   configurationGeneration: number;
 }
 
-function createHarness(): Harness {
+function createHarness(
+  options: { failContextOnce?: boolean; failTimelineOnce?: boolean } = {},
+): Harness {
   const calls: RecordedCall[] = [];
   const generations = new Map<string, number>();
   const targets = new Map<string, AutomaticCompactionTarget>();
@@ -59,6 +61,10 @@ function createHarness(): Harness {
     },
     context: {
       recordCompaction: (target) => {
+        if (options.failContextOnce) {
+          options.failContextOnce = false;
+          throw new Error('context persistence failed');
+        }
         const id = targetId(target);
         generations.set(id, (generations.get(id) ?? 0) + 1);
         trace.push(`record:${id}`);
@@ -70,6 +76,13 @@ function createHarness(): Harness {
       preserveUsage: () => undefined,
     },
     timeline: {
+      appendCompaction: (_appSessionId, removedCount, sourceSessionId) => {
+        if (options.failTimelineOnce) {
+          options.failTimelineOnce = false;
+          throw new Error('timeline persistence failed');
+        }
+        trace.push(`compaction:${sourceSessionId}:${String(removedCount)}`);
+      },
       appendStatus: (_appSessionId, text, _compactType, sourceSessionId) => {
         trace.push(`status:${sourceSessionId}:${text}`);
       },
@@ -253,7 +266,7 @@ test(
     assert.deepEqual(h.trace, [
       'watchdog:clear:300000',
       'settle:p:app-1:active=false',
-      'status:app-1:Compaction complete.',
+      'compaction:app-1:12',
       'record:p:app-1',
       'refresh:p:app-1',
     ]);
@@ -269,7 +282,7 @@ test(
       'watchdog:clear:300000',
       'settle:c:app-1/worker-1:active=false',
       'drive:c:app-1/worker-1:next worker prompt',
-      'status:worker-1:Compaction complete.',
+      'compaction:worker-1:12',
       'record:c:app-1/worker-1',
       'refresh:c:app-1/worker-1',
     ]);
@@ -277,7 +290,7 @@ test(
 );
 
 test(
-  'idle, late completion, cancel, and stale notification stay effect-free',
+  'idle cannot finish compaction and duplicate completion stays effect-free',
   { concurrency: false },
   (t) => {
     const h = createHarness();
@@ -301,7 +314,19 @@ test(
     h.trace.length = 0;
 
     assert.equal(h.compaction.handleChildNotification(child.target, idleNotification()), false);
-    assert.deepEqual(h.trace, ['watchdog:clear:300000', 'settle:c:parent/worker:active=false']);
+    assert.equal(child.child.autoCompacting, true);
+    assert.deepEqual(h.trace, []);
+    h.trace.length = 0;
+    assert.equal(h.compaction.handleChildNotification(child.target, completedNotification()), true);
+    assert.equal(child.child.autoCompacting, false);
+    assert.deepEqual(h.trace, [
+      'watchdog:clear:300000',
+      'settle:c:parent/worker:active=false',
+      'compaction:worker:12',
+      'record:c:parent/worker',
+      'refresh:c:parent/worker',
+    ]);
+
     h.trace.length = 0;
     assert.equal(h.compaction.handleChildNotification(child.target, completedNotification()), true);
     assert.deepEqual(h.trace, []);
@@ -319,6 +344,87 @@ test(
     assert.deepEqual(h.trace, []);
   },
 );
+
+test('a completion without a summaryId is effect-free', { concurrency: false }, (t) => {
+  const h = createHarness();
+  const timers = observeTimers(h.trace);
+  t.after(() => {
+    h.compaction.clearAll();
+    timers.restore();
+  });
+  const child = addChild(h, 'parent', 'worker');
+  h.compaction.handleChildNotification(child.target, startedNotification());
+  h.trace.length = 0;
+
+  assert.equal(h.compaction.handleChildNotification(child.target, anonymousCompletion()), true);
+  assert.equal(child.child.autoCompacting, true);
+  assert.deepEqual(h.trace, []);
+});
+
+test('session_compacted is authoritative when the start notification was missed', () => {
+  const h = createHarness();
+  const primary = addPrimary(h, 'app-1');
+  primary.live.streaming = true;
+  h.compaction.subscribePrimary(primary.target);
+  h.trace.length = 0;
+
+  primary.session.emitNotification(completedNotification('summary-without-start'));
+
+  assert.equal(primary.live.autoCompacting, false);
+  assert.deepEqual(h.trace, ['compaction:app-1:12', 'record:p:app-1', 'refresh:p:app-1']);
+});
+
+test('closed primary and child resources release completed-summary dedupe state', () => {
+  const h = createHarness();
+  const primary = addPrimary(h, 'app-1');
+  const child = addChild(h, 'app-1', 'worker-1');
+
+  h.compaction.handleChildNotification(child.target, completedNotification());
+  h.compaction.handleChildNotification(child.target, completedNotification());
+  assert.equal(h.generations.get('c:app-1/worker-1'), 1);
+
+  h.compaction.subscribePrimary(primary.target);
+  primary.session.emitNotification(completedNotification());
+  primary.session.emitNotification(completedNotification());
+  assert.equal(h.generations.get('p:app-1'), 1);
+
+  h.compaction.forgetChild({ parentAppSessionId: 'app-1', childSessionId: 'worker-1' });
+  h.compaction.forgetSession('app-1');
+  h.compaction.handleChildNotification(child.target, completedNotification());
+  primary.session.emitNotification(completedNotification());
+
+  assert.equal(h.generations.get('c:app-1/worker-1'), 2);
+  assert.equal(h.generations.get('p:app-1'), 2);
+});
+
+test('automatic completion retries synchronous lifecycle persistence before deduping', () => {
+  for (const failure of ['failTimelineOnce', 'failContextOnce'] as const) {
+    const h = createHarness({ [failure]: true });
+    const child = addChild(h, 'parent', failure);
+
+    assert.throws(
+      () => h.compaction.handleChildNotification(child.target, completedNotification()),
+      /persistence failed/,
+    );
+    h.compaction.handleChildNotification(child.target, completedNotification());
+    h.compaction.handleChildNotification(child.target, completedNotification());
+
+    assert.equal(h.generations.get(`c:parent/${failure}`), 1);
+    assert.equal(h.trace.filter((entry) => entry === `compaction:${failure}:12`).length, 1);
+  }
+});
+
+test('an older completed summary replay remains deduplicated', () => {
+  const h = createHarness();
+  const child = addChild(h, 'parent', 'worker');
+
+  h.compaction.handleChildNotification(child.target, completedNotification('summary-1'));
+  h.compaction.handleChildNotification(child.target, completedNotification('summary-2'));
+  h.compaction.handleChildNotification(child.target, completedNotification('summary-1'));
+
+  assert.equal(h.generations.get('c:parent/worker'), 2);
+  assert.equal(h.trace.filter((entry) => entry === 'compaction:worker:12').length, 2);
+});
 
 test(
   'post-turn tightening, expiry, and clearAll settle only the current target',
@@ -452,10 +558,18 @@ function startedNotification(): Record<string, unknown> {
   };
 }
 
-function completedNotification(): Record<string, unknown> {
+function completedNotification(summaryId = 'summary-1'): Record<string, unknown> {
   return {
     params: {
-      notification: { type: 'session_compacted', summaryId: 'summary-1', removedCount: 12 },
+      notification: { type: 'session_compacted', summaryId, removedCount: 12 },
+    },
+  };
+}
+
+function anonymousCompletion(): Record<string, unknown> {
+  return {
+    params: {
+      notification: { type: 'session_compacted', removedCount: 12 },
     },
   };
 }

@@ -78,8 +78,8 @@ export function daemonDefaultCompactionTokenLimit(maxContextTokens?: number): nu
 }
 
 // Single derivation of the auto-compaction threshold, shared by create, resume,
-// model change, worker open, and settings changes so every session's trigger
-// matches the limit the ContextMeter shows. Precedence: the UI settings
+// model change, worker open, and settings changes so every daemon session gets
+// the same resolved policy. Precedence: the UI settings
 // snapshot when it carries any signal (per-model override -> global, where an
 // explicit null global means "cleared: use the daemon's model default" and an
 // explicit per-model map suppresses cleared CLI per-model overrides), otherwise

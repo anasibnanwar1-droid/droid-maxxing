@@ -8,7 +8,7 @@ import {
   AutoCompactionWatchdogs,
   POST_TURN_AUTO_COMPACTION_WATCHDOG_MS,
 } from './autoCompactionWatchdog.js';
-import { extractCompactionNotification, extractDroidWorkingState } from './normalize.js';
+import { extractCompactionNotification } from './normalize.js';
 import type {
   FactoryDefaultSettings,
   SessionInteractionMode,
@@ -76,6 +76,10 @@ export type CompactionResourceKey =
       childSessionId: string;
     } & ChildGenerationSnapshot);
 
+type CompactionResourceIdentity =
+  | { kind: 'primary'; appSessionId: string }
+  | { kind: 'child'; parentAppSessionId: string; childSessionId: string };
+
 export type ChildGenerationSnapshot = Pick<
   ChildAutomaticCompactionTarget,
   'parentGeneration' | 'runtimeGeneration' | 'turnGeneration' | 'configurationGeneration'
@@ -124,13 +128,20 @@ export class SessionCompaction {
   private uiSettings: CompactionTokenLimitPatch = {};
   private retuneRevision = 0;
   private epoch = 0;
+  private readonly completionProgress = new Map<
+    string,
+    Map<string, { timelineRecorded: boolean; contextRecorded: boolean }>
+  >();
   private readonly watchdogs: AutoCompactionWatchdogs<CompactionResourceKey>;
   private readonly execution: SessionCompactionExecution;
 
   constructor(private readonly dependencies: SessionCompactionDependencies) {
-    this.watchdogs = new AutoCompactionWatchdogs(compactionResourceId, (key) => {
-      this.onWatchdogExpired(key);
-    });
+    this.watchdogs = new AutoCompactionWatchdogs<CompactionResourceKey>(
+      (key) => compactionResourceId(key),
+      (key) => {
+        this.onWatchdogExpired(key);
+      },
+    );
     this.execution = new SessionCompactionExecution(dependencies, {
       subscribePrimary: (liveSession) => {
         this.subscribePrimary(this.primaryAutomaticTarget(liveSession));
@@ -236,6 +247,18 @@ export class SessionCompaction {
     this.watchdogs.clear(compactionResourceKey(target));
   }
 
+  forgetSession(appSessionId: string): void {
+    this.forgetCompletedSummaries({ kind: 'primary', appSessionId });
+  }
+
+  forgetChild(identity: { parentAppSessionId: string; childSessionId: string }): void {
+    this.forgetCompletedSummaries({
+      kind: 'child',
+      parentAppSessionId: identity.parentAppSessionId,
+      childSessionId: identity.childSessionId,
+    });
+  }
+
   async compact(
     appSessionId: string,
     customInstructions?: string,
@@ -246,6 +269,7 @@ export class SessionCompaction {
   clearAll(): void {
     this.epoch += 1;
     this.retuneRevision += 1;
+    this.completionProgress.clear();
     this.watchdogs.clearAll();
   }
 
@@ -277,22 +301,53 @@ export class SessionCompaction {
     note: Record<string, unknown>,
   ): boolean {
     const compaction = extractCompactionNotification(note);
-    if (!compaction) {
-      if (extractDroidWorkingState(note) === 'idle') this.setAutoCompacting(target, false);
-      return false;
-    }
+    if (!compaction) return false;
     if (compaction.kind === 'started') {
       this.setAutoCompacting(target, true);
       this.appendAutomaticStatus(target, 'Compacting conversation...');
       return true;
     }
-    if (!automaticCompactionActive(target)) return true;
 
+    const resourceId = `${compactionResourceId(compactionResourceKey(target))}:${target.providerSessionId}`;
+    // Completion identity is required for idempotency. The daemon contract
+    // supplies summaryId; an unidentifiable notification cannot be applied
+    // safely because a replay would double-count the generation and divider.
+    if (compaction.summaryId === undefined) return true;
+    let summaries = this.completionProgress.get(resourceId);
+    if (!summaries) {
+      summaries = new Map();
+      this.completionProgress.set(resourceId, summaries);
+    }
+    let progress = summaries.get(compaction.summaryId);
+    if (!progress) {
+      progress = { timelineRecorded: false, contextRecorded: false };
+      summaries.set(compaction.summaryId, progress);
+    }
+    if (progress.timelineRecorded && progress.contextRecorded) return true;
     this.setAutoCompacting(target, false);
-    this.appendAutomaticStatus(target, 'Compaction complete.');
-    this.dependencies.context.recordCompaction(target);
+    if (!progress.timelineRecorded) {
+      this.dependencies.timeline.appendCompaction(
+        target.appSessionId,
+        compaction.removedCount,
+        target.kind === 'primary' ? target.appSessionId : target.childSessionId,
+        target.kind === 'primary' ? 'primary' : target.role,
+        compaction.summaryId,
+      );
+      progress.timelineRecorded = true;
+    }
+    if (!progress.contextRecorded) {
+      this.dependencies.context.recordCompaction(target, compaction.summaryId);
+      progress.contextRecorded = true;
+    }
     void this.dependencies.context.refresh(target).catch(ignoreError);
     return true;
+  }
+
+  private forgetCompletedSummaries(key: CompactionResourceIdentity): void {
+    const prefix = `${compactionResourceId(key)}:`;
+    for (const resourceId of this.completionProgress.keys()) {
+      if (resourceId.startsWith(prefix)) this.completionProgress.delete(resourceId);
+    }
   }
 
   private setAutoCompacting(target: AutomaticCompactionTarget, active: boolean): void {
@@ -435,7 +490,7 @@ function compactionResourceKey(target: AutomaticCompactionTarget): CompactionRes
       };
 }
 
-function compactionResourceId(key: CompactionResourceKey): string {
+function compactionResourceId(key: CompactionResourceIdentity): string {
   return key.kind === 'primary'
     ? JSON.stringify(['primary', key.appSessionId])
     : JSON.stringify(['child', key.parentAppSessionId, key.childSessionId]);

@@ -203,6 +203,29 @@ export class SessionTimeline {
     });
   }
 
+  appendCompaction(
+    appSessionId: string,
+    removedCount: number,
+    sourceSessionId = appSessionId,
+    role: SessionRole = 'primary',
+    summaryId?: string,
+  ): void {
+    const now = this.dependencies.now ?? Date.now;
+    const ts = now();
+    this.append({
+      id: summaryId
+        ? `compaction-${sourceSessionId}-${summaryId}`
+        : `compaction-${ts.toString(36)}-${(this.statusSeq++).toString(36)}`,
+      appSessionId,
+      sourceSessionId,
+      role,
+      ts,
+      kind: 'compaction',
+      removedCount,
+      compactType: 'auto',
+    });
+  }
+
   private loadStandard(
     appSessionId: string,
     providerSessionId: string,

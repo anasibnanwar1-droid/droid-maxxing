@@ -1,11 +1,21 @@
 import { useRef, useState } from 'react';
-import { ChevronLeft, ExternalLink, Loader2, MessageSquare, RefreshCw } from 'lucide-react';
+import { AnimatePresence, motion } from 'framer-motion';
+import {
+  ChevronLeft,
+  ChevronRight,
+  ExternalLink,
+  Loader2,
+  RefreshCw,
+  SendHorizontal,
+} from 'lucide-react';
 import { CheckStatusIcon, PrStateIcon } from './GithubIcons';
 import { bucketToStatus, checksSummary, prKind, prKindLabel } from '../../lib/github';
 import { postPrComment } from '../../lib/github';
 import { openExternal } from '../../lib/onboarding';
 import { toast } from '../../lib/toast';
 import type { PrCheck, PrComment, PullRequest } from '../../types/vcs';
+import { Markdown } from '../Markdown';
+import { normalizePrCommentBody, prCommentPreview } from '../../lib/prCommentPresentation';
 
 function relativeTime(iso: string | null): string {
   if (!iso) return '';
@@ -77,16 +87,26 @@ function ChecksBlock({
             disabled={!check.link}
             className="flex w-full items-center gap-2 rounded-lg px-1.5 py-1.5 text-left transition-colors hover:bg-droid-elevated/50 disabled:cursor-default"
           >
-            <CheckStatusIcon status={bucketToStatus(check.bucket)} size={14} />
-            <span className="min-w-0 flex-1 truncate text-[12.5px] text-droid-text">
-              {check.name}
+            <span className="self-start pt-0.5">
+              <CheckStatusIcon status={bucketToStatus(check.bucket)} size={14} />
             </span>
-            {check.workflow && (
-              <span className="shrink-0 truncate text-[10px] text-droid-text-muted/70">
-                {check.workflow}
+            <span className="min-w-0 flex-1">
+              <span className="block break-words text-[12.5px] leading-snug text-droid-text">
+                {check.name}
               </span>
+              <span className="mt-0.5 flex flex-wrap gap-x-1.5 gap-y-0.5 text-[10px] text-droid-text-muted/70">
+                {check.workflow && <span>{check.workflow}</span>}
+                <span>{check.state || check.bucket}</span>
+              </span>
+              {check.description && (
+                <span className="mt-0.5 block break-words text-[10.5px] leading-snug text-droid-text-muted">
+                  {check.description}
+                </span>
+              )}
+            </span>
+            {check.link && (
+              <ExternalLink className="h-3 w-3 shrink-0 self-start text-droid-text-muted/60" />
             )}
-            {check.link && <ExternalLink className="h-3 w-3 shrink-0 text-droid-text-muted/60" />}
           </button>
         ))
       )}
@@ -117,9 +137,42 @@ function CommentsBlock({
           <div className="px-1.5 pb-1.5 text-[12px] text-droid-text-muted">No comments yet</div>
         )
       ) : (
-        comments.map((comment) => (
-          <div key={comment.id} className="px-1.5 py-1.5">
-            <div className="flex items-center gap-1.5 text-[11px]">
+        <>
+          {error ? <ErrorRow message={error} /> : null}
+          <div className="space-y-1.5 px-1.5">
+            {comments.map((comment) => (
+              <CommentCard key={comment.id} comment={comment} />
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function CommentCard({ comment }: { comment: PrComment }) {
+  const [expanded, setExpanded] = useState(false);
+  const body = normalizePrCommentBody(comment.body);
+  const commentUrl = comment.url;
+  const lineSuffix =
+    comment.line === null || comment.line === undefined ? '' : `:${String(comment.line)}`;
+  const location =
+    comment.kind === 'inline' && comment.path ? `${comment.path}${lineSuffix}` : null;
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-droid-border bg-droid-elevated/20 font-sans transition-colors hover:border-droid-border-hover/80">
+      <div className="flex items-start">
+        <button
+          type="button"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((value) => !value)}
+          className="flex min-w-0 flex-1 items-start gap-2 px-2.5 py-2.5 text-left"
+        >
+          <ChevronRight
+            className={`mt-0.5 h-3.5 w-3.5 shrink-0 text-droid-text-muted transition-transform duration-200 ease-out ${expanded ? 'rotate-90' : ''}`}
+          />
+          <span className="min-w-0 flex-1">
+            <span className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs">
               <span className="font-medium text-droid-text">{comment.author}</span>
               {comment.state && (
                 <span className="rounded bg-droid-elevated px-1 py-0.5 text-[9px] uppercase tracking-wide text-droid-text-muted">
@@ -127,16 +180,89 @@ function CommentsBlock({
                 </span>
               )}
               <span className="text-droid-text-muted/70">{relativeTime(comment.createdAt)}</span>
-            </div>
-            {comment.body && (
-              <div className="mt-0.5 whitespace-pre-wrap break-words text-[12px] leading-snug text-droid-text-secondary">
-                {comment.body}
-              </div>
+            </span>
+            {location && (
+              <span className="mt-0.5 block truncate font-mono text-[9.5px] text-droid-text-muted/75">
+                {location}
+              </span>
             )}
-          </div>
-        ))
-      )}
+            <AnimatePresence initial={false}>
+              {!expanded && (
+                <motion.span
+                  key="preview"
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
+                  className="mt-1 block overflow-hidden text-xs leading-[1.45] text-droid-text-secondary"
+                >
+                  {prCommentPreview(body)}
+                </motion.span>
+              )}
+            </AnimatePresence>
+            {comment.reactions.length > 0 && <ReactionChips reactions={comment.reactions} />}
+          </span>
+        </button>
+        {commentUrl && (
+          <button
+            type="button"
+            title="Open comment on GitHub"
+            onClick={() => void openExternal(commentUrl)}
+            className="mr-1.5 mt-1.5 rounded p-1 text-droid-text-muted/50 transition-colors hover:bg-droid-elevated hover:text-droid-text-muted"
+          >
+            <ExternalLink className="h-3 w-3" />
+          </button>
+        )}
+      </div>
+      <AnimatePresence initial={false}>
+        {expanded && (
+          <motion.div
+            key="comment-body"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
+            className="overflow-hidden"
+          >
+            <div className="border-t border-droid-border/60 px-3 py-2.5 break-words text-xs leading-[1.5] text-droid-text-secondary [&>div]:!space-y-2 [&>div]:!text-xs [&>div]:!leading-[1.5] [&_code]:!text-[11px]">
+              {body ? <Markdown allowDiagrams={false}>{body}</Markdown> : 'No written comment.'}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
+  );
+}
+
+const REACTION_DETAILS: Record<string, { emoji: string; label: string }> = {
+  THUMBS_UP: { emoji: '👍', label: 'thumbs up' },
+  THUMBS_DOWN: { emoji: '👎', label: 'thumbs down' },
+  LAUGH: { emoji: '😄', label: 'laugh' },
+  HOORAY: { emoji: '🎉', label: 'hooray' },
+  CONFUSED: { emoji: '😕', label: 'confused' },
+  HEART: { emoji: '❤️', label: 'heart' },
+  ROCKET: { emoji: '🚀', label: 'rocket' },
+  EYES: { emoji: '👀', label: 'eyes' },
+};
+
+function ReactionChips({ reactions }: { reactions: PrComment['reactions'] }) {
+  return (
+    <span className="mt-1.5 flex flex-wrap gap-1">
+      {reactions.map((reaction) => {
+        const details = REACTION_DETAILS[reaction.content];
+        if (!details) return null;
+        return (
+          <span
+            key={reaction.content}
+            title={`${reaction.count} ${details.label}`}
+            className="inline-flex items-center gap-1 rounded-full border border-droid-border/80 bg-droid-bg/50 px-1.5 py-0.5 text-[10px] leading-none text-droid-text-muted"
+          >
+            <span aria-hidden="true">{details.emoji}</span>
+            <span>{reaction.count}</span>
+          </span>
+        );
+      })}
+    </span>
   );
 }
 
@@ -194,7 +320,7 @@ export function PullRequestPanel({
   };
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <div className="flex items-center gap-1.5 px-2 pb-1 pt-2">
         <button
           onClick={onBack}
@@ -275,7 +401,7 @@ export function PullRequestPanel({
             {posting ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
             ) : (
-              <MessageSquare className="h-3.5 w-3.5" />
+              <SendHorizontal className="h-3.5 w-3.5" />
             )}
           </button>
         </div>

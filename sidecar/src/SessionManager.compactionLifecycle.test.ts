@@ -88,6 +88,58 @@ test('[C0] Create arms daemon compaction without client-side turn compaction', a
   }
 });
 
+test('daemon compaction notifications stream before an active turn settles', async () => {
+  const h = createSessionManagerTestContext();
+
+  try {
+    await h.create({
+      sessionPurpose: 'chat',
+      clientRef: 'mid-turn-compaction',
+      title: 'Mid-turn compaction',
+      goal: 'initial turn',
+      interactionMode: 'auto',
+      autonomy: 'low',
+      compactionTokenLimit: 600,
+    });
+    await h.waitForIdle();
+
+    const streamGate = h.provider.deferNextStream('provider-1');
+    let turnSettled = false;
+    const turn = h
+      .handle({ type: 'session.send', appSessionId: 'provider-1', text: 'long running task' })
+      .then(() => {
+        turnSettled = true;
+      });
+    await h.provider.waitForPrompts('provider-1', 2);
+    h.events.length = 0;
+
+    notifyCompaction(h, 'provider-1', 'started');
+    const started = h.events.findIndex(
+      (event) =>
+        event.type === 'event.appended' && event.event.text === 'Compacting conversation...',
+    );
+    assert.equal(turnSettled, false);
+    assert.equal(started >= 0, true);
+
+    notifyCompaction(h, 'provider-1', 'completed');
+    const completed = h.events.findIndex(
+      (event) => event.type === 'event.appended' && event.event.kind === 'compaction',
+    );
+    const summary = sessionUpdates(h.events).at(-1)?.session;
+    assert.equal(turnSettled, false);
+    assert.equal(completed > started, true);
+    assert.equal(summary?.streaming, true);
+    assert.equal(summary?.autoCompactions, 1);
+    assert.equal(callCount(h.calls, 'provider', 'compactSession', 'provider-1'), 0);
+
+    streamGate.resolve();
+    await turn;
+    assert.equal(turnSettled, true);
+  } finally {
+    await h.dispose();
+  }
+});
+
 test('[C1] Manual in-place compaction', { concurrency: false }, async () => {
   const h = createSessionManagerTestContext();
 
@@ -843,7 +895,7 @@ test(
       assert.equal(summary?.contextTokens, 12_000);
       assert.equal(
         h.events.some(
-          (event) => event.type === 'event.appended' && event.event.text === 'Compaction complete.',
+          (event) => event.type === 'event.appended' && event.event.kind === 'compaction',
         ),
         true,
       );

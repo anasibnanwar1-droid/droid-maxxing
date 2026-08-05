@@ -122,6 +122,13 @@ function createHarness(
       cancel: (target) => {
         if (target.kind === 'child') target.setAutoCompacting(false);
       },
+      forgetChild: (identity) => {
+        calls.push({
+          target: 'cleanup',
+          method: 'compaction.forgetChild',
+          args: [identity.parentAppSessionId, identity.childSessionId],
+        });
+      },
       handleChildNotification: (_target, note) => {
         calls.push({ target: 'protocol', method: 'compaction.notification', args: [note] });
         return false;
@@ -935,6 +942,10 @@ test('runtime close invalidates immediately and waits for in-flight settings tea
   assert.equal(h.owner.compactionRetuneTargets().length, 0);
   assert.equal(
     h.calls.some((call) => call.target === 'cleanup' && call.method === 'context.forgetChild'),
+    true,
+  );
+  assert.equal(
+    h.calls.some((call) => call.target === 'cleanup' && call.method === 'compaction.forgetChild'),
     true,
   );
   assert.equal(
