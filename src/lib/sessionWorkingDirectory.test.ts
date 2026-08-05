@@ -63,6 +63,16 @@ test('detects the worktree created by a git worktree command', () => {
   assert.equal(sessionWorkingDirectory(main, transcript, worktrees), linked);
 });
 
+test('does not treat a sibling path sharing a worktree prefix as worktree evidence', () => {
+  const transcript = [
+    tool('1', 'exec_command', {
+      cmd: `git -C ${linked}-archive status --short`,
+    }),
+  ];
+
+  assert.equal(sessionWorkingDirectory(main, transcript, worktrees), main);
+});
+
 test('uses an absolute edited file as worktree evidence', () => {
   const transcript = [
     tool('1', 'write_file', {

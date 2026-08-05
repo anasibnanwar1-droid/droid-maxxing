@@ -25,6 +25,10 @@ function pathContains(root: string, candidate: string): boolean {
   );
 }
 
+function isPathReferenceBoundary(character: string | undefined): boolean {
+  return character === undefined || /[\s"'`=,:;()[\]{}|&]/.test(character);
+}
+
 function stringsForKeys(value: unknown, keys: Set<string>, output: string[] = []): string[] {
   if (!value || typeof value !== 'object') return output;
   if (Array.isArray(value)) {
@@ -40,7 +44,19 @@ function stringsForKeys(value: unknown, keys: Set<string>, output: string[] = []
 
 function referencedWorktree(evidence: string, worktrees: readonly string[]): string | undefined {
   const normalizedEvidence = normalizedPath(evidence);
-  return worktrees.find((path) => normalizedEvidence.includes(normalizedPath(path)));
+  return worktrees.find((path) => {
+    const normalizedWorktree = normalizedPath(path);
+    let index = normalizedEvidence.indexOf(normalizedWorktree);
+    while (index >= 0) {
+      const before = normalizedEvidence[index - 1];
+      const after = normalizedEvidence[index + normalizedWorktree.length];
+      if (isPathReferenceBoundary(before) && (after === '/' || isPathReferenceBoundary(after))) {
+        return true;
+      }
+      index = normalizedEvidence.indexOf(normalizedWorktree, index + normalizedWorktree.length);
+    }
+    return false;
+  });
 }
 
 export function sessionWorkingDirectory(
@@ -60,7 +76,7 @@ export function sessionWorkingDirectory(
 
   for (let index = transcript.length - 1; index >= 0; index -= 1) {
     const event = transcript[index];
-    if (event?.kind !== 'tool_call') continue;
+    if (event.kind !== 'tool_call') continue;
 
     for (const directory of stringsForKeys(event.toolArgs, DIRECT_DIRECTORY_KEYS)) {
       const match = worktrees.find((path) => pathContains(path, directory));
