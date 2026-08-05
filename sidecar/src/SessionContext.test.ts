@@ -220,6 +220,70 @@ test('provider context wins over an impossible persisted exact reading', async (
   assert.equal(live.summary.contextTokens, 320);
 });
 
+test('cumulative provider estimates rebase after restored in-place compactions', async () => {
+  const h = createHarness();
+  const { live, session } = registerLive(h, 'app-1');
+  live.summary.autoCompactions = 5;
+  session.nextContextStats = {
+    used: 397_000,
+    remaining: 0,
+    limit: 196_608,
+    accuracy: ContextStatsAccuracy.Estimated,
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  };
+  h.runtime.contextBreakdowns.set('app-1', {
+    modelId: 'model-default',
+    contextBudget: 100_000,
+    usedTokens: 397_000,
+    freeTokens: 0,
+    categories: [{ name: 'Messages', tokens: 380_000, colorKey: 'messages' }],
+  });
+
+  await h.context.refresh(primaryTarget(h, live));
+
+  const reset = contextEvents(h).at(-1)?.stats;
+  assert.equal(reset?.used, 0);
+  assert.equal(reset?.remaining, 196_608);
+  assert.equal(reset?.breakdown, undefined);
+  assert.equal(live.summary.contextTokens, 0);
+
+  session.nextContextStats = {
+    ...session.nextContextStats,
+    used: 409_000,
+  };
+  await h.context.refresh(primaryTarget(h, live));
+
+  const advanced = contextEvents(h).at(-1)?.stats;
+  assert.equal(advanced?.used, 12_000);
+  assert.equal(advanced?.remaining, 184_608);
+});
+
+test('a live compaction rebases a provider counter that does not reset', async () => {
+  const h = createHarness();
+  const { live, session } = registerLive(h, 'app-1');
+  session.nextContextStats = {
+    used: 900,
+    remaining: 100,
+    limit: 1_000,
+    accuracy: ContextStatsAccuracy.Estimated,
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  };
+  await h.context.refresh(primaryTarget(h, live));
+
+  h.context.recordCompaction(primaryTarget(h, live));
+  session.nextContextStats = {
+    ...session.nextContextStats,
+    used: 1_050,
+    remaining: 0,
+  };
+  await h.context.refresh(primaryTarget(h, live));
+
+  const rebased = contextEvents(h).at(-1)?.stats;
+  assert.equal(rebased?.used, 150);
+  assert.equal(rebased?.remaining, 850);
+  assert.equal(live.summary.autoCompactions, 1);
+});
+
 test('usage without current-context telemetry updates totals only', () => {
   const h = createHarness();
   const { live } = registerLive(h, 'app-1');
