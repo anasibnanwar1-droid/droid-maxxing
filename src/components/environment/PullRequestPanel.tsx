@@ -137,11 +137,14 @@ function CommentsBlock({
           <div className="px-1.5 pb-1.5 text-[12px] text-droid-text-muted">No comments yet</div>
         )
       ) : (
-        <div className="space-y-1.5 px-1.5">
-          {comments.map((comment) => (
-            <CommentCard key={comment.id} comment={comment} />
-          ))}
-        </div>
+        <>
+          {error ? <ErrorRow message={error} /> : null}
+          <div className="space-y-1.5 px-1.5">
+            {comments.map((comment) => (
+              <CommentCard key={comment.id} comment={comment} />
+            ))}
+          </div>
+        </>
       )}
     </div>
   );

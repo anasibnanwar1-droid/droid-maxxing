@@ -59,3 +59,33 @@ test('PR comments expose reactions in collapsed cards with a send control', () =
   assert.match(html, />3</);
   assert.match(html, /lucide-send-horizontal/);
 });
+
+test('partial comment failures stay visible beside successfully loaded comments', () => {
+  const html = renderToStaticMarkup(
+    createElement(PullRequestPanel, {
+      cwd: '/repo',
+      pr,
+      checks: [],
+      comments: [
+        {
+          id: 'comment-1',
+          kind: 'comment',
+          author: 'reviewer',
+          body: 'Loaded comment',
+          createdAt: '2026-08-04T10:01:00Z',
+          url: 'https://example.test/comment/1',
+          state: null,
+          reactions: [],
+        },
+      ],
+      loadingDetail: false,
+      checksError: null,
+      commentsError: 'Some PR comments could not be loaded',
+      onBack: () => undefined,
+      onRefresh: () => undefined,
+    }),
+  );
+
+  assert.match(html, /Some PR comments could not be loaded/);
+  assert.match(html, /Loaded comment/);
+});
