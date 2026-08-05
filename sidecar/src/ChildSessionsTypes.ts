@@ -29,6 +29,7 @@ export interface ChildSessionsDependencies {
     | 'afterTurn'
     | 'arm'
     | 'cancel'
+    | 'forgetChild'
     | 'handleChildNotification'
     | 'rearmModelChangedChild'
     | 'resolveLimit'

@@ -348,6 +348,29 @@ test('session_compacted is authoritative when the start notification was missed'
   assert.deepEqual(h.trace, ['record:p:app-1', 'compaction:app-1:12', 'refresh:p:app-1']);
 });
 
+test('closed primary and child resources release completed-summary dedupe state', () => {
+  const h = createHarness();
+  const primary = addPrimary(h, 'app-1');
+  const child = addChild(h, 'app-1', 'worker-1');
+
+  h.compaction.handleChildNotification(child.target, completedNotification());
+  h.compaction.handleChildNotification(child.target, completedNotification());
+  assert.equal(h.generations.get('c:app-1/worker-1'), 1);
+
+  h.compaction.subscribePrimary(primary.target);
+  primary.session.emitNotification(completedNotification());
+  primary.session.emitNotification(completedNotification());
+  assert.equal(h.generations.get('p:app-1'), 1);
+
+  h.compaction.forgetChild({ parentAppSessionId: 'app-1', childSessionId: 'worker-1' });
+  h.compaction.forgetSession('app-1');
+  h.compaction.handleChildNotification(child.target, completedNotification());
+  primary.session.emitNotification(completedNotification());
+
+  assert.equal(h.generations.get('c:app-1/worker-1'), 2);
+  assert.equal(h.generations.get('p:app-1'), 2);
+});
+
 test(
   'post-turn tightening, expiry, and clearAll settle only the current target',
   { concurrency: false },

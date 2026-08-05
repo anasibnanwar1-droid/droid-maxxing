@@ -77,7 +77,7 @@ export interface SessionLifecycleDependencies {
   makeAskUserHandler: (ref: { id: string }) => AskUserHandler;
   compaction: Pick<
     SessionCompaction,
-    'resolveLimit' | 'arm' | 'subscribePrimary' | 'afterTurn' | 'cancel'
+    'resolveLimit' | 'arm' | 'subscribePrimary' | 'afterTurn' | 'cancel' | 'forgetSession'
   >;
   isShutdownStarted: () => boolean;
   childSessions: Pick<ChildSessions, 'attachParent' | 'closeParent'>;
@@ -454,6 +454,9 @@ export class SessionLifecycle {
       d.compaction.cancel(this.primaryAutomaticCompactionTarget(liveSession));
     });
     await run(() => {
+      d.compaction.forgetSession(liveSession.summary.appSessionId);
+    });
+    await run(() => {
       liveSession.unsubscribe?.();
     });
     for (const server of liveSession.mcpServers) {
@@ -565,6 +568,7 @@ export class SessionLifecycle {
       await runBestEffortAsync(() =>
         this.dependencies.childSessions.closeParent(liveSession.summary.appSessionId),
       );
+    if (liveSession) this.dependencies.compaction.forgetSession(liveSession.summary.appSessionId);
     await Promise.all(mcpServers.map((server) => runBestEffortAsync(() => server.close())));
     if (session) await runBestEffortAsync(() => session.close());
     if (

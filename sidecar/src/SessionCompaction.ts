@@ -76,6 +76,10 @@ export type CompactionResourceKey =
       childSessionId: string;
     } & ChildGenerationSnapshot);
 
+type CompactionResourceIdentity =
+  | { kind: 'primary'; appSessionId: string }
+  | { kind: 'child'; parentAppSessionId: string; childSessionId: string };
+
 export type ChildGenerationSnapshot = Pick<
   ChildAutomaticCompactionTarget,
   'parentGeneration' | 'runtimeGeneration' | 'turnGeneration' | 'configurationGeneration'
@@ -129,9 +133,12 @@ export class SessionCompaction {
   private readonly execution: SessionCompactionExecution;
 
   constructor(private readonly dependencies: SessionCompactionDependencies) {
-    this.watchdogs = new AutoCompactionWatchdogs(compactionResourceId, (key) => {
-      this.onWatchdogExpired(key);
-    });
+    this.watchdogs = new AutoCompactionWatchdogs<CompactionResourceKey>(
+      (key) => compactionResourceId(key),
+      (key) => {
+        this.onWatchdogExpired(key);
+      },
+    );
     this.execution = new SessionCompactionExecution(dependencies, {
       subscribePrimary: (liveSession) => {
         this.subscribePrimary(this.primaryAutomaticTarget(liveSession));
@@ -237,6 +244,18 @@ export class SessionCompaction {
     this.watchdogs.clear(compactionResourceKey(target));
   }
 
+  forgetSession(appSessionId: string): void {
+    this.forgetCompletedSummaries({ kind: 'primary', appSessionId });
+  }
+
+  forgetChild(identity: { parentAppSessionId: string; childSessionId: string }): void {
+    this.forgetCompletedSummaries({
+      kind: 'child',
+      parentAppSessionId: identity.parentAppSessionId,
+      childSessionId: identity.childSessionId,
+    });
+  }
+
   async compact(
     appSessionId: string,
     customInstructions?: string,
@@ -306,6 +325,13 @@ export class SessionCompaction {
     );
     void this.dependencies.context.refresh(target).catch(ignoreError);
     return true;
+  }
+
+  private forgetCompletedSummaries(key: CompactionResourceIdentity): void {
+    const prefix = `${compactionResourceId(key)}:`;
+    for (const resourceId of this.completedSummaries.keys()) {
+      if (resourceId.startsWith(prefix)) this.completedSummaries.delete(resourceId);
+    }
   }
 
   private setAutoCompacting(target: AutomaticCompactionTarget, active: boolean): void {
@@ -448,7 +474,7 @@ function compactionResourceKey(target: AutomaticCompactionTarget): CompactionRes
       };
 }
 
-function compactionResourceId(key: CompactionResourceKey): string {
+function compactionResourceId(key: CompactionResourceIdentity): string {
   return key.kind === 'primary'
     ? JSON.stringify(['primary', key.appSessionId])
     : JSON.stringify(['child', key.parentAppSessionId, key.childSessionId]);

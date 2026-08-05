@@ -185,6 +185,13 @@ function createHarness(ordinarySummaries: SessionSummary[] = []) {
           args: [target.kind === 'primary' ? target.appSessionId : target.childSessionId],
         });
       },
+      forgetSession: (appSessionId) => {
+        calls.push({
+          target: 'cleanup',
+          method: 'compaction.forgetSession',
+          args: [appSessionId],
+        });
+      },
     },
     isShutdownStarted: () => shutdownStarted,
     applyPendingSettingsToSummary: (item) => ({ ...item, ...projection }),
@@ -830,6 +837,7 @@ test('close follows ownership order and closeAll closes its initial snapshot', a
         'session.close',
         'mcp.close',
         'browser.close',
+        'compaction.forgetSession',
         'runtimeCaches.clear',
       ].includes(call.method),
     )
@@ -837,6 +845,7 @@ test('close follows ownership order and closeAll closes its initial snapshot', a
   assert.deepEqual(closeTrace, [
     'unsubscribe:child',
     'session.close:child',
+    'compaction.forgetSession:owner',
     'unsubscribe:owner',
     'mcp.close:mcp-1',
     'session.close:owner',
