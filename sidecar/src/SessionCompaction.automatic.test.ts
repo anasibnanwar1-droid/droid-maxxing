@@ -345,7 +345,7 @@ test(
   },
 );
 
-test('a completion without provider identity is effect-free', { concurrency: false }, (t) => {
+test('a completion without a summaryId is effect-free', { concurrency: false }, (t) => {
   const h = createHarness();
   const timers = observeTimers(h.trace);
   t.after(() => {
