@@ -146,7 +146,6 @@ export default function PromptInput({
   });
 
   const activeSession = state.activeAppSessionId ? state.sessions[state.activeAppSessionId] : null;
-  const workingDirectory = useSessionWorkingDirectory(activeSession);
   const primaryIsLive = useSessionLive(state.activeAppSessionId);
 
   // The user's own prompts in this conversation, oldest to newest, for ArrowUp
@@ -180,6 +179,10 @@ export default function PromptInput({
   visibleTargetRef.current = visibleTarget;
   const targetChild = visibleTarget.kind === 'child' ? visibleTarget.child : undefined;
   const targetChildSessionId = targetChild?.childSessionId ?? null;
+  const workingDirectory = useSessionWorkingDirectory(
+    activeSession,
+    targetChildSessionId ?? undefined,
+  );
   const targetChildIndex =
     visibleTarget.kind === 'child' && activeSession
       ? orderedChildSessions(
