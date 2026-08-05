@@ -71,7 +71,10 @@ function createDiagnostics(options) {
       enabled,
       fs: fileSystem,
     });
-    if (enabled) return { enabled: true };
+    if (enabled) {
+      await initialize();
+      return { enabled: true };
+    }
 
     if (isInitialized && typeof sentry.close === 'function') {
       try {

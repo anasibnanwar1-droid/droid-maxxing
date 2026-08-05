@@ -72,10 +72,9 @@ export function DiagnosticsSettings() {
       </div>
 
       <p className="mt-3 text-[11px] leading-[17px] text-droid-text-muted">
-        Changing this setting immediately restarts DROIDEX. Turning it off stops automatic reporting
-        and deletes the local profile ID. Reports you explicitly submit through{' '}
-        <span className="font-mono">/bug</span> or <span className="font-mono">/feedback</span> are
-        still sent when you choose Submit.
+        Changes apply immediately. Turning it off stops automatic reporting and deletes the local
+        profile ID. Reports you explicitly submit through <span className="font-mono">/bug</span> or{' '}
+        <span className="font-mono">/feedback</span> are still sent when you choose Submit.
       </p>
       {error && (
         <p role="alert" className="mt-3 text-[12px] text-red-400">

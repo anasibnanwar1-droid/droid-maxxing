@@ -126,8 +126,8 @@ test('automatic diagnostics default on and disabling closes Sentry and resets lo
   assert.deepEqual(await diagnostics.setAutomaticDiagnosticsEnabled(true), { enabled: true });
   assert.equal(
     initializationCount,
-    1,
-    'preference changes must relaunch instead of reinitializing',
+    2,
+    're-enabling diagnostics must initialize a fresh in-process client',
   );
 });
 
