@@ -118,17 +118,21 @@ export function sessionWorkingDirectory(
   if (worktrees.length === 0) return sessionCwd;
 
   let workingDirectory = sessionCwd;
+  let latestToolCwd = sessionCwd;
   for (const event of transcript) {
     if (event.kind !== 'tool_call') continue;
 
     for (const directory of stringsForKeys(event.toolArgs, DIRECT_DIRECTORY_KEYS)) {
       const match = worktrees.find((path) => pathContains(path, directory));
-      if (match) workingDirectory = match;
+      if (match) {
+        latestToolCwd = directory;
+        workingDirectory = match;
+      }
     }
 
     const change = extractFileChange(event.toolName, event.toolArgs);
     if (change) {
-      const resolvedPath = resolveToolPath(change.path, workingDirectory);
+      const resolvedPath = resolveToolPath(change.path, latestToolCwd);
       const match = worktrees.find((path) => pathContains(path, resolvedPath));
       if (match) workingDirectory = match;
     }

@@ -149,6 +149,20 @@ test('canonicalizes parent segments before matching a sibling worktree', () => {
   assert.equal(sessionWorkingDirectory(main, transcript, registered), sibling);
 });
 
+test('resolves relative edits against the latest tool subdirectory', () => {
+  const sibling = '/Users/test/droid-control-sibling';
+  const registered = [...worktrees, { ...worktrees[1], path: sibling, branch: 'feat/sibling' }];
+  const transcript = [
+    tool('1', 'exec_command', { cwd: `${linked}/packages/web`, cmd: 'git status' }),
+    tool('2', 'write_file', {
+      file_path: '../../../droid-control-sibling/src/app.ts',
+      content: 'export {}',
+    }),
+  ];
+
+  assert.equal(sessionWorkingDirectory(main, transcript, registered), sibling);
+});
+
 test('matches Windows worktree paths without case sensitivity', () => {
   const windowsWorktree: GitWorktree = {
     ...worktrees[0],
