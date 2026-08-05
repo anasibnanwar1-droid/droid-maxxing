@@ -209,14 +209,14 @@ export class SessionContext {
     if (liveSession?.session !== target.session || !target.isCurrent()) return;
     const key = contextResourceKey(target);
     const generation = (liveSession.summary.autoCompactions ?? 0) + 1;
-    this.compactions.set(key, (this.compactions.get(key) ?? 0) + 1);
-    this.captureProviderUsageBaseline(key, generation);
-    this.pendingCompactionResets.add(key);
     this.dependencies.registry.updateSummary(target.appSessionId, {
       contextTokens: 0,
       contextAccuracy: undefined,
       autoCompactions: (liveSession.summary.autoCompactions ?? 0) + 1,
     });
+    this.compactions.set(key, (this.compactions.get(key) ?? 0) + 1);
+    this.captureProviderUsageBaseline(key, generation);
+    this.pendingCompactionResets.add(key);
   }
 
   // A new primary turn begins: pre-compaction stream events from the previous

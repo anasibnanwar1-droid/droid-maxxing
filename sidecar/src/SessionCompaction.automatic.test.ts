@@ -43,7 +43,9 @@ interface ChildTestState {
   configurationGeneration: number;
 }
 
-function createHarness(): Harness {
+function createHarness(
+  options: { failContextOnce?: boolean; failTimelineOnce?: boolean } = {},
+): Harness {
   const calls: RecordedCall[] = [];
   const generations = new Map<string, number>();
   const targets = new Map<string, AutomaticCompactionTarget>();
@@ -59,6 +61,10 @@ function createHarness(): Harness {
     },
     context: {
       recordCompaction: (target) => {
+        if (options.failContextOnce) {
+          options.failContextOnce = false;
+          throw new Error('context persistence failed');
+        }
         const id = targetId(target);
         generations.set(id, (generations.get(id) ?? 0) + 1);
         trace.push(`record:${id}`);
@@ -71,6 +77,10 @@ function createHarness(): Harness {
     },
     timeline: {
       appendCompaction: (_appSessionId, removedCount, sourceSessionId) => {
+        if (options.failTimelineOnce) {
+          options.failTimelineOnce = false;
+          throw new Error('timeline persistence failed');
+        }
         trace.push(`compaction:${sourceSessionId}:${String(removedCount)}`);
       },
       appendStatus: (_appSessionId, text, _compactType, sourceSessionId) => {
@@ -256,8 +266,8 @@ test(
     assert.deepEqual(h.trace, [
       'watchdog:clear:300000',
       'settle:p:app-1:active=false',
-      'record:p:app-1',
       'compaction:app-1:12',
+      'record:p:app-1',
       'refresh:p:app-1',
     ]);
 
@@ -272,8 +282,8 @@ test(
       'watchdog:clear:300000',
       'settle:c:app-1/worker-1:active=false',
       'drive:c:app-1/worker-1:next worker prompt',
-      'record:c:app-1/worker-1',
       'compaction:worker-1:12',
+      'record:c:app-1/worker-1',
       'refresh:c:app-1/worker-1',
     ]);
   },
@@ -312,8 +322,8 @@ test(
     assert.deepEqual(h.trace, [
       'watchdog:clear:300000',
       'settle:c:parent/worker:active=false',
-      'record:c:parent/worker',
       'compaction:worker:12',
+      'record:c:parent/worker',
       'refresh:c:parent/worker',
     ]);
 
@@ -345,7 +355,7 @@ test('session_compacted is authoritative when the start notification was missed'
   primary.session.emitNotification(completedNotification('summary-without-start'));
 
   assert.equal(primary.live.autoCompacting, false);
-  assert.deepEqual(h.trace, ['record:p:app-1', 'compaction:app-1:12', 'refresh:p:app-1']);
+  assert.deepEqual(h.trace, ['compaction:app-1:12', 'record:p:app-1', 'refresh:p:app-1']);
 });
 
 test('closed primary and child resources release completed-summary dedupe state', () => {
@@ -369,6 +379,22 @@ test('closed primary and child resources release completed-summary dedupe state'
 
   assert.equal(h.generations.get('c:app-1/worker-1'), 2);
   assert.equal(h.generations.get('p:app-1'), 2);
+});
+
+test('automatic completion retries synchronous lifecycle persistence before deduping', () => {
+  for (const failure of ['failTimelineOnce', 'failContextOnce'] as const) {
+    const h = createHarness({ [failure]: true });
+    const child = addChild(h, 'parent', failure);
+
+    assert.throws(
+      () => h.compaction.handleChildNotification(child.target, completedNotification()),
+      /persistence failed/,
+    );
+    h.compaction.handleChildNotification(child.target, completedNotification());
+    h.compaction.handleChildNotification(child.target, completedNotification());
+
+    assert.equal(h.generations.get(`c:parent/${failure}`), 1);
+  }
 });
 
 test(

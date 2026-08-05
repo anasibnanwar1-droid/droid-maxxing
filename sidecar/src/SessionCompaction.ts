@@ -311,11 +311,7 @@ export class SessionCompaction {
       this.completedSummaries.get(resourceId) === compaction.summaryId
     )
       return true;
-    if (compaction.summaryId !== undefined)
-      this.completedSummaries.set(resourceId, compaction.summaryId);
-
     this.setAutoCompacting(target, false);
-    this.dependencies.context.recordCompaction(target);
     this.dependencies.timeline.appendCompaction(
       target.appSessionId,
       compaction.removedCount,
@@ -323,6 +319,9 @@ export class SessionCompaction {
       target.kind === 'primary' ? 'primary' : target.role,
       compaction.summaryId,
     );
+    this.dependencies.context.recordCompaction(target);
+    if (compaction.summaryId !== undefined)
+      this.completedSummaries.set(resourceId, compaction.summaryId);
     void this.dependencies.context.refresh(target).catch(ignoreError);
     return true;
   }

@@ -100,7 +100,23 @@ test('historical compaction markers hydrate the summary generation', () => {
       kind: 'compaction',
       ts: i,
     });
+    index.recordEvent({
+      id: `compaction-external-compactions-summary-${String(i)}`,
+      appSessionId: 'external-compactions',
+      sourceSessionId: 'external-compactions',
+      role: 'primary',
+      kind: 'compaction',
+      ts: i,
+    });
   }
+  index.recordEvent({
+    id: 'compaction-worker-summary',
+    appSessionId: 'external-compactions',
+    sourceSessionId: 'worker-1',
+    role: 'worker',
+    kind: 'compaction',
+    ts: 5,
+  });
   index.close();
 
   const rows = loadHistoricalSessions({ workspaceCwds: [cwd] });
