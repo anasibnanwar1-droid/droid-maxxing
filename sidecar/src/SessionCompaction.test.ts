@@ -52,6 +52,7 @@ function createHarness(): Harness {
       preserveUsage: () => undefined,
     },
     timeline: {
+      appendCompaction: () => undefined,
       appendStatus: () => undefined,
     },
     runtime,

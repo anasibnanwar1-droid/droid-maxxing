@@ -25,7 +25,7 @@ export interface SessionCompactionExecutionDependencies {
     'getLive' | 'resolveSummary' | 'replaceProvider' | 'updateSummary'
   >;
   context: Pick<SessionContext, 'refresh' | 'preserveUsage' | 'recordCompaction'>;
-  timeline: Pick<SessionTimeline, 'appendStatus'>;
+  timeline: Pick<SessionTimeline, 'appendCompaction' | 'appendStatus'>;
   runtime: Pick<FactoryRuntime, 'loadSession'>;
   makePermissionHandler(ref: { id: string }): PermissionHandler;
   makeAskUserHandler(ref: { id: string }): AskUserHandler;

@@ -123,6 +123,7 @@ function createHarness() {
       },
     },
     timeline: {
+      appendCompaction: () => undefined,
       appendStatus: (_appSessionId, text) => {
         statuses.push(text);
       },

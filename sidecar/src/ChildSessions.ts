@@ -492,8 +492,8 @@ export class ChildSessions {
       this.persist(child);
       this.d.timeline.replayChild(parentAppSessionId, childSessionId, loaded.sessionId);
       this.publish(child);
-      // Seed the child's context meter immediately; without this it stays
-      // blank until the first turn settles.
+      // Seed child context telemetry immediately so compaction policy can learn
+      // a provider-reported model window before the first turn settles.
       void this.d.context.refresh(this.contextTarget(parent, child, runtime));
       if (requestId) this.emitReady(runtime, child, requestId);
     } catch (error) {

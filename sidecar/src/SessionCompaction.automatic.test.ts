@@ -70,6 +70,9 @@ function createHarness(): Harness {
       preserveUsage: () => undefined,
     },
     timeline: {
+      appendCompaction: (_appSessionId, removedCount, sourceSessionId) => {
+        trace.push(`compaction:${sourceSessionId}:${String(removedCount)}`);
+      },
       appendStatus: (_appSessionId, text, _compactType, sourceSessionId) => {
         trace.push(`status:${sourceSessionId}:${text}`);
       },
@@ -253,8 +256,8 @@ test(
     assert.deepEqual(h.trace, [
       'watchdog:clear:300000',
       'settle:p:app-1:active=false',
-      'status:app-1:Compaction complete.',
       'record:p:app-1',
+      'compaction:app-1:12',
       'refresh:p:app-1',
     ]);
 
@@ -269,15 +272,15 @@ test(
       'watchdog:clear:300000',
       'settle:c:app-1/worker-1:active=false',
       'drive:c:app-1/worker-1:next worker prompt',
-      'status:worker-1:Compaction complete.',
       'record:c:app-1/worker-1',
+      'compaction:worker-1:12',
       'refresh:c:app-1/worker-1',
     ]);
   },
 );
 
 test(
-  'idle, late completion, cancel, and stale notification stay effect-free',
+  'idle cannot finish compaction and duplicate completion stays effect-free',
   { concurrency: false },
   (t) => {
     const h = createHarness();
@@ -301,7 +304,19 @@ test(
     h.trace.length = 0;
 
     assert.equal(h.compaction.handleChildNotification(child.target, idleNotification()), false);
-    assert.deepEqual(h.trace, ['watchdog:clear:300000', 'settle:c:parent/worker:active=false']);
+    assert.equal(child.child.autoCompacting, true);
+    assert.deepEqual(h.trace, []);
+    h.trace.length = 0;
+    assert.equal(h.compaction.handleChildNotification(child.target, completedNotification()), true);
+    assert.equal(child.child.autoCompacting, false);
+    assert.deepEqual(h.trace, [
+      'watchdog:clear:300000',
+      'settle:c:parent/worker:active=false',
+      'record:c:parent/worker',
+      'compaction:worker:12',
+      'refresh:c:parent/worker',
+    ]);
+
     h.trace.length = 0;
     assert.equal(h.compaction.handleChildNotification(child.target, completedNotification()), true);
     assert.deepEqual(h.trace, []);
@@ -319,6 +334,19 @@ test(
     assert.deepEqual(h.trace, []);
   },
 );
+
+test('session_compacted is authoritative when the start notification was missed', () => {
+  const h = createHarness();
+  const primary = addPrimary(h, 'app-1');
+  primary.live.streaming = true;
+  h.compaction.subscribePrimary(primary.target);
+  h.trace.length = 0;
+
+  primary.session.emitNotification(completedNotification('summary-without-start'));
+
+  assert.equal(primary.live.autoCompacting, false);
+  assert.deepEqual(h.trace, ['record:p:app-1', 'compaction:app-1:12', 'refresh:p:app-1']);
+});
 
 test(
   'post-turn tightening, expiry, and clearAll settle only the current target',
@@ -452,10 +480,10 @@ function startedNotification(): Record<string, unknown> {
   };
 }
 
-function completedNotification(): Record<string, unknown> {
+function completedNotification(summaryId = 'summary-1'): Record<string, unknown> {
   return {
     params: {
-      notification: { type: 'session_compacted', summaryId: 'summary-1', removedCount: 12 },
+      notification: { type: 'session_compacted', summaryId, removedCount: 12 },
     },
   };
 }

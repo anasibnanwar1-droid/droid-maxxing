@@ -4,7 +4,6 @@ import {
   classifyPermission,
   confirmationType,
   extractCompactionNotification,
-  extractDroidWorkingState,
   mapProgress,
   permissionSignature,
   normalizeStreamEvent,
@@ -53,14 +52,14 @@ test('extractCompactionNotification detects the compaction completion with remov
         notification: { type: 'session_compacted', summaryId: 's1', removedCount: 42 },
       },
     }),
-    { kind: 'completed', removedCount: 42 },
+    { kind: 'completed', removedCount: 42, summaryId: 's1' },
   );
   // A missing or malformed count falls back to zero instead of NaN.
   assert.deepEqual(
     extractCompactionNotification({
       params: { notification: { type: 'session_compacted', summaryId: 's1' } },
     }),
-    { kind: 'completed', removedCount: 0 },
+    { kind: 'completed', removedCount: 0, summaryId: 's1' },
   );
 });
 
@@ -78,21 +77,6 @@ test('extractCompactionNotification ignores unrelated notifications', () => {
     null,
   );
   assert.equal(extractCompactionNotification({}), null);
-});
-
-test('extractDroidWorkingState detects transitions that settle compaction', () => {
-  assert.equal(
-    extractDroidWorkingState({
-      params: { notification: { type: 'droid_working_state_changed', newState: 'streaming' } },
-    }),
-    'streaming',
-  );
-  assert.equal(
-    extractDroidWorkingState({
-      params: { notification: { type: 'message', role: 'assistant' } },
-    }),
-    undefined,
-  );
 });
 
 test('token usage maps context to the daemon threshold formula (in + out + cacheRead)', () => {

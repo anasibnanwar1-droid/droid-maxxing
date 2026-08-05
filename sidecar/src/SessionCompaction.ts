@@ -8,7 +8,7 @@ import {
   AutoCompactionWatchdogs,
   POST_TURN_AUTO_COMPACTION_WATCHDOG_MS,
 } from './autoCompactionWatchdog.js';
-import { extractCompactionNotification, extractDroidWorkingState } from './normalize.js';
+import { extractCompactionNotification } from './normalize.js';
 import type {
   FactoryDefaultSettings,
   SessionInteractionMode,
@@ -124,6 +124,7 @@ export class SessionCompaction {
   private uiSettings: CompactionTokenLimitPatch = {};
   private retuneRevision = 0;
   private epoch = 0;
+  private readonly completedSummaries = new Map<string, string>();
   private readonly watchdogs: AutoCompactionWatchdogs<CompactionResourceKey>;
   private readonly execution: SessionCompactionExecution;
 
@@ -246,6 +247,7 @@ export class SessionCompaction {
   clearAll(): void {
     this.epoch += 1;
     this.retuneRevision += 1;
+    this.completedSummaries.clear();
     this.watchdogs.clearAll();
   }
 
@@ -277,20 +279,31 @@ export class SessionCompaction {
     note: Record<string, unknown>,
   ): boolean {
     const compaction = extractCompactionNotification(note);
-    if (!compaction) {
-      if (extractDroidWorkingState(note) === 'idle') this.setAutoCompacting(target, false);
-      return false;
-    }
+    if (!compaction) return false;
     if (compaction.kind === 'started') {
       this.setAutoCompacting(target, true);
       this.appendAutomaticStatus(target, 'Compacting conversation...');
       return true;
     }
-    if (!automaticCompactionActive(target)) return true;
+
+    const resourceId = `${compactionResourceId(compactionResourceKey(target))}:${target.providerSessionId}`;
+    if (
+      compaction.summaryId !== undefined &&
+      this.completedSummaries.get(resourceId) === compaction.summaryId
+    )
+      return true;
+    if (compaction.summaryId !== undefined)
+      this.completedSummaries.set(resourceId, compaction.summaryId);
 
     this.setAutoCompacting(target, false);
-    this.appendAutomaticStatus(target, 'Compaction complete.');
     this.dependencies.context.recordCompaction(target);
+    this.dependencies.timeline.appendCompaction(
+      target.appSessionId,
+      compaction.removedCount,
+      target.kind === 'primary' ? target.appSessionId : target.childSessionId,
+      target.kind === 'primary' ? 'primary' : target.role,
+      compaction.summaryId,
+    );
     void this.dependencies.context.refresh(target).catch(ignoreError);
     return true;
   }

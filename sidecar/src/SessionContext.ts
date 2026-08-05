@@ -105,7 +105,7 @@ export class SessionContext {
     };
 
     // Child turns contribute to cumulative usage, but the primary summary owns
-    // the context meter. Child meters are published from their own refreshes.
+    // current-context telemetry. Children publish their own refreshes.
     // While a compaction reset is pending, usage events that were queued before
     // the compaction carry pre-compaction context tokens; applying them would
     // undo the reset, so context fields wait for the next provider refresh.

@@ -340,6 +340,7 @@ export function normalizeStreamEvent(
 export interface CompactionNotification {
   kind: 'started' | 'completed';
   removedCount: number;
+  summaryId?: string;
 }
 
 export function extractCompactionNotification(
@@ -350,20 +351,15 @@ export function extractCompactionNotification(
   const note = raw as Record<string, unknown>;
   if (note.type === 'droid_working_state_changed' && note.newState === 'compacting_conversation')
     return { kind: 'started', removedCount: 0 };
-  if (note.type === 'session_compacted')
-    return { kind: 'completed', removedCount: Number(note.removedCount ?? 0) || 0 };
+  if (note.type === 'session_compacted') {
+    const summaryId = typeof note.summaryId === 'string' ? note.summaryId : undefined;
+    return {
+      kind: 'completed',
+      removedCount: Number(note.removedCount ?? 0) || 0,
+      ...(summaryId ? { summaryId } : {}),
+    };
+  }
   return null;
-}
-
-export function extractDroidWorkingState(
-  notification: Record<string, unknown>,
-): string | undefined {
-  const raw = extractNotification(notification);
-  if (!raw || typeof raw !== 'object') return undefined;
-  const note = raw as Record<string, unknown>;
-  return note.type === 'droid_working_state_changed' && typeof note.newState === 'string'
-    ? note.newState
-    : undefined;
 }
 
 export function normalizeNotification(
