@@ -22,7 +22,7 @@ test('collapsed header shows the running step', () => {
   assert.match(html, /Start a new app/);
 });
 
-test('collapsed plan keeps its only spinner in the summary row', () => {
+test('the current step appears once with its only spinner in the summary row', () => {
   const html = render([
     { status: 'completed', text: 'Investigate the APIs' },
     { status: 'in_progress', text: 'Start a new app' },
@@ -35,7 +35,7 @@ test('collapsed plan keeps its only spinner in the summary row', () => {
   assert.equal(html.match(/lucide-check/g)?.length, 1);
   const header = /<button[^>]*aria-expanded="false"[^>]*>.*?<\/button>/s.exec(html)?.[0];
   assert.match(header ?? '', /animate-spin/);
-  // Hidden list rows retain their status rings without a duplicate animation.
+  // The expanded list omits the current step instead of duplicating the summary.
   const rows = [
     ...html.matchAll(
       /<div class="flex min-w-0 items-center gap-2\.5 px-4 py-1\.5[^>]*>.*?<\/div>/gs,
@@ -43,14 +43,15 @@ test('collapsed plan keeps its only spinner in the summary row', () => {
   ].map(([row]) => row);
   const activeRow = rows.find((row) => row.includes('Start a new app'));
   const pendingRow = rows.find((row) => row.includes('Implement the tracker'));
-  assert.doesNotMatch(activeRow ?? '', /animate-spin/);
+  assert.equal(activeRow, undefined);
   assert.doesNotMatch(pendingRow ?? '', /animate-spin/);
+  assert.equal(html.match(/Start a new app/g)?.length, 1);
   assert.equal(html.match(/animate-spin/g)?.length, 1);
   assert.equal(html.match(/animation-duration:1\.4s/g)?.length, 1);
-  assert.equal(html.match(/border-\[1\.5px\]/g)?.length, 3);
+  assert.equal(html.match(/border-\[1\.5px\]/g)?.length, 2);
 });
 
-test('expanded steps are capped and scroll above the fixed summary row', () => {
+test('expanded steps are capped and scroll beneath the original summary row', () => {
   const html = render([
     { status: 'in_progress', text: 'Start a new app' },
     { status: 'pending', text: 'Implement the tracker' },
@@ -58,7 +59,7 @@ test('expanded steps are capped and scroll above the fixed summary row', () => {
   const listIndex = html.indexOf('id="plan-steps-list"');
   const summaryIndex = html.indexOf('<button');
 
-  assert.ok(listIndex >= 0 && listIndex < summaryIndex);
+  assert.ok(summaryIndex >= 0 && summaryIndex < listIndex);
   assert.match(html, /expanded-steps/);
   assert.match(html, /min-h-0/);
   assert.match(html, /max-h-\[min\(40vh,350px\)\]/);
@@ -103,8 +104,8 @@ test('finished plan fills every ring and drops the active band', () => {
     false,
   );
   assert.doesNotMatch(html, /animate-spin/);
-  // Header plus both rows read as filled, checked rings.
-  assert.equal(html.match(/lucide-check/g)?.length, 3);
+  // The current step lives in the summary, while the other completed step stays in the list.
+  assert.equal(html.match(/lucide-check/g)?.length, 2);
   assert.doesNotMatch(html, /bg-droid-active\/50/);
   // The header falls back to the last step once nothing is running.
   assert.match(html, /Start a new app/);
