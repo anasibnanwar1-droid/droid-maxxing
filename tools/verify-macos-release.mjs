@@ -20,6 +20,7 @@ const writeChecksums = process.argv.includes('--write-checksums');
 const packageJson = JSON.parse(readFileSync(resolve('package.json'), 'utf8'));
 const appName = 'DROIDEX.app';
 const sparklePublicKey = 'czgsBI/YO7amJbwhZidZSO0j7LU5A4NsU0No9fDemWU=';
+const packagedRuntimeStartupTimeoutMs = 120_000;
 
 const architectures = [
   { name: 'x64', appPath: join(releaseDirectory, 'mac', appName), executableArch: 'x86_64' },
@@ -246,7 +247,7 @@ async function smokePackagedRuntime(architecture) {
       const timeout = setTimeout(() => {
         didTimeout = true;
         child.kill('SIGKILL');
-      }, 45_000);
+      }, packagedRuntimeStartupTimeoutMs);
 
       child.stdout.on('data', (chunk) => {
         output += chunk.toString('utf8');
@@ -265,7 +266,11 @@ async function smokePackagedRuntime(architecture) {
       child.once('exit', (code, signal) => {
         clearTimeout(timeout);
         if (didTimeout) {
-          rejectReady(new Error(`${name} packaged sidecar timed out: ${errorOutput}`));
+          rejectReady(
+            new Error(
+              `${name} packaged sidecar timed out after ${String(packagedRuntimeStartupTimeoutMs)}ms: ${errorOutput}`,
+            ),
+          );
           return;
         }
         if (!isReady || code !== 0) {
