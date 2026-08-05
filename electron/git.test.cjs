@@ -1,0 +1,153 @@
+const test = require('node:test');
+const assert = require('node:assert');
+const { execFile } = require('node:child_process');
+const fsp = require('node:fs/promises');
+const os = require('node:os');
+const path = require('node:path');
+
+const { diffFiles, fileDiff, markTurnStart } = require('./git.cjs');
+
+// Integration tests for the last_turn review scope, driven through the module's
+// public API against real scratch repositories. Each scenario gets its own
+// repo: the untracked-file scan is TTL-cached per repo root, so reusing one
+// repo across scenarios could serve a stale scan.
+
+const repos = [];
+
+function git(dir, args) {
+  return new Promise((resolve, reject) => {
+    execFile('git', args, { cwd: dir }, (err, stdout) => {
+      if (err) reject(err);
+      else resolve(String(stdout));
+    });
+  });
+}
+
+async function makeRepo() {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'droid-git-test-'));
+  repos.push(dir);
+  await git(dir, ['init', '-q']);
+  await git(dir, ['config', 'user.email', 'test@example.com']);
+  await git(dir, ['config', 'user.name', 'Test']);
+  await git(dir, ['config', 'commit.gpgsign', 'false']);
+  return dir;
+}
+
+async function write(dir, rel, content) {
+  await fsp.mkdir(path.dirname(path.join(dir, rel)), { recursive: true });
+  await fsp.writeFile(path.join(dir, rel), content);
+}
+
+async function commitAll(dir, message) {
+  await git(dir, ['add', '.']);
+  await git(dir, ['commit', '-qm', message]);
+}
+
+const pathsOf = (res) => res.files.map((f) => f.path);
+
+test.after(async () => {
+  await Promise.all(repos.map((dir) => fsp.rm(dir, { recursive: true, force: true })));
+});
+
+test('last_turn with a baseline lists the turn changes and hides preexisting untracked files', async () => {
+  const dir = await makeRepo();
+  await write(dir, 'tracked.txt', 'v1\n');
+  await commitAll(dir, 'init');
+  // Untracked before the turn begins: must not be attributed to the turn.
+  await write(dir, 'notes.txt', 'preexisting\n');
+
+  const mark = await markTurnStart(dir, 'session-a');
+  assert.equal(mark.ok, true);
+
+  await write(dir, 'tracked.txt', 'v2\n');
+  await write(dir, 'new.txt', 'created this turn\n');
+
+  const res = await diffFiles(dir, { mode: 'last_turn', appSessionId: 'session-a' });
+  const paths = pathsOf(res);
+  assert.ok(paths.includes('tracked.txt'), `tracked edit missing from ${paths}`);
+  assert.ok(paths.includes('new.txt'), `turn-created file missing from ${paths}`);
+  assert.ok(!paths.includes('notes.txt'), `preexisting untracked file leaked into ${paths}`);
+});
+
+test('last_turn without a baseline falls back to HEAD without flooding untracked files', async () => {
+  const dir = await makeRepo();
+  await write(dir, 'tracked.txt', 'v1\n');
+  await commitAll(dir, 'init');
+  await write(dir, 'notes.txt', 'preexisting\n');
+  await write(dir, 'tracked.txt', 'v2\n');
+
+  // No markTurnStart for this session (app restarted, session restored from
+  // history). The HEAD approximation keeps tracked work visible, but without
+  // a turn-start snapshot every untracked file would look like a turn change.
+  const res = await diffFiles(dir, { mode: 'last_turn', appSessionId: 'never-marked' });
+  const paths = pathsOf(res);
+  assert.ok(paths.includes('tracked.txt'), `tracked change missing from ${paths}`);
+  assert.ok(!paths.includes('notes.txt'), `untracked flood: ${paths}`);
+});
+
+test('last_turn follows the latest baseline once a newer turn begins', async () => {
+  const dir = await makeRepo();
+  await write(dir, 'a.txt', '1\n');
+  await commitAll(dir, 'init');
+
+  await markTurnStart(dir, 'session-a');
+  await write(dir, 'a.txt', '2\n');
+  let res = await diffFiles(dir, { mode: 'last_turn', appSessionId: 'session-a' });
+  assert.ok(pathsOf(res).includes('a.txt'));
+
+  // The next turn starts: the baseline advances past the previous turn's
+  // edits, so they no longer appear as last-turn changes.
+  await markTurnStart(dir, 'session-a');
+  res = await diffFiles(dir, { mode: 'last_turn', appSessionId: 'session-a' });
+  assert.deepEqual(pathsOf(res), []);
+});
+
+test('the repo-level baseline is a fallback only for sessions without their own', async () => {
+  const dir = await makeRepo();
+  await write(dir, 'seed.txt', 'seed\n');
+  await commitAll(dir, 'init');
+
+  // First prompt of a brand-new session: no appSessionId exists yet, so the
+  // baseline is stored under the repo-level key.
+  await markTurnStart(dir);
+  await write(dir, 'created.txt', 'new\n');
+
+  // A session without its own baseline (the new session, once it has an ID)
+  // falls back to the repo-level mark and sees the turn's work.
+  let res = await diffFiles(dir, { mode: 'last_turn', appSessionId: 'brand-new-session' });
+  assert.ok(pathsOf(res).includes('created.txt'));
+
+  // A session with its own baseline never reads the repo-level mark, so work
+  // that predates its first turn stays out of its last-turn view.
+  await markTurnStart(dir, 'session-b');
+  res = await diffFiles(dir, { mode: 'last_turn', appSessionId: 'session-b' });
+  assert.deepEqual(pathsOf(res), []);
+});
+
+test('last_turn fileDiff renders a file created during the turn', async () => {
+  const dir = await makeRepo();
+  await write(dir, 'seed.txt', 'seed\n');
+  await commitAll(dir, 'init');
+
+  await markTurnStart(dir, 'session-a');
+  await write(dir, 'new.txt', 'hello turn\n');
+
+  const res = await fileDiff(dir, {
+    mode: 'last_turn',
+    appSessionId: 'session-a',
+    path: 'new.txt',
+  });
+  assert.ok(res.diff.includes('hello turn'), 'turn-created file diff should show its content');
+});
+
+test('last_turn works in an unborn repo via the write-tree baseline', async () => {
+  const dir = await makeRepo();
+  // No commits yet: stash create and rev-parse HEAD both fail, so the
+  // baseline falls back to the (empty) index tree.
+  const mark = await markTurnStart(dir, 'session-a');
+  assert.equal(mark.ok, true);
+
+  await write(dir, 'first.txt', 'x\n');
+  const res = await diffFiles(dir, { mode: 'last_turn', appSessionId: 'session-a' });
+  assert.ok(pathsOf(res).includes('first.txt'));
+});

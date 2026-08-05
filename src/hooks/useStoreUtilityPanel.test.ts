@@ -1,6 +1,28 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { initialState, reducer, type AppState } from './useStore';
+import type { SessionSummary } from '../types/bridge';
+
+function sessionSummary(appSessionId: string): SessionSummary {
+  return {
+    appSessionId,
+    providerSessionId: `provider-${appSessionId}`,
+    sessionPurpose: 'chat',
+    interactionMode: 'auto',
+    role: 'primary',
+    title: appSessionId,
+    goal: appSessionId,
+    cwd: '/workspace',
+    autonomy: 'low',
+    phase: 'paused',
+    features: [],
+    tokensIn: 0,
+    tokensOut: 0,
+    contextTokens: 0,
+    createdAt: 1,
+    updatedAt: 1,
+  };
+}
 
 function activeState(appSessionId: string): AppState {
   return {
@@ -145,4 +167,61 @@ test('browser updates preserve an explicitly hidden browser pane', () => {
     state.utilityPanels['session-a'].tabs.some((tab) => tab.tool === 'browser'),
     false,
   );
+});
+
+test('a session switch drops a pending review-focus request', () => {
+  let state = reducer(activeState('session-a'), {
+    type: 'OPEN_REVIEW_AT',
+    scope: 'last_turn',
+    path: 'src/app.ts',
+  });
+  assert.equal(state.reviewFocusPath, 'src/app.ts');
+
+  // The request belongs to session-a; it must not fire in session-b's panel.
+  state = reducer(state, { type: 'SET_ACTIVE_SESSION', id: 'session-b' });
+  assert.equal(state.reviewFocusPath, null);
+
+  // Re-selecting the already-active session keeps an in-flight request alive.
+  state = reducer(state, { type: 'OPEN_REVIEW_AT', scope: 'last_turn', path: 'src/b.ts' });
+  state = reducer(state, { type: 'SET_ACTIVE_SESSION', id: 'session-b' });
+  assert.equal(state.reviewFocusPath, 'src/b.ts');
+});
+
+test('starting a new chat drops a pending review-focus request', () => {
+  let state = reducer(activeState('session-a'), {
+    type: 'OPEN_REVIEW_AT',
+    scope: 'last_turn',
+    path: 'src/app.ts',
+  });
+  state = reducer(state, { type: 'START_CHAT', cwd: '/repo' });
+  assert.equal(state.activeAppSessionId, null);
+  assert.equal(state.reviewFocusPath, null);
+});
+
+test('creating another session drops a pending review-focus request', () => {
+  let state = reducer(activeState('session-a'), {
+    type: 'OPEN_REVIEW_AT',
+    scope: 'last_turn',
+    path: 'src/app.ts',
+  });
+  state = reducer(state, {
+    type: 'SESSION_CREATED',
+    clientRef: 'ref-1',
+    session: sessionSummary('session-b'),
+  });
+  assert.equal(state.activeAppSessionId, 'session-b');
+  assert.equal(state.reviewFocusPath, null);
+});
+
+test('each review-focus request bumps the request generation', () => {
+  let state = reducer(activeState('session-a'), {
+    type: 'OPEN_REVIEW_AT',
+    scope: 'last_turn',
+    path: 'src/app.ts',
+  });
+  const first = state.reviewFocusRequestId;
+  // A repeated click for the same file is a new request: the Review pane's
+  // fallback dedupe keys on this id, so it must change to re-arm the chain.
+  state = reducer(state, { type: 'OPEN_REVIEW_AT', scope: 'last_turn', path: 'src/app.ts' });
+  assert.equal(state.reviewFocusRequestId, first + 1);
 });

@@ -71,6 +71,9 @@ export function useReviewDiff(
       .catch(() => {
         if (id === listReq.current) {
           inFlight.current = false;
+          // Mark the key settled even on failure so consumers stop waiting on
+          // this list; the poll keeps retrying in the background.
+          loadedKey.current = key;
           if (isFirstLoad) setLoadingList(false);
         }
       });
@@ -97,9 +100,20 @@ export function useReviewDiff(
   // Changes only when a file's identity or line counts change, so an idle poll
   // that returns the same list never invalidates the open sections' diffs.
   const signature = useMemo(
-    () => files.map((f) => `${f.path}:${f.status}:${f.additions}:${f.deletions}`).join('\n'),
+    () =>
+      files
+        .map((f) => `${f.path}:${f.status}:${String(f.additions)}:${String(f.deletions)}`)
+        .join('\n'),
     [files],
   );
 
-  return { files, base, loadingList, signature, refresh: loadList };
+  // Report loading until the current (cwd, scope, session) list has settled,
+  // including the render gap between a scope change and the effect that starts
+  // the new load (loadingList state lags one commit there). Without this a
+  // consumer can read the previous scope's file list as the new scope's
+  // settled list.
+  const listKey = `${cwd}|${scope}|${appSessionId ?? ''}`;
+  const listSettled = !enabled || !cwd || loadedKey.current === listKey;
+
+  return { files, base, loadingList: loadingList || !listSettled, signature, refresh: loadList };
 }

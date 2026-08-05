@@ -34,7 +34,9 @@ export const DiffFileSection = memo(function DiffFileSection({
 }) {
   const { path } = file;
   const sectionRef = useCallback(
-    (el: HTMLDivElement | null) => onSectionRef(path, el),
+    (el: HTMLDivElement | null) => {
+      onSectionRef(path, el);
+    },
     [onSectionRef, path],
   );
   const slash = file.path.lastIndexOf('/');
@@ -43,7 +45,9 @@ export const DiffFileSection = memo(function DiffFileSection({
   return (
     <div ref={sectionRef} className="border-b border-droid-border/70">
       <button
-        onClick={() => onToggle(path)}
+        onClick={() => {
+          onToggle(path);
+        }}
         title={file.path}
         aria-expanded={open}
         className={`sticky top-0 z-10 flex w-full items-center gap-2 border-b border-droid-border/50 px-3 py-1.5 text-left transition-colors ${
@@ -72,11 +76,18 @@ export const DiffFileSection = memo(function DiffFileSection({
       </button>
       <AnimatePresence initial={false}>
         {open && (
+          // Enter stays height-free (opacity + slight rise): DiffBody mounts
+          // its rows in chunks over several frames, so a measured height
+          // animation would target a stale, still-growing height. Exit can
+          // animate height because the content is settled by then, and the
+          // chunked rows keep the per-frame layout cheap. The overflow clip
+          // lives on exit only: a static clip would cut off long lines that
+          // scroll horizontally on the outer review-diff-scroll container.
           <motion.div
             initial={{ opacity: 0, y: -3 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.16 }}
+            exit={{ height: 0, opacity: 0, overflow: 'hidden' }}
+            transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
           >
             {entry?.loaded ? (
               <DiffBody
