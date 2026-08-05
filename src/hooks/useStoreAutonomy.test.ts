@@ -41,7 +41,14 @@ test('the draft override resets at every draft lifecycle point', () => {
   const drafted = reducer(initialState, { type: 'SET_DRAFT_AUTONOMY', autonomy: 'high' });
   assert.equal(drafted.draftAutonomy, 'high');
 
-  const created = reducer(drafted, {
+  const pending = reducer(drafted, {
+    type: 'SET_PENDING_COMPOSE',
+    clientRef: 'c-1',
+    text: 'start chat',
+    skills: [],
+    files: [],
+  });
+  const created = reducer(pending, {
     type: 'SESSION_CREATED',
     clientRef: 'c-1',
     session,

@@ -1,4 +1,4 @@
-import type { BrowserNativeRequest, SessionSummary } from '../types/bridge';
+import type { SessionSummary } from '../types/bridge';
 
 export function browserKeyForSession(session: SessionSummary | undefined): string | undefined {
   if (!session) return undefined;
@@ -7,11 +7,11 @@ export function browserKeyForSession(session: SessionSummary | undefined): strin
   return session.appSessionId;
 }
 
-export function activeSessionAfterNativeBrowserRequest(
-  activeAppSessionId: string | null,
-  request: BrowserNativeRequest,
-): string | null {
-  return activeAppSessionId ?? request.appSessionId;
+export function nativeBrowserRequestTargetsActiveSession(
+  activeBrowserKey: string | undefined,
+  requestAppSessionId: string,
+): boolean {
+  return activeBrowserKey !== undefined && activeBrowserKey === requestAppSessionId;
 }
 
 export function nativeBrowserRequestTargetsVisibleSurface(input: {

@@ -17,8 +17,8 @@ import { isEmbedded } from './lib/embed';
 import { getApiKey, setAppIcon } from './lib/desktop';
 import { performNativeBrowserRequest } from './lib/nativeBrowserAgent';
 import {
-  activeSessionAfterNativeBrowserRequest,
   browserKeyForSession,
+  nativeBrowserRequestTargetsActiveSession,
 } from './lib/browserSessionIdentity';
 import { shouldOpenSelectedChild } from './lib/childSessions';
 import Sidebar from './components/Sidebar';
@@ -249,18 +249,11 @@ export default function App() {
       const activeBrowserKey = browserKeyForSession(
         state.activeAppSessionId ? state.sessions[state.activeAppSessionId] : undefined,
       );
-      const requestIsForActiveChat = activeBrowserKey === event.request.appSessionId;
-      const nextActiveAppSessionId = activeSessionAfterNativeBrowserRequest(
-        state.activeAppSessionId,
-        event.request,
+      const requestIsForActiveChat = nativeBrowserRequestTargetsActiveSession(
+        activeBrowserKey,
+        event.request.appSessionId,
       );
-      if (nextActiveAppSessionId !== state.activeAppSessionId) {
-        dispatch({ type: 'SET_ACTIVE_SESSION', id: nextActiveAppSessionId });
-      }
-      if (
-        event.request.action === 'open' &&
-        (!state.activeAppSessionId || requestIsForActiveChat)
-      ) {
+      if (event.request.action === 'open' && requestIsForActiveChat) {
         dispatch({ type: 'SET_RIGHT_PANEL', open: false });
         dispatch({ type: 'OPEN_UTILITY_TOOL', tool: 'browser' });
       }

@@ -207,12 +207,35 @@ test('creating another session drops a pending review-focus request', () => {
     path: 'src/app.ts',
   });
   state = reducer(state, {
+    type: 'SET_PENDING_COMPOSE',
+    clientRef: 'ref-1',
+    text: 'start another session',
+    skills: [],
+    files: [],
+  });
+  state = reducer(state, {
     type: 'SESSION_CREATED',
     clientRef: 'ref-1',
     session: sessionSummary('session-b'),
   });
   assert.equal(state.activeAppSessionId, 'session-b');
   assert.equal(state.reviewFocusPath, null);
+});
+
+test('a background resume preserves the active session review-focus request', () => {
+  let state = reducer(activeState('session-a'), {
+    type: 'OPEN_REVIEW_AT',
+    scope: 'last_turn',
+    path: 'src/app.ts',
+  });
+  state = reducer(state, {
+    type: 'SESSION_CREATED',
+    clientRef: 'resume:session-b',
+    session: sessionSummary('session-b'),
+  });
+
+  assert.equal(state.activeAppSessionId, 'session-a');
+  assert.equal(state.reviewFocusPath, 'src/app.ts');
 });
 
 test('each review-focus request bumps the request generation', () => {

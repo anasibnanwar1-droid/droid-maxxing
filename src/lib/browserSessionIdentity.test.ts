@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  activeSessionAfterNativeBrowserRequest,
   browserKeyForSession,
+  nativeBrowserRequestTargetsActiveSession,
   nativeBrowserRequestTargetsVisibleSurface,
 } from './browserSessionIdentity';
-import type { BrowserNativeRequest, SessionSummary } from '../types/bridge';
+import type { SessionSummary } from '../types/bridge';
 
 const session = (appSessionId: string, providerSessionId?: string): SessionSummary => ({
   appSessionId,
@@ -34,16 +34,10 @@ test('browserKeyForSession uses the stable app session id through compaction', (
   assert.equal(browserKeyForSession(session('app-2')), 'app-2');
 });
 
-test('activeSessionAfterNativeBrowserRequest does not steal the current chat', () => {
-  const request: BrowserNativeRequest = {
-    requestId: 'req-1',
-    appSessionId: 'background-chat',
-    browserSessionId: 'browser-background-chat',
-    action: 'snapshot',
-  };
-
-  assert.equal(activeSessionAfterNativeBrowserRequest('visible-chat', request), 'visible-chat');
-  assert.equal(activeSessionAfterNativeBrowserRequest(null, request), 'background-chat');
+test('nativeBrowserRequestTargetsActiveSession never promotes background browser work', () => {
+  assert.equal(nativeBrowserRequestTargetsActiveSession('visible-chat', 'visible-chat'), true);
+  assert.equal(nativeBrowserRequestTargetsActiveSession('visible-chat', 'background-chat'), false);
+  assert.equal(nativeBrowserRequestTargetsActiveSession(undefined, 'background-chat'), false);
 });
 
 test('nativeBrowserRequestTargetsVisibleSurface only attaches the active browser request', () => {
