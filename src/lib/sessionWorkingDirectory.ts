@@ -97,3 +97,24 @@ export function sessionWorkingDirectory(
 
   return sessionCwd;
 }
+
+export function sessionWorkingDirectoryForSource(
+  sessionCwd: string,
+  transcript: readonly TranscriptEvent[],
+  registeredWorktrees: readonly GitWorktree[],
+  sourceSessionId?: string,
+): string {
+  const scopedTranscript = sourceSessionId
+    ? transcript.filter((event) => event.sourceSessionId === sourceSessionId)
+    : transcript.filter((event) => event.role === 'primary');
+  return sessionWorkingDirectory(sessionCwd, scopedTranscript, registeredWorktrees);
+}
+
+export function workingDirectoryDuringDiscovery(
+  sessionCwd: string,
+  discoveryCwd: string,
+  discoveryLoading: boolean,
+  inferredDirectory: string,
+): string {
+  return discoveryLoading && discoveryCwd !== sessionCwd ? discoveryCwd : inferredDirectory;
+}

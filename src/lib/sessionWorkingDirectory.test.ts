@@ -2,7 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { TranscriptEvent } from '../types/bridge';
 import type { GitWorktree } from '../types/vcs';
-import { sessionWorkingDirectory } from './sessionWorkingDirectory';
+import {
+  sessionWorkingDirectory,
+  sessionWorkingDirectoryForSource,
+  workingDirectoryDuringDiscovery,
+} from './sessionWorkingDirectory';
 
 const main = '/Users/test/droid-control';
 const linked = '/Users/test/droid-control-review';
@@ -99,4 +103,24 @@ test('ignores assistant prose and unregistered directories', () => {
   ];
 
   assert.equal(sessionWorkingDirectory(main, transcript, worktrees), main);
+});
+
+test('scopes worktree evidence to the visible child session', () => {
+  const primary = tool('1', 'exec_command', { cwd: main, cmd: 'git status' });
+  const child = {
+    ...tool('2', 'exec_command', { cwd: linked, cmd: 'git status' }),
+    sourceSessionId: 'worker-1',
+    role: 'worker' as const,
+  };
+
+  assert.equal(
+    sessionWorkingDirectoryForSource(main, [primary, child], worktrees, 'worker-1'),
+    linked,
+  );
+  assert.equal(sessionWorkingDirectoryForSource(main, [primary, child], worktrees), main);
+});
+
+test('retains a migrated worktree until its discovery snapshot loads', () => {
+  assert.equal(workingDirectoryDuringDiscovery(main, linked, true, main), linked);
+  assert.equal(workingDirectoryDuringDiscovery(main, linked, false, linked), linked);
 });

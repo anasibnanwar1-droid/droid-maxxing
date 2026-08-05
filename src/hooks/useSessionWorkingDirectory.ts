@@ -1,10 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { SessionSummary } from '../types/bridge';
-import { sessionWorkingDirectory } from '../lib/sessionWorkingDirectory';
+import {
+  sessionWorkingDirectoryForSource,
+  workingDirectoryDuringDiscovery,
+} from '../lib/sessionWorkingDirectory';
 import { useGitEnvironment } from './useGitEnvironment';
 import { useStore } from './useStore';
 
-export function useSessionWorkingDirectory(session: SessionSummary | null): string {
+export function useSessionWorkingDirectory(
+  session: SessionSummary | null,
+  sourceSessionId?: string,
+): string {
   const { state } = useStore();
   const sessionKey = session?.appSessionId ?? '';
   const sessionCwd = session?.cwd ?? '';
@@ -13,9 +19,19 @@ export function useSessionWorkingDirectory(session: SessionSummary | null): stri
   const git = useGitEnvironment(discoveryCwd, 'worktree');
   const transcript = session ? (state.transcripts[session.appSessionId] ?? []) : [];
 
-  const workingDirectory = useMemo(
-    () => sessionWorkingDirectory(sessionCwd, transcript, git.worktrees),
-    [git.worktrees, sessionCwd, transcript],
+  const inferredDirectory = useMemo(
+    () => sessionWorkingDirectoryForSource(sessionCwd, transcript, git.worktrees, sourceSessionId),
+    [git.worktrees, sessionCwd, sourceSessionId, transcript],
+  );
+  // The migrated cwd has no cached snapshot on its first render. Keep it as
+  // the authoritative discovery target until that initial load settles;
+  // otherwise the empty worktree list would bounce us back to sessionCwd and
+  // create a maximum-update-depth loop.
+  const workingDirectory = workingDirectoryDuringDiscovery(
+    sessionCwd,
+    discoveryCwd,
+    git.loading,
+    inferredDirectory,
   );
 
   useEffect(() => {
