@@ -82,6 +82,7 @@ export class SessionContext {
   // a late pre-compaction usage event delivered after the poll can never
   // resurrect the old meter.
   private readonly pendingCompactionResets = new Set<string>();
+  private readonly recordedCompactions = new Map<string, Map<string, number>>();
   private readonly pollers = new Map<string, ContextPoller>();
   private epoch = 0;
 
@@ -191,32 +192,52 @@ export class SessionContext {
     }
   }
 
-  recordCompaction(target: ContextOperationTarget): void {
+  recordCompaction(target: ContextOperationTarget, compactionId?: string): void {
+    const key = contextResourceKey(target);
+    const recordedGeneration = compactionId
+      ? this.recordedCompactions.get(key)?.get(compactionId)
+      : undefined;
     if (isChildTarget(target)) {
       // Completion settlement may synchronously detach a standalone child before
       // accounting runs. Preserve that established generation residue; the
       // captured target still keeps refreshes inert, while top-level teardown
       // clears all owned generations after blocking new notifications.
-      const key = childIdentityKey(target);
+      if (recordedGeneration !== undefined) return;
       const generation = (this.compactions.get(key) ?? 0) + 1;
       this.compactions.set(key, generation);
       this.captureProviderUsageBaseline(key, generation);
+      this.rememberCompaction(key, compactionId, generation);
       return;
     }
 
     if (!target.isCurrent()) return;
     const liveSession = this.dependencies.registry.getLive(target.appSessionId);
     if (liveSession?.session !== target.session || !target.isCurrent()) return;
-    const key = contextResourceKey(target);
-    const generation = (liveSession.summary.autoCompactions ?? 0) + 1;
-    this.dependencies.registry.updateSummary(target.appSessionId, {
+    const generation = recordedGeneration ?? (liveSession.summary.autoCompactions ?? 0) + 1;
+    if (recordedGeneration === undefined) {
+      this.compactions.set(key, (this.compactions.get(key) ?? 0) + 1);
+      this.captureProviderUsageBaseline(key, generation);
+      this.pendingCompactionResets.add(key);
+      this.rememberCompaction(key, compactionId, generation);
+    }
+    const patch = {
       contextTokens: 0,
       contextAccuracy: undefined,
-      autoCompactions: (liveSession.summary.autoCompactions ?? 0) + 1,
-    });
-    this.compactions.set(key, (this.compactions.get(key) ?? 0) + 1);
-    this.captureProviderUsageBaseline(key, generation);
-    this.pendingCompactionResets.add(key);
+      autoCompactions: generation,
+    } as const;
+    try {
+      this.dependencies.registry.updateSummary(target.appSessionId, patch);
+    } catch (error) {
+      // Runtime telemetry must advance even when its historical snapshot cannot
+      // be persisted. A retry with the same compactionId reuses this generation
+      // and only retries persistence, so the meter cannot double-increment.
+      liveSession.summary = { ...liveSession.summary, ...patch };
+      this.dependencies.emit({
+        type: 'session.updated',
+        session: { ...liveSession.summary, updatedAt: Date.now() },
+      });
+      throw error;
+    }
   }
 
   // A new primary turn begins: pre-compaction stream events from the previous
@@ -237,6 +258,7 @@ export class SessionContext {
     this.compactions.delete(key);
     this.providerUsageBaselines.delete(key);
     this.latestProviderUsage.delete(key);
+    this.recordedCompactions.delete(key);
   }
 
   stopSession(liveSession: LiveSession): void {
@@ -252,6 +274,7 @@ export class SessionContext {
     this.providerUsageBaselines.delete(key);
     this.latestProviderUsage.delete(key);
     this.pendingCompactionResets.delete(key);
+    this.recordedCompactions.delete(key);
   }
 
   clearAll(): void {
@@ -263,6 +286,7 @@ export class SessionContext {
     this.providerUsageBaselines.clear();
     this.latestProviderUsage.clear();
     this.pendingCompactionResets.clear();
+    this.recordedCompactions.clear();
     this.usageOffsets.clear();
   }
 
@@ -383,6 +407,16 @@ export class SessionContext {
   private captureProviderUsageBaseline(key: string, generation: number): void {
     const used = this.latestProviderUsage.get(key);
     if (used !== undefined) this.providerUsageBaselines.set(key, { generation, used });
+  }
+
+  private rememberCompaction(key: string, compactionId: string | undefined, generation: number) {
+    if (compactionId === undefined) return;
+    let entries = this.recordedCompactions.get(key);
+    if (!entries) {
+      entries = new Map();
+      this.recordedCompactions.set(key, entries);
+    }
+    entries.set(compactionId, generation);
   }
 
   private normalizeProviderWindowSnapshot(

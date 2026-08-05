@@ -410,7 +410,20 @@ test('automatic completion retries synchronous lifecycle persistence before dedu
     h.compaction.handleChildNotification(child.target, completedNotification());
 
     assert.equal(h.generations.get(`c:parent/${failure}`), 1);
+    assert.equal(h.trace.filter((entry) => entry === `compaction:${failure}:12`).length, 1);
   }
+});
+
+test('an older completed summary replay remains deduplicated', () => {
+  const h = createHarness();
+  const child = addChild(h, 'parent', 'worker');
+
+  h.compaction.handleChildNotification(child.target, completedNotification('summary-1'));
+  h.compaction.handleChildNotification(child.target, completedNotification('summary-2'));
+  h.compaction.handleChildNotification(child.target, completedNotification('summary-1'));
+
+  assert.equal(h.generations.get('c:parent/worker'), 2);
+  assert.equal(h.trace.filter((entry) => entry === 'compaction:worker:12').length, 2);
 });
 
 test(

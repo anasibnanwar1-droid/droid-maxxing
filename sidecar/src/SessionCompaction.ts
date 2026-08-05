@@ -128,7 +128,10 @@ export class SessionCompaction {
   private uiSettings: CompactionTokenLimitPatch = {};
   private retuneRevision = 0;
   private epoch = 0;
-  private readonly completedSummaries = new Map<string, string>();
+  private readonly completionProgress = new Map<
+    string,
+    Map<string, { timelineRecorded: boolean; contextRecorded: boolean }>
+  >();
   private readonly watchdogs: AutoCompactionWatchdogs<CompactionResourceKey>;
   private readonly execution: SessionCompactionExecution;
 
@@ -266,7 +269,7 @@ export class SessionCompaction {
   clearAll(): void {
     this.epoch += 1;
     this.retuneRevision += 1;
-    this.completedSummaries.clear();
+    this.completionProgress.clear();
     this.watchdogs.clearAll();
   }
 
@@ -310,25 +313,40 @@ export class SessionCompaction {
     // supplies summaryId; an unidentifiable notification cannot be applied
     // safely because a replay would double-count the generation and divider.
     if (compaction.summaryId === undefined) return true;
-    if (this.completedSummaries.get(resourceId) === compaction.summaryId) return true;
+    let summaries = this.completionProgress.get(resourceId);
+    if (!summaries) {
+      summaries = new Map();
+      this.completionProgress.set(resourceId, summaries);
+    }
+    let progress = summaries.get(compaction.summaryId);
+    if (!progress) {
+      progress = { timelineRecorded: false, contextRecorded: false };
+      summaries.set(compaction.summaryId, progress);
+    }
+    if (progress.timelineRecorded && progress.contextRecorded) return true;
     this.setAutoCompacting(target, false);
-    this.dependencies.timeline.appendCompaction(
-      target.appSessionId,
-      compaction.removedCount,
-      target.kind === 'primary' ? target.appSessionId : target.childSessionId,
-      target.kind === 'primary' ? 'primary' : target.role,
-      compaction.summaryId,
-    );
-    this.dependencies.context.recordCompaction(target);
-    this.completedSummaries.set(resourceId, compaction.summaryId);
+    if (!progress.timelineRecorded) {
+      this.dependencies.timeline.appendCompaction(
+        target.appSessionId,
+        compaction.removedCount,
+        target.kind === 'primary' ? target.appSessionId : target.childSessionId,
+        target.kind === 'primary' ? 'primary' : target.role,
+        compaction.summaryId,
+      );
+      progress.timelineRecorded = true;
+    }
+    if (!progress.contextRecorded) {
+      this.dependencies.context.recordCompaction(target, compaction.summaryId);
+      progress.contextRecorded = true;
+    }
     void this.dependencies.context.refresh(target).catch(ignoreError);
     return true;
   }
 
   private forgetCompletedSummaries(key: CompactionResourceIdentity): void {
     const prefix = `${compactionResourceId(key)}:`;
-    for (const resourceId of this.completedSummaries.keys()) {
-      if (resourceId.startsWith(prefix)) this.completedSummaries.delete(resourceId);
+    for (const resourceId of this.completionProgress.keys()) {
+      if (resourceId.startsWith(prefix)) this.completionProgress.delete(resourceId);
     }
   }
 

@@ -482,6 +482,23 @@ test('a refresh in flight across a primary compaction never republishes stale st
   assert.equal(live.summary.contextTokens, 0);
 });
 
+test('compaction bookkeeping survives persistence failure without double incrementing', () => {
+  const h = createHarness();
+  const { live } = registerLive(h, 'app-1');
+  live.summary.contextTokens = 900;
+  h.history.nextSyncError = new Error('disk unavailable');
+
+  assert.throws(
+    () => h.context.recordCompaction(primaryTarget(h, live), 'summary-1'),
+    /disk unavailable/,
+  );
+  assert.equal(live.summary.contextTokens, 0);
+  assert.equal(live.summary.autoCompactions, 1);
+
+  h.context.recordCompaction(primaryTarget(h, live), 'summary-1');
+  assert.equal(live.summary.autoCompactions, 1);
+});
+
 test('queued pre-compaction exact usage cannot undo the reset before a new turn', async () => {
   const h = createHarness();
   const { live, session } = registerLive(h, 'app-1');
