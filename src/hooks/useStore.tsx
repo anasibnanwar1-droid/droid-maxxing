@@ -1218,7 +1218,14 @@ function baseReducer(state: AppState, action: Action): AppState {
       // proved that compactions occurred.
       const m =
         previous && (previous.autoCompactions ?? 0) > (incoming.autoCompactions ?? 0)
-          ? { ...incoming, autoCompactions: previous.autoCompactions }
+          ? {
+              ...incoming,
+              autoCompactions: previous.autoCompactions,
+              contextTokens: previous.contextTokens,
+              contextRemainingTokens: previous.contextRemainingTokens,
+              contextAccuracy: previous.contextAccuracy,
+              contextUpdatedAt: previous.contextUpdatedAt,
+            }
           : incoming;
       const previousCompactions =
         (previous?.compactedFromProviderSessionIds?.length ?? 0) + (previous?.autoCompactions ?? 0);

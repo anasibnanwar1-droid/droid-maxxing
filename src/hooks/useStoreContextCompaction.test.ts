@@ -124,11 +124,11 @@ test('restored compaction history advances the meter generation and clears stale
 });
 
 test('live and provider-history dividers restore as one compaction generation', () => {
-  const restored = (id: string): TranscriptEvent => ({
+  const restored = (id: string, role: TranscriptEvent['role'] = 'primary'): TranscriptEvent => ({
     id,
     appSessionId: 'm1',
-    sourceSessionId: 'primary',
-    role: 'primary',
+    sourceSessionId: role === 'primary' ? 'primary' : 'worker-1',
+    role,
     ts: 1,
     kind: 'compaction',
   });
@@ -142,7 +142,11 @@ test('live and provider-history dividers restore as one compaction generation', 
     type: 'SESSION_HISTORY',
     appSessionId: 'm1',
     progress: [],
-    transcripts: [restored('compaction-m1-summary-1'), restored('provider-session:compaction')],
+    transcripts: [
+      restored('compaction-m1-summary-1'),
+      restored('provider-session:compaction'),
+      restored('compaction-worker-1-summary-1', 'worker'),
+    ],
     mode: 'replace',
     olderCursor: undefined,
     hasMore: false,
@@ -154,14 +158,25 @@ test('live and provider-history dividers restore as one compaction generation', 
 });
 
 test('a delayed session summary cannot roll back a restored compaction generation', () => {
+  const restored = {
+    ...session(4),
+    contextTokens: 25_000,
+    contextRemainingTokens: 75_000,
+    contextAccuracy: 'estimated' as const,
+    contextUpdatedAt: '2026-08-05T08:00:00.000Z',
+  };
   const start: AppState = {
     ...initialState,
-    sessions: { m1: session(4) },
+    sessions: { m1: restored },
   };
 
   const next = reducer(start, { type: 'SESSION_UPDATED', session: session(0) });
 
   assert.equal(next.sessions.m1.autoCompactions, 4);
+  assert.equal(next.sessions.m1.contextTokens, 25_000);
+  assert.equal(next.sessions.m1.contextRemainingTokens, 75_000);
+  assert.equal(next.sessions.m1.contextAccuracy, 'estimated');
+  assert.equal(next.sessions.m1.contextUpdatedAt, '2026-08-05T08:00:00.000Z');
 });
 
 test('child runtime replacement clears only the prior exact-child context snapshot', () => {
