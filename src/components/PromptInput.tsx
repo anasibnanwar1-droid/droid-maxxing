@@ -1238,9 +1238,9 @@ export default function PromptInput({
 
             <div className="flex-1 min-w-0" />
 
-            {activeSession?.queuedSends ? (
+            {queue.length > 0 ? (
               <span className="rounded-md border border-droid-border bg-droid-elevated/70 px-1.5 py-0.5 tabular-nums text-[10px] text-droid-text-secondary">
-                {activeSession.queuedSends} queued
+                {queue.length} queued
               </span>
             ) : null}
 
