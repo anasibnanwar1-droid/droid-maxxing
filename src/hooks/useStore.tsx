@@ -206,11 +206,6 @@ export interface AppState {
   specMode: boolean;
   settingsOpen: boolean;
   commandPaletteOpen: boolean;
-  // The context-usage popover portals over the app; the native browser view is
-  // an OS layer painted above the DOM, so we track this flag to detach the
-  // browser while the popover is open (otherwise it renders behind it and
-  // swallows outside-click dismissal).
-  contextMeterOpen: boolean;
   theme: ThemeConfig;
   missionControlMode: boolean;
   draftChat: { cwd: string; branch?: string } | null;
@@ -406,7 +401,6 @@ type Action =
   | { type: 'SET_DIFF_VIEW'; mode: DiffViewMode }
   | { type: 'TOGGLE_COMMAND_PALETTE' }
   | { type: 'CLOSE_COMMAND_PALETTE' }
-  | { type: 'SET_CONTEXT_METER_OPEN'; open: boolean }
   | { type: 'TOGGLE_SIDEBAR' }
   | { type: 'TOGGLE_SPEC_MODE' }
   | {
@@ -902,7 +896,6 @@ export const initialState: AppState = {
   specMode: persistedUiState.specMode ?? false,
   settingsOpen: false,
   commandPaletteOpen: false,
-  contextMeterOpen: false,
   theme: loadTheme(),
   missionControlMode: persistedUiState.missionControlMode ?? false,
   draftChat: null,
@@ -2120,9 +2113,6 @@ function baseReducer(state: AppState, action: Action): AppState {
 
     case 'CLOSE_COMMAND_PALETTE':
       return { ...state, commandPaletteOpen: false };
-
-    case 'SET_CONTEXT_METER_OPEN':
-      return { ...state, contextMeterOpen: action.open };
 
     case 'TOGGLE_SIDEBAR':
       return { ...state, sidebarCollapsed: !state.sidebarCollapsed };

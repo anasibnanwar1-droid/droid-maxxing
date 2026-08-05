@@ -55,7 +55,6 @@ import {
   buildVisibleChildSettingsTarget,
   childSettingsReadinessLabel,
 } from '../lib/exactChildSettings';
-import ContextStatusCluster from './ContextStatusCluster';
 import PermissionInline from './PermissionInline';
 import PlanApprovalInline from './PlanApprovalInline';
 import { ModelIcon, providerOf } from './ModelIcon';
@@ -1239,7 +1238,11 @@ export default function PromptInput({
 
             <div className="flex-1 min-w-0" />
 
-            <ContextStatusCluster />
+            {activeSession?.queuedSends ? (
+              <span className="rounded-md border border-droid-border bg-droid-elevated/70 px-1.5 py-0.5 tabular-nums text-[10px] text-droid-text-secondary">
+                {activeSession.queuedSends} queued
+              </span>
+            ) : null}
 
             {/* Autonomy: read-only for a targeted child, live control for an
                 open session, draft override before a session exists. */}
