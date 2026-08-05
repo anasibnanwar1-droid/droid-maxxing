@@ -381,6 +381,7 @@ type Action =
       tool: UtilityTool;
       tabId?: string;
       terminalId?: string;
+      cwd?: string;
       filePath?: string;
     }
   | { type: 'CLOSE_UTILITY_TAB'; tabId: string; appSessionId?: string }
@@ -390,6 +391,7 @@ type Action =
       tabId: string;
       appSessionId?: string;
       terminalId?: string;
+      cwd?: string;
       filePath?: string;
       label?: string;
     }
@@ -1944,7 +1946,7 @@ function baseReducer(state: AppState, action: Action): AppState {
         state.utilityPanels[appSessionId],
         action.tool,
         () => action.tabId ?? `${action.tool}:${appSessionId}`,
-        { terminalId: action.terminalId, filePath: action.filePath },
+        { terminalId: action.terminalId, cwd: action.cwd, filePath: action.filePath },
       );
       return {
         ...state,
@@ -2000,6 +2002,7 @@ function baseReducer(state: AppState, action: Action): AppState {
       const current = state.utilityPanels[appSessionId];
       const panel = updateUtilityTab(current, action.tabId, {
         terminalId: action.terminalId,
+        cwd: action.cwd,
         filePath: action.filePath,
         label: action.label,
       });

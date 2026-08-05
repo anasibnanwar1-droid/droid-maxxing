@@ -113,10 +113,12 @@ test('an explicit session id keeps delayed tab updates scoped to their origin', 
     tabId: 'terminal-a',
     appSessionId: 'session-a',
     terminalId: 'pty-a',
+    cwd: '/workspace-a',
     label: 'zsh',
   });
 
   assert.equal(state.utilityPanels['session-a'].tabs[0].terminalId, 'pty-a');
+  assert.equal(state.utilityPanels['session-a'].tabs[0].cwd, '/workspace-a');
   assert.equal(state.utilityPanels['session-a'].tabs[0].label, 'zsh');
   assert.equal(state.utilityPanels['session-b'].tabs[0].terminalId, undefined);
 });

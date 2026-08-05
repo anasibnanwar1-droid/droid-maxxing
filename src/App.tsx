@@ -135,9 +135,10 @@ export default function App() {
         type: 'OPEN_UTILITY_TOOL',
         tool,
         tabId: tool === 'terminal' ? crypto.randomUUID() : undefined,
+        cwd: tool === 'terminal' ? workingDirectory : undefined,
       });
     },
-    [dispatch],
+    [dispatch, workingDirectory],
   );
 
   useEffect(() => {
@@ -503,7 +504,7 @@ export default function App() {
                             tabId={tab.id}
                             terminalId={tab.terminalId}
                             appSessionId={activeSession.appSessionId}
-                            cwd={workingDirectory}
+                            cwd={tab.cwd ?? workingDirectory}
                             onCreated={(terminalId, label) => {
                               dispatch({
                                 type: 'UPDATE_UTILITY_TAB',
