@@ -15,6 +15,7 @@ export interface GitEnvironmentState {
   worktrees: GitWorktree[];
   diffStat: GitDiffStat | null;
   loading: boolean;
+  hasSnapshot: boolean;
   refresh: () => void;
 }
 
@@ -289,6 +290,7 @@ export function useGitEnvironment(cwd: string, diffMode: DiffStatMode): GitEnvir
     worktrees: entry?.worktrees ?? EMPTY_WORKTREES,
     diffStat: entry?.diffStats[diffMode] ?? null,
     loading: entry?.loading ?? false,
+    hasSnapshot: entry?.hasLoaded ?? false,
     refresh,
   };
 }

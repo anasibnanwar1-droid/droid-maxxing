@@ -121,6 +121,16 @@ test('scopes worktree evidence to the visible child session', () => {
 });
 
 test('retains a migrated worktree until its discovery snapshot loads', () => {
-  assert.equal(workingDirectoryDuringDiscovery(main, linked, true, main), linked);
-  assert.equal(workingDirectoryDuringDiscovery(main, linked, false, linked), linked);
+  assert.equal(workingDirectoryDuringDiscovery(main, linked, false, [], main), linked);
+  assert.equal(workingDirectoryDuringDiscovery(main, linked, true, [], main), linked);
+  assert.equal(workingDirectoryDuringDiscovery(main, linked, true, worktrees, linked), linked);
+});
+
+test('resolves relative edits against the latest tool worktree', () => {
+  const transcript = [
+    tool('1', 'exec_command', { cwd: linked, cmd: 'git status' }),
+    tool('2', 'write_file', { file_path: 'src/app.ts', content: 'export {}' }),
+  ];
+
+  assert.equal(sessionWorkingDirectory(main, transcript, worktrees), linked);
 });

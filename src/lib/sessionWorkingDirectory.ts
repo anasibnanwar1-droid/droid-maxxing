@@ -25,6 +25,16 @@ function pathContains(root: string, candidate: string): boolean {
   );
 }
 
+function isAbsolutePath(path: string): boolean {
+  const normalized = normalizedPath(path);
+  return normalized.startsWith('/') || /^[a-z]:\//i.test(normalized);
+}
+
+function resolveToolPath(path: string, cwd: string): string {
+  if (isAbsolutePath(path)) return path;
+  return `${normalizedPath(cwd)}/${path.replace(/^\.\//, '')}`;
+}
+
 function isPathReferenceBoundary(character: string | undefined): boolean {
   return character === undefined || /[\s"'`=,:;()[\]{}|&]/.test(character);
 }
@@ -74,28 +84,29 @@ export function sessionWorkingDirectory(
     });
   if (worktrees.length === 0) return sessionCwd;
 
-  for (let index = transcript.length - 1; index >= 0; index -= 1) {
-    const event = transcript[index];
+  let workingDirectory = sessionCwd;
+  for (const event of transcript) {
     if (event.kind !== 'tool_call') continue;
 
     for (const directory of stringsForKeys(event.toolArgs, DIRECT_DIRECTORY_KEYS)) {
       const match = worktrees.find((path) => pathContains(path, directory));
-      if (match) return match;
+      if (match) workingDirectory = match;
     }
 
     const change = extractFileChange(event.toolName, event.toolArgs);
     if (change) {
-      const match = worktrees.find((path) => pathContains(path, change.path));
-      if (match) return match;
+      const resolvedPath = resolveToolPath(change.path, workingDirectory);
+      const match = worktrees.find((path) => pathContains(path, resolvedPath));
+      if (match) workingDirectory = match;
     }
 
     for (const evidence of stringsForKeys(event.toolArgs, PATH_EVIDENCE_KEYS)) {
       const match = referencedWorktree(evidence, worktrees);
-      if (match) return match;
+      if (match) workingDirectory = match;
     }
   }
 
-  return sessionCwd;
+  return workingDirectory;
 }
 
 export function sessionWorkingDirectoryForSource(
@@ -113,8 +124,15 @@ export function sessionWorkingDirectoryForSource(
 export function workingDirectoryDuringDiscovery(
   sessionCwd: string,
   discoveryCwd: string,
-  discoveryLoading: boolean,
+  hasDiscoverySnapshot: boolean,
+  registeredWorktrees: readonly GitWorktree[],
   inferredDirectory: string,
 ): string {
-  return discoveryLoading && discoveryCwd !== sessionCwd ? discoveryCwd : inferredDirectory;
+  const migratedTargetConfirmed = registeredWorktrees.some(
+    (worktree) =>
+      worktree.path !== null && normalizedPath(worktree.path) === normalizedPath(discoveryCwd),
+  );
+  return discoveryCwd !== sessionCwd && (!hasDiscoverySnapshot || !migratedTargetConfirmed)
+    ? discoveryCwd
+    : inferredDirectory;
 }

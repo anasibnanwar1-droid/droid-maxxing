@@ -30,7 +30,8 @@ export function useSessionWorkingDirectory(
   const workingDirectory = workingDirectoryDuringDiscovery(
     sessionCwd,
     discoveryCwd,
-    git.loading,
+    git.hasSnapshot,
+    git.worktrees,
     inferredDirectory,
   );
 
