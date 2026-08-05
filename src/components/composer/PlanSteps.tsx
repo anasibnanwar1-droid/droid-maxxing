@@ -110,6 +110,34 @@ export function PlanStepsPanel({
           transition={{ duration: 0.22, ease: EASE }}
           className="relative z-0 mx-[6%] -mb-3 min-w-0 overflow-hidden rounded-t-2xl border border-droid-border bg-droid-surface pb-4"
         >
+          <motion.div
+            id="plan-steps-list"
+            initial={false}
+            animate={{ height: expanded ? 'auto' : 0 }}
+            transition={{ duration: 0.24, ease: EASE }}
+            className="expanded-steps min-h-0 max-h-[min(40vh,350px)] overflow-y-auto"
+          >
+            {steps.map((step, i) => (
+              <div
+                key={`${String(i)}-${step.text}`}
+                className={`flex min-w-0 items-center gap-2.5 px-4 py-1.5 ${
+                  i === activeIndex && !allDone ? 'bg-droid-active/50' : ''
+                }`}
+              >
+                <StepRing
+                  status={step.status}
+                  active={i === activeIndex && !allDone}
+                  spinning={isRunning && expanded}
+                />
+                <span
+                  className={`min-w-0 flex-1 truncate text-[12px] ${stepTone(step, i === activeIndex)}`}
+                >
+                  {step.text}
+                </span>
+              </div>
+            ))}
+          </motion.div>
+
           <button
             type="button"
             onClick={() => {
@@ -122,7 +150,7 @@ export function PlanStepsPanel({
             <StepRing
               status={allDone ? 'completed' : current.status}
               active={!allDone}
-              spinning={isRunning}
+              spinning={isRunning && !expanded}
             />
             <span className="min-w-0 flex-1 truncate text-[12.5px] text-droid-text">
               {current.text}
@@ -131,34 +159,6 @@ export function PlanStepsPanel({
               className={`h-3.5 w-3.5 shrink-0 text-droid-text-muted transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
             />
           </button>
-
-          <motion.div
-            id="plan-steps-list"
-            initial={false}
-            animate={{ height: expanded ? 'auto' : 0 }}
-            transition={{ duration: 0.24, ease: EASE }}
-            className="overflow-hidden"
-          >
-            {steps.map((step, i) => (
-              <div
-                key={`${String(i)}-${step.text}`}
-                className={`flex min-w-0 items-center gap-2.5 px-4 py-1.5 ${
-                  i === activeIndex && !allDone ? 'bg-droid-active/50' : ''
-                }`}
-              >
-                <StepRing
-                  status={step.status}
-                  active={i === activeIndex && !allDone}
-                  spinning={isRunning}
-                />
-                <span
-                  className={`min-w-0 flex-1 truncate text-[12px] ${stepTone(step, i === activeIndex)}`}
-                >
-                  {step.text}
-                </span>
-              </div>
-            ))}
-          </motion.div>
         </motion.div>
       )}
     </AnimatePresence>
