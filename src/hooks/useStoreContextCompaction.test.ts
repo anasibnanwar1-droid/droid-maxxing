@@ -123,6 +123,36 @@ test('restored compaction history advances the meter generation and clears stale
   assert.equal(next.contextStats.primary.m1, undefined);
 });
 
+test('live and provider-history dividers restore as one compaction generation', () => {
+  const restored = (id: string): TranscriptEvent => ({
+    id,
+    appSessionId: 'm1',
+    sourceSessionId: 'primary',
+    role: 'primary',
+    ts: 1,
+    kind: 'compaction',
+  });
+  const start: AppState = {
+    ...initialState,
+    sessions: { m1: session() },
+    contextStats: { primary: { m1: snapshot(100_000) }, child: {} },
+  };
+
+  const next = reducer(start, {
+    type: 'SESSION_HISTORY',
+    appSessionId: 'm1',
+    progress: [],
+    transcripts: [restored('compaction-m1-summary-1'), restored('provider-session:compaction')],
+    mode: 'replace',
+    olderCursor: undefined,
+    hasMore: false,
+  });
+
+  assert.equal(next.sessions.m1.autoCompactions, 1);
+  assert.equal(next.sessions.m1.contextTokens, 0);
+  assert.equal(next.contextStats.primary.m1, undefined);
+});
+
 test('a delayed session summary cannot roll back a restored compaction generation', () => {
   const start: AppState = {
     ...initialState,

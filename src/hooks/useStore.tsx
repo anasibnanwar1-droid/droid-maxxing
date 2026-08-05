@@ -1064,9 +1064,13 @@ function withHistoricalCompactionGeneration(
   const session = state.sessions[appSessionId];
   if (!session) return state;
 
-  const restoredCompactions = transcript.filter(
+  const compactionMarkers = transcript.filter(
     (event) => event.kind === 'compaction' && event.role === 'primary',
-  ).length;
+  );
+  const restoredCompactions = Math.max(
+    compactionMarkers.filter((event) => event.id.startsWith('compaction-')).length,
+    compactionMarkers.filter((event) => !event.id.startsWith('compaction-')).length,
+  );
   const currentCompactions = session.autoCompactions ?? 0;
   if (restoredCompactions <= currentCompactions) return state;
 
