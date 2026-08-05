@@ -134,3 +134,35 @@ test('resolves relative edits against the latest tool worktree', () => {
 
   assert.equal(sessionWorkingDirectory(main, transcript, worktrees), linked);
 });
+
+test('canonicalizes parent segments before matching a sibling worktree', () => {
+  const sibling = '/Users/test/droid-control-sibling';
+  const registered = [...worktrees, { ...worktrees[1], path: sibling, branch: 'feat/sibling' }];
+  const transcript = [
+    tool('1', 'exec_command', { cwd: linked, cmd: 'git status' }),
+    tool('2', 'write_file', {
+      file_path: `../${sibling.split('/').at(-1)}/src/app.ts`,
+      content: 'export {}',
+    }),
+  ];
+
+  assert.equal(sessionWorkingDirectory(main, transcript, registered), sibling);
+});
+
+test('matches Windows worktree paths without case sensitivity', () => {
+  const windowsWorktree: GitWorktree = {
+    ...worktrees[0],
+    path: 'C:\\Users\\Test\\Droid-Control',
+  };
+  const transcript = [
+    tool('1', 'exec_command', {
+      cwd: 'c:\\users\\test\\droid-control',
+      cmd: 'git status',
+    }),
+  ];
+
+  assert.equal(
+    sessionWorkingDirectory('C:\\Users\\Test\\Other', transcript, [windowsWorktree]),
+    windowsWorktree.path,
+  );
+});

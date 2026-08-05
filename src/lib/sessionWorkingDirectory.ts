@@ -14,12 +14,45 @@ const PATH_EVIDENCE_KEYS = new Set([
 ]);
 
 function normalizedPath(path: string): string {
-  return path.replaceAll('\\', '/').replace(/\/+$/, '');
+  const slashed = path.replaceAll('\\', '/');
+  const drive = /^[a-z]:/i.exec(slashed)?.[0] ?? '';
+  const absolute = slashed.startsWith('/') || drive.length > 0;
+  const body = drive ? slashed.slice(drive.length).replace(/^\//, '') : slashed.replace(/^\//, '');
+  const segments = normalizedSegments(body, absolute);
+  let prefix = '';
+  if (drive) prefix = `${drive}/`;
+  else if (absolute) prefix = '/';
+  return `${prefix}${segments.join('/')}` || (absolute ? prefix : '.');
+}
+
+function normalizedSegments(path: string, absolute: boolean): string[] {
+  const segments: string[] = [];
+  for (const segment of path.split('/')) {
+    if (!segment || segment === '.') continue;
+    if (segment === '..') {
+      if (segments.length > 0 && segments.at(-1) !== '..') segments.pop();
+      else if (!absolute) segments.push(segment);
+      continue;
+    }
+    segments.push(segment);
+  }
+  return segments;
+}
+
+function isCaseInsensitivePath(path: string): boolean {
+  if (/^[a-z]:\//i.test(path)) return true;
+  if (typeof navigator === 'undefined') return false;
+  return /mac|iphone|ipad|ipod|windows/i.test(navigator.userAgent);
+}
+
+function comparablePath(path: string): string {
+  const normalized = normalizedPath(path);
+  return isCaseInsensitivePath(normalized) ? normalized.toLocaleLowerCase('en-US') : normalized;
 }
 
 function pathContains(root: string, candidate: string): boolean {
-  const normalizedRoot = normalizedPath(root);
-  const normalizedCandidate = normalizedPath(candidate);
+  const normalizedRoot = comparablePath(root);
+  const normalizedCandidate = comparablePath(candidate);
   return (
     normalizedCandidate === normalizedRoot || normalizedCandidate.startsWith(`${normalizedRoot}/`)
   );
@@ -53,9 +86,9 @@ function stringsForKeys(value: unknown, keys: Set<string>, output: string[] = []
 }
 
 function referencedWorktree(evidence: string, worktrees: readonly string[]): string | undefined {
-  const normalizedEvidence = normalizedPath(evidence);
+  const normalizedEvidence = comparablePath(evidence);
   return worktrees.find((path) => {
-    const normalizedWorktree = normalizedPath(path);
+    const normalizedWorktree = comparablePath(path);
     let index = normalizedEvidence.indexOf(normalizedWorktree);
     while (index >= 0) {
       const before = normalizedEvidence[index - 1];
@@ -77,8 +110,8 @@ export function sessionWorkingDirectory(
   const worktrees = registeredWorktrees
     .flatMap((worktree) => (worktree.bare || !worktree.path ? [] : [worktree.path]))
     .sort((left, right) => {
-      const leftIsSession = normalizedPath(left) === normalizedPath(sessionCwd);
-      const rightIsSession = normalizedPath(right) === normalizedPath(sessionCwd);
+      const leftIsSession = comparablePath(left) === comparablePath(sessionCwd);
+      const rightIsSession = comparablePath(right) === comparablePath(sessionCwd);
       if (leftIsSession !== rightIsSession) return leftIsSession ? 1 : -1;
       return right.length - left.length;
     });
@@ -130,7 +163,7 @@ export function workingDirectoryDuringDiscovery(
 ): string {
   const migratedTargetConfirmed = registeredWorktrees.some(
     (worktree) =>
-      worktree.path !== null && normalizedPath(worktree.path) === normalizedPath(discoveryCwd),
+      worktree.path !== null && comparablePath(worktree.path) === comparablePath(discoveryCwd),
   );
   return discoveryCwd !== sessionCwd && (!hasDiscoverySnapshot || !migratedTargetConfirmed)
     ? discoveryCwd
