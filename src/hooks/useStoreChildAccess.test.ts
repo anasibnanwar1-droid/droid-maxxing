@@ -358,6 +358,13 @@ test('starting a draft invalidates the selected child open request', () => {
 test('creating a new parent invalidates the selected child open request', () => {
   let state = select(initialState, 'parent-a', 'child-a', 'request-a');
   state = reducer(state, {
+    type: 'SET_PENDING_COMPOSE',
+    clientRef: 'new-parent',
+    text: 'start parent',
+    skills: [],
+    files: [],
+  });
+  state = reducer(state, {
     type: 'SESSION_CREATED',
     clientRef: 'new-parent',
     session: session('parent-b'),
@@ -368,6 +375,25 @@ test('creating a new parent invalidates the selected child open request', () => 
   assert.deepEqual(state.childAccess['parent-a']?.['child-a'], {
     state: 'closed',
     requestId: null,
+  });
+});
+
+test('resuming a background parent does not steal the selected session', () => {
+  let state = select(initialState, 'parent-a', 'child-a', 'request-a');
+  state = reducer(state, {
+    type: 'SESSION_CREATED',
+    clientRef: 'resume:parent-b',
+    session: session('parent-b'),
+  });
+
+  assert.equal(state.activeAppSessionId, 'parent-a');
+  assert.deepEqual(state.selectedChild, {
+    parentAppSessionId: 'parent-a',
+    childSessionId: 'child-a',
+  });
+  assert.deepEqual(state.childAccess['parent-a']?.['child-a'], {
+    state: 'opening',
+    requestId: 'request-a',
   });
 });
 

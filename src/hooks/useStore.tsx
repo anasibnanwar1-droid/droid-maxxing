@@ -269,7 +269,7 @@ export interface AppState {
   skillsProviderSessionId?: string | null;
 
   // Attachments for the first message of a not-yet-created session, keyed by clientRef.
-  pendingCompose: Record<string, { text: string; skills: string[]; files: string[] }>;
+  pendingCompose: Partial<Record<string, { text: string; skills: string[]; files: string[] }>>;
 }
 
 type Action =
@@ -1131,7 +1131,14 @@ function baseReducer(state: AppState, action: Action): AppState {
     }
 
     case 'SESSION_CREATED': {
-      const childReset = invalidateSelectedChildOpening(state);
+      const pending = state.pendingCompose[action.clientRef];
+      // `session.created` is also emitted when an existing session resumes.
+      // Only a create matching this renderer's pending compose may take focus;
+      // background resumes must never replace the chat the user selected.
+      const shouldActivate = pending !== undefined;
+      const targetIsActive = state.activeAppSessionId === action.session.appSessionId;
+      const childReset =
+        shouldActivate || targetIsActive ? invalidateSelectedChildOpening(state) : state;
       const childAccess = { ...childReset.childAccess };
       const childRuntime = { ...childReset.childRuntime };
       delete childAccess[action.session.appSessionId];
@@ -1144,7 +1151,6 @@ function baseReducer(state: AppState, action: Action): AppState {
       // backend never echoes it back, so without this the first message never shows.
       let transcripts = state.transcripts;
       const hasTranscript = (state.transcripts[action.session.appSessionId]?.length ?? 0) > 0;
-      const pending = state.pendingCompose[action.clientRef];
       if (action.session.goal && !hasTranscript) {
         const seed: TranscriptEvent = {
           id: `seed-${action.session.appSessionId}`,
@@ -1178,22 +1184,26 @@ function baseReducer(state: AppState, action: Action): AppState {
         },
         sessionOrder: order,
         transcripts,
-        activeAppSessionId: action.session.appSessionId,
-        draftChat: null,
-        draftAutonomy: null,
-        selectedChild: null,
+        activeAppSessionId: shouldActivate ? action.session.appSessionId : state.activeAppSessionId,
+        draftChat: shouldActivate ? null : state.draftChat,
+        draftAutonomy: shouldActivate ? null : state.draftAutonomy,
+        selectedChild: shouldActivate || targetIsActive ? null : childReset.selectedChild,
         // A pending review-focus request belongs to the session that issued
         // it; a different session becoming active must not inherit it.
         reviewFocusPath:
-          action.session.appSessionId === state.activeAppSessionId ? state.reviewFocusPath : null,
+          shouldActivate && action.session.appSessionId !== state.activeAppSessionId
+            ? null
+            : state.reviewFocusPath,
         childAccess,
         childRuntime,
         pendingCompose,
-        // A chat you just started is, by definition, already seen.
-        sessionLastSeen: {
-          ...state.sessionLastSeen,
-          [action.session.appSessionId]: action.session.updatedAt,
-        },
+        // A foreground chat just created by this renderer is already seen.
+        sessionLastSeen: shouldActivate
+          ? {
+              ...state.sessionLastSeen,
+              [action.session.appSessionId]: action.session.updatedAt,
+            }
+          : state.sessionLastSeen,
       };
       return next;
     }
