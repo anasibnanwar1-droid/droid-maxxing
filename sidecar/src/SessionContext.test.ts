@@ -296,6 +296,42 @@ test('a live compaction rebases a sub-window provider counter until the counter 
   assert.equal(reset?.remaining, 960);
 });
 
+test('a zero-limit provider reading cannot poison a live compaction baseline', async () => {
+  const h = createHarness();
+  const { live, session } = registerLive(h, 'app-1');
+  session.nextContextStats = {
+    used: 900,
+    remaining: 100,
+    limit: 1_000,
+    accuracy: ContextStatsAccuracy.Estimated,
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  };
+  await h.context.refresh(primaryTarget(h, live));
+  h.context.recordCompaction(primaryTarget(h, live));
+
+  const eventCount = contextEvents(h).length;
+  session.nextContextStats = {
+    ...session.nextContextStats,
+    used: 0,
+    remaining: 0,
+    limit: 0,
+  };
+  await h.context.refresh(primaryTarget(h, live));
+  assert.equal(contextEvents(h).length, eventCount);
+
+  session.nextContextStats = {
+    ...session.nextContextStats,
+    used: 950,
+    remaining: 50,
+    limit: 1_000,
+  };
+  await h.context.refresh(primaryTarget(h, live));
+
+  const rebased = contextEvents(h).at(-1)?.stats;
+  assert.equal(rebased?.used, 50);
+  assert.equal(rebased?.remaining, 950);
+});
+
 test('usage without current-context telemetry updates totals only', () => {
   const h = createHarness();
   const { live } = registerLive(h, 'app-1');

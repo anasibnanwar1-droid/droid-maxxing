@@ -290,6 +290,10 @@ export class SessionContext {
     if (!target.isCurrent()) return;
     const liveSession = this.dependencies.registry.getLive(target.appSessionId);
     if (!liveSession) return;
+    // A zero window is a transient/invalid provider reading, not a real empty
+    // context. Ignore it without disturbing the last valid cumulative counter
+    // or the post-compaction baseline used to rebase the next reading.
+    if (providerSnapshot.limit <= 0) return;
 
     const windowModelId =
       providerSnapshot.breakdown?.modelId ??
@@ -394,7 +398,7 @@ export class SessionContext {
       baseline = undefined;
     }
 
-    if (snapshot.limit <= 0 || snapshot.used <= snapshot.limit) {
+    if (snapshot.used <= snapshot.limit) {
       this.providerUsageBaselines.delete(key);
       return snapshot;
     }
