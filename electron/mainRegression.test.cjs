@@ -98,10 +98,14 @@ test('diagnostics initialize before app readiness and preferences require the tr
     assert.notEqual(handlerStart, -1);
     assert.match(mainSource.slice(handlerStart, handlerEnd), /assertMainRenderer\(event\)/);
   }
-  assert.match(
-    mainSource,
-    /const preference = await diagnostics\.setAutomaticDiagnosticsEnabled\(enabled\);\s*relaunchApp\(\);\s*return preference;/,
+  const preferenceHandlerStart = mainSource.indexOf("ipcMain.handle('diagnostics-preference-set'");
+  const preferenceHandlerEnd = mainSource.indexOf(
+    '\n  ipcMain.handle(',
+    preferenceHandlerStart + 1,
   );
+  const preferenceHandler = mainSource.slice(preferenceHandlerStart, preferenceHandlerEnd);
+  assert.match(preferenceHandler, /return diagnostics\.setAutomaticDiagnosticsEnabled\(enabled\)/);
+  assert.doesNotMatch(preferenceHandler, /relaunchApp/);
 });
 
 test('embedded websites cannot request unused system permissions', () => {

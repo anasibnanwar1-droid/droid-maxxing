@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Check, ChevronDown } from 'lucide-react';
 import { useStore } from '../../hooks/useStore';
@@ -91,9 +91,22 @@ export function PlanStepsPanel({
   resetKey: string;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     setExpanded(false);
   }, [resetKey]);
+  useEffect(() => {
+    if (!expanded) return;
+    const collapseOutside = (event: PointerEvent) => {
+      if (event.target instanceof Node && !panelRef.current?.contains(event.target)) {
+        setExpanded(false);
+      }
+    };
+    document.addEventListener('pointerdown', collapseOutside);
+    return () => {
+      document.removeEventListener('pointerdown', collapseOutside);
+    };
+  }, [expanded]);
 
   const activeIndex = activeTodoIndex(steps);
   const current = activeIndex >= 0 ? steps[activeIndex] : undefined;
@@ -103,6 +116,7 @@ export function PlanStepsPanel({
     <AnimatePresence initial={false}>
       {current && (
         <motion.div
+          ref={panelRef}
           key="plan-steps"
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
@@ -137,27 +151,21 @@ export function PlanStepsPanel({
             initial={false}
             animate={{ height: expanded ? 'auto' : 0 }}
             transition={{ duration: 0.24, ease: EASE }}
-            className="overflow-hidden"
+            className="expanded-steps min-h-0 max-h-[min(40vh,350px)] overflow-y-auto"
           >
-            {steps.map((step, i) => (
-              <div
-                key={`${String(i)}-${step.text}`}
-                className={`flex min-w-0 items-center gap-2.5 px-4 py-1.5 ${
-                  i === activeIndex && !allDone ? 'bg-droid-active/50' : ''
-                }`}
-              >
-                <StepRing
-                  status={step.status}
-                  active={i === activeIndex && !allDone}
-                  spinning={isRunning}
-                />
-                <span
-                  className={`min-w-0 flex-1 truncate text-[12px] ${stepTone(step, i === activeIndex)}`}
+            {steps.map((step, i) =>
+              i === activeIndex ? null : (
+                <div
+                  key={`${String(i)}-${step.text}`}
+                  className="flex min-w-0 items-center gap-2.5 px-4 py-1.5"
                 >
-                  {step.text}
-                </span>
-              </div>
-            ))}
+                  <StepRing status={step.status} active={false} spinning={false} />
+                  <span className={`min-w-0 flex-1 truncate text-[12px] ${stepTone(step, false)}`}>
+                    {step.text}
+                  </span>
+                </div>
+              ),
+            )}
           </motion.div>
         </motion.div>
       )}

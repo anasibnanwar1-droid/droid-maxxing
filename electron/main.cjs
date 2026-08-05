@@ -268,9 +268,7 @@ function registerIpc() {
   });
   ipcMain.handle('diagnostics-preference-set', async (event, { enabled }) => {
     assertMainRenderer(event);
-    const preference = await diagnostics.setAutomaticDiagnosticsEnabled(enabled);
-    relaunchApp();
-    return preference;
+    return diagnostics.setAutomaticDiagnosticsEnabled(enabled);
   });
   ipcMain.handle('app-relaunch', () => relaunchApp());
   ipcMain.handle('app-set-icon', (event, payload) => {

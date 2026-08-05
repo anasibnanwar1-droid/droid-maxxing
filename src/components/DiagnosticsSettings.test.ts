@@ -10,7 +10,8 @@ test('diagnostics settings discloses automatic crash intake and its disable beha
   assert.match(html, /Crash reports and Release Health/);
   assert.match(html, /native crash dumps/);
   assert.match(html, /incidental sensitive data/);
-  assert.match(html, /Changing this setting immediately restarts DROIDEX/);
   assert.match(html, /Turning it off stops automatic reporting and deletes the local profile ID/);
+  assert.match(html, /Changes apply immediately/);
+  assert.doesNotMatch(html, /restarts DROIDEX/);
   assert.match(html, /aria-label="Automatic crash reports and Release Health"/);
 });
