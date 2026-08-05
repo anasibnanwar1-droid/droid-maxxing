@@ -234,28 +234,43 @@ function normalizePrComments(data, inlineRows = []) {
   );
 }
 
-async function prComments(dir, { prNumber } = {}) {
+async function prComments(dir, { prNumber } = {}, runGh = gh) {
   const selector = prSelector(prNumber);
   if (selector == null) return { ok: false, reason: 'missing_pr', comments: [] };
   const [view, inline] = await Promise.all([
-    gh(dir, ['pr', 'view', '--json', 'comments,reviews', '--', selector]),
-    gh(dir, ['api', '--paginate', '--slurp', `repos/{owner}/{repo}/pulls/${selector}/comments`]),
+    runGh(dir, ['pr', 'view', '--json', 'comments,reviews', '--', selector]),
+    runGh(dir, ['api', '--paginate', '--slurp', `repos/{owner}/{repo}/pulls/${selector}/comments`]),
   ]);
-  if (view.spawnFailed || inline.spawnFailed)
-    return { ok: false, reason: 'gh_unavailable', comments: [] };
-  if (view.code !== 0 || inline.code !== 0) {
+  const viewSucceeded = !view.spawnFailed && view.code === 0;
+  const inlineSucceeded = !inline.spawnFailed && inline.code === 0;
+  if (!viewSucceeded && !inlineSucceeded) {
     const message = [view.stderr, inline.stderr]
       .map((value) => value.trim())
       .filter(Boolean)
       .join('\n');
-    return { ok: false, reason: 'gh_error', message, comments: [] };
+    return {
+      ok: false,
+      reason: view.spawnFailed || inline.spawnFailed ? 'gh_unavailable' : 'gh_error',
+      message,
+      comments: [],
+    };
   }
-  const data = parseJson(view.stdout, { comments: [], reviews: [] });
-  const pages = parseJson(inline.stdout, []);
+  const data = viewSucceeded
+    ? parseJson(view.stdout, { comments: [], reviews: [] })
+    : { comments: [], reviews: [] };
+  const pages = inlineSucceeded ? parseJson(inline.stdout, []) : [];
   const inlineRows = Array.isArray(pages)
     ? pages.flatMap((page) => (Array.isArray(page) ? page : []))
     : [];
-  return { ok: true, comments: normalizePrComments(data, inlineRows) };
+  const failures = [
+    ...(viewSucceeded ? [] : [view.stderr.trim() || 'Could not load PR conversation comments']),
+    ...(inlineSucceeded ? [] : [inline.stderr.trim() || 'Could not load inline review comments']),
+  ];
+  return {
+    ok: true,
+    ...(failures.length === 0 ? {} : { partial: true, message: failures.join('\n') }),
+    comments: normalizePrComments(data, inlineRows),
+  };
 }
 
 async function createPr(dir, { title, body = '', base, draft = false, head } = {}) {

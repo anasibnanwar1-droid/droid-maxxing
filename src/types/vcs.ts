@@ -212,6 +212,7 @@ export interface PrReaction {
 
 export interface PrCommentsResult {
   ok: boolean;
+  partial?: boolean;
   reason?: string;
   message?: string;
   comments: PrComment[];

@@ -1,6 +1,14 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { normalizePrComments, prSelector } = require('./github.cjs');
+const { normalizePrComments, prComments, prSelector } = require('./github.cjs');
+
+const ghResult = (overrides = {}) => ({
+  code: 0,
+  stdout: '',
+  stderr: '',
+  spawnFailed: false,
+  ...overrides,
+});
 
 test('PR selectors accept only bare positive digit strings', () => {
   assert.equal(prSelector(78), '78');
@@ -87,4 +95,65 @@ test('PR comments include top-level, review, and inline review threads', () => {
       },
     ],
   );
+});
+
+test('PR comments keep conversation comments when inline pagination fails', async () => {
+  const result = await prComments('/repo', { prNumber: 79 }, async (_dir, args) => {
+    if (args[0] === 'pr') {
+      return ghResult({
+        stdout: JSON.stringify({
+          comments: [{ databaseId: 10, author: { login: 'author' }, body: 'available' }],
+          reviews: [],
+        }),
+      });
+    }
+    return ghResult({ code: 1, stderr: 'REST rate limited' });
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.partial, true);
+  assert.match(result.message, /REST rate limited/);
+  assert.deepEqual(
+    result.comments.map((comment) => comment.body),
+    ['available'],
+  );
+});
+
+test('PR comments keep inline comments when conversation lookup fails', async () => {
+  const result = await prComments('/repo', { prNumber: 79 }, async (_dir, args) => {
+    if (args[0] === 'pr') return ghResult({ code: 1, stderr: 'GraphQL unavailable' });
+    return ghResult({
+      stdout: JSON.stringify([
+        [
+          {
+            id: 30,
+            user: { login: 'reviewer' },
+            body: 'inline available',
+            path: 'src/file.ts',
+            line: 4,
+          },
+        ],
+      ]),
+    });
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.partial, true);
+  assert.match(result.message, /GraphQL unavailable/);
+  assert.deepEqual(
+    result.comments.map((comment) => comment.body),
+    ['inline available'],
+  );
+});
+
+test('PR comments fail only when neither source succeeds', async () => {
+  const result = await prComments('/repo', { prNumber: 79 }, async (_dir, args) =>
+    ghResult({ code: 1, stderr: `${args[0]} failed` }),
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'gh_error');
+  assert.deepEqual(result.comments, []);
+  assert.match(result.message, /pr failed/);
+  assert.match(result.message, /api failed/);
 });

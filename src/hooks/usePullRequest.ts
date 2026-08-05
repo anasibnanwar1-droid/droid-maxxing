@@ -166,12 +166,16 @@ export function usePullRequest(
           if (checkRes.ok) {
             setChecksError(null);
           } else if (isFirstLoad || userInitiated) {
-            setChecksError(checkRes.message || 'Could not load PR checks');
+            setChecksError(checkRes.message ?? 'Could not load PR checks');
           }
           if (commentRes.ok) {
-            setCommentsError(null);
+            setCommentsError(
+              commentRes.partial
+                ? (commentRes.message ?? 'Some PR comments could not be loaded')
+                : null,
+            );
           } else if (isFirstLoad || userInitiated) {
-            setCommentsError(commentRes.message || 'Could not load PR comments');
+            setCommentsError(commentRes.message ?? 'Could not load PR comments');
           }
           // Settle the initial-load flag on BOTH success and failure: without
           // this, a failed first fetch leaves detailLoaded=false forever, so the
