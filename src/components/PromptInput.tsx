@@ -179,10 +179,12 @@ export default function PromptInput({
   visibleTargetRef.current = visibleTarget;
   const targetChild = visibleTarget.kind === 'child' ? visibleTarget.child : undefined;
   const targetChildSessionId = targetChild?.childSessionId ?? null;
-  const workingDirectory = useSessionWorkingDirectory(
-    activeSession,
+  const primaryWorkingDirectory = useSessionWorkingDirectory(activeSession);
+  const childWorkingDirectory = useSessionWorkingDirectory(
+    targetChild ? activeSession : null,
     targetChildSessionId ?? undefined,
   );
+  const workingDirectory = targetChild ? childWorkingDirectory : primaryWorkingDirectory;
   const targetChildIndex =
     visibleTarget.kind === 'child' && activeSession
       ? orderedChildSessions(
@@ -757,7 +759,8 @@ export default function PromptInput({
     if (!activeSession) return;
     // Capture the Last-turn git baseline before sending ANY prompt (design
     // included) so the Review tab diffs the turn from the right starting point.
-    if (workingDirectory) await markGitTurnStart(workingDirectory, activeSession.appSessionId);
+    if (primaryWorkingDirectory)
+      await markGitTurnStart(primaryWorkingDirectory, activeSession.appSessionId);
     // The queue stays editable while that runs, so deliver whatever is now at
     // the head: this honors deletes and edits (both remove the item) as well as
     // reorders, and never sends a stale prompt out of the visible order.
