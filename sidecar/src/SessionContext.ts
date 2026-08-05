@@ -194,31 +194,41 @@ export class SessionContext {
 
   recordCompaction(target: ContextOperationTarget, compactionId?: string): void {
     const key = contextResourceKey(target);
+    const retryKey = compactionRetryKey(target);
     const recordedGeneration = compactionId
-      ? this.recordedCompactions.get(key)?.get(compactionId)
+      ? this.recordedCompactions.get(retryKey)?.get(compactionId)
       : undefined;
     if (isChildTarget(target)) {
       // Completion settlement may synchronously detach a standalone child before
       // accounting runs. Preserve that established generation residue; the
       // captured target still keeps refreshes inert, while top-level teardown
       // clears all owned generations after blocking new notifications.
-      if (recordedGeneration !== undefined) return;
+      if (
+        recordedGeneration !== undefined &&
+        (this.compactions.get(key) ?? 0) >= recordedGeneration
+      )
+        return;
       const generation = (this.compactions.get(key) ?? 0) + 1;
       this.compactions.set(key, generation);
       this.captureProviderUsageBaseline(key, generation);
-      this.rememberCompaction(key, compactionId, generation);
+      this.rememberCompaction(retryKey, compactionId, generation);
       return;
     }
 
     if (!target.isCurrent()) return;
     const liveSession = this.dependencies.registry.getLive(target.appSessionId);
     if (liveSession?.session !== target.session || !target.isCurrent()) return;
+    if (
+      recordedGeneration !== undefined &&
+      (liveSession.summary.autoCompactions ?? 0) > recordedGeneration
+    )
+      return;
     const generation = recordedGeneration ?? (liveSession.summary.autoCompactions ?? 0) + 1;
     if (recordedGeneration === undefined) {
       this.compactions.set(key, (this.compactions.get(key) ?? 0) + 1);
       this.captureProviderUsageBaseline(key, generation);
       this.pendingCompactionResets.add(key);
-      this.rememberCompaction(key, compactionId, generation);
+      this.rememberCompaction(retryKey, compactionId, generation);
     }
     const patch = {
       contextTokens: 0,
@@ -258,7 +268,7 @@ export class SessionContext {
     this.compactions.delete(key);
     this.providerUsageBaselines.delete(key);
     this.latestProviderUsage.delete(key);
-    this.recordedCompactions.delete(key);
+    this.forgetRecordedCompactions(key);
   }
 
   stopSession(liveSession: LiveSession): void {
@@ -274,7 +284,7 @@ export class SessionContext {
     this.providerUsageBaselines.delete(key);
     this.latestProviderUsage.delete(key);
     this.pendingCompactionResets.delete(key);
-    this.recordedCompactions.delete(key);
+    this.forgetRecordedCompactions(key);
   }
 
   clearAll(): void {
@@ -419,6 +429,13 @@ export class SessionContext {
     entries.set(compactionId, generation);
   }
 
+  private forgetRecordedCompactions(resourceKey: string): void {
+    const prefix = `${resourceKey}:provider:`;
+    for (const key of this.recordedCompactions.keys()) {
+      if (key.startsWith(prefix)) this.recordedCompactions.delete(key);
+    }
+  }
+
   private normalizeProviderWindowSnapshot(
     key: string,
     snapshot: ContextStatsSnapshot,
@@ -463,4 +480,9 @@ function contextResourceKey(target: ContextOperationTarget): string {
   return isChildTarget(target)
     ? childIdentityKey(target)
     : primaryResourceKey(target.sourceSessionId);
+}
+
+function compactionRetryKey(target: ContextOperationTarget): string {
+  const providerSessionId = target.providerSessionId;
+  return `${contextResourceKey(target)}:provider:${String(providerSessionId.length)}:${providerSessionId}`;
 }

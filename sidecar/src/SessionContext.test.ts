@@ -499,6 +499,42 @@ test('compaction bookkeeping survives persistence failure without double increme
   assert.equal(live.summary.autoCompactions, 1);
 });
 
+test('an older compaction retry cannot roll back a newer generation', () => {
+  const h = createHarness();
+  const { live } = registerLive(h, 'app-1');
+  h.history.nextSyncError = new Error('disk unavailable');
+
+  assert.throws(
+    () => h.context.recordCompaction(primaryTarget(h, live), 'summary-1'),
+    /disk unavailable/,
+  );
+  h.context.recordCompaction(primaryTarget(h, live), 'summary-2');
+  h.context.recordCompaction(primaryTarget(h, live), 'summary-1');
+
+  assert.equal(live.summary.autoCompactions, 2);
+  assert.equal(live.summary.contextTokens, 0);
+});
+
+test('the same compaction ID remains distinct across provider sessions', async () => {
+  const h = createHarness();
+  const { live } = registerLive(h, 'app-1');
+  const first = addChild(h, live, 'worker-1', 'provider-a');
+  h.context.recordCompaction(first.target, 'summary-1');
+
+  const replacement = addChild(h, live, 'worker-1', 'provider-b');
+  h.context.recordCompaction(replacement.target, 'summary-1');
+  replacement.session.nextContextStats = {
+    used: 100,
+    remaining: 900,
+    limit: 1_000,
+    accuracy: ContextStatsAccuracy.Estimated,
+    updatedAt: '2026-08-05T09:00:00.000Z',
+  };
+  await h.context.refresh(replacement.target);
+
+  assert.equal(contextEvents(h).at(-1)?.stats.compactions, 2);
+});
+
 test('queued pre-compaction exact usage cannot undo the reset before a new turn', async () => {
   const h = createHarness();
   const { live, session } = registerLive(h, 'app-1');
