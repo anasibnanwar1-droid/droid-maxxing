@@ -6,12 +6,7 @@ import {
   contextStatsSnapshot,
   rebasedContextSnapshot,
 } from './contextSnapshots.js';
-import type {
-  ContextBreakdownSnapshot,
-  ContextStatsSnapshot,
-  ServerEvent,
-  SessionSummary,
-} from './protocol.js';
+import type { ContextStatsSnapshot, ServerEvent, SessionSummary } from './protocol.js';
 import type { SessionRegistry } from './SessionRegistry.js';
 import type { LiveSession } from './SessionLifecycle.js';
 
@@ -392,6 +387,13 @@ export class SessionContext {
     generation: number,
   ): ContextStatsSnapshot {
     this.latestProviderUsage.set(key, snapshot.used);
+    let baseline = this.providerUsageBaselines.get(key);
+    if (baseline?.generation === generation) {
+      if (snapshot.used >= baseline.used) return rebasedContextSnapshot(snapshot, baseline.used);
+      this.providerUsageBaselines.delete(key);
+      baseline = undefined;
+    }
+
     if (snapshot.limit <= 0 || snapshot.used <= snapshot.limit) {
       this.providerUsageBaselines.delete(key);
       return snapshot;
@@ -399,8 +401,7 @@ export class SessionContext {
 
     if (generation <= 0) return cappedContextSnapshot(snapshot);
 
-    let baseline = this.providerUsageBaselines.get(key);
-    if (!baseline || baseline.generation !== generation || snapshot.used < baseline.used) {
+    if (baseline?.generation !== generation) {
       baseline = { generation, used: snapshot.used };
       this.providerUsageBaselines.set(key, baseline);
     }

@@ -218,6 +218,7 @@ test('provider context wins over an impossible persisted exact reading', async (
   assert.equal(event?.stats.used, 320);
   assert.equal(event?.stats.remaining, 680);
   assert.equal(live.summary.contextTokens, 320);
+  assert.equal(live.summary.contextAccuracy, 'estimated');
 });
 
 test('cumulative provider estimates rebase after restored in-place compactions', async () => {
@@ -258,7 +259,7 @@ test('cumulative provider estimates rebase after restored in-place compactions',
   assert.equal(advanced?.remaining, 184_608);
 });
 
-test('a live compaction rebases a provider counter that does not reset', async () => {
+test('a live compaction rebases a sub-window provider counter until the counter resets', async () => {
   const h = createHarness();
   const { live, session } = registerLive(h, 'app-1');
   session.nextContextStats = {
@@ -273,15 +274,26 @@ test('a live compaction rebases a provider counter that does not reset', async (
   h.context.recordCompaction(primaryTarget(h, live));
   session.nextContextStats = {
     ...session.nextContextStats,
-    used: 1_050,
-    remaining: 0,
+    used: 950,
+    remaining: 50,
   };
   await h.context.refresh(primaryTarget(h, live));
 
   const rebased = contextEvents(h).at(-1)?.stats;
-  assert.equal(rebased?.used, 150);
-  assert.equal(rebased?.remaining, 850);
+  assert.equal(rebased?.used, 50);
+  assert.equal(rebased?.remaining, 950);
   assert.equal(live.summary.autoCompactions, 1);
+
+  session.nextContextStats = {
+    ...session.nextContextStats,
+    used: 40,
+    remaining: 960,
+  };
+  await h.context.refresh(primaryTarget(h, live));
+
+  const reset = contextEvents(h).at(-1)?.stats;
+  assert.equal(reset?.used, 40);
+  assert.equal(reset?.remaining, 960);
 });
 
 test('usage without current-context telemetry updates totals only', () => {
