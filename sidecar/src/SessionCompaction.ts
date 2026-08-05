@@ -306,11 +306,11 @@ export class SessionCompaction {
     }
 
     const resourceId = `${compactionResourceId(compactionResourceKey(target))}:${target.providerSessionId}`;
-    if (
-      compaction.summaryId !== undefined &&
-      this.completedSummaries.get(resourceId) === compaction.summaryId
-    )
-      return true;
+    // Completion identity is required for idempotency. The daemon contract
+    // supplies summaryId; an unidentifiable notification cannot be applied
+    // safely because a replay would double-count the generation and divider.
+    if (compaction.summaryId === undefined) return true;
+    if (this.completedSummaries.get(resourceId) === compaction.summaryId) return true;
     this.setAutoCompacting(target, false);
     this.dependencies.timeline.appendCompaction(
       target.appSessionId,
@@ -320,8 +320,7 @@ export class SessionCompaction {
       compaction.summaryId,
     );
     this.dependencies.context.recordCompaction(target);
-    if (compaction.summaryId !== undefined)
-      this.completedSummaries.set(resourceId, compaction.summaryId);
+    this.completedSummaries.set(resourceId, compaction.summaryId);
     void this.dependencies.context.refresh(target).catch(ignoreError);
     return true;
   }

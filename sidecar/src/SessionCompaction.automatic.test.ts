@@ -345,6 +345,22 @@ test(
   },
 );
 
+test('a completion without provider identity is effect-free', { concurrency: false }, (t) => {
+  const h = createHarness();
+  const timers = observeTimers(h.trace);
+  t.after(() => {
+    h.compaction.clearAll();
+    timers.restore();
+  });
+  const child = addChild(h, 'parent', 'worker');
+  h.compaction.handleChildNotification(child.target, startedNotification());
+  h.trace.length = 0;
+
+  assert.equal(h.compaction.handleChildNotification(child.target, anonymousCompletion()), true);
+  assert.equal(child.child.autoCompacting, true);
+  assert.deepEqual(h.trace, []);
+});
+
 test('session_compacted is authoritative when the start notification was missed', () => {
   const h = createHarness();
   const primary = addPrimary(h, 'app-1');
@@ -533,6 +549,14 @@ function completedNotification(summaryId = 'summary-1'): Record<string, unknown>
   return {
     params: {
       notification: { type: 'session_compacted', summaryId, removedCount: 12 },
+    },
+  };
+}
+
+function anonymousCompletion(): Record<string, unknown> {
+  return {
+    params: {
+      notification: { type: 'session_compacted', removedCount: 12 },
     },
   };
 }
