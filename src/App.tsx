@@ -190,8 +190,10 @@ export default function App() {
   useEffect(() => {
     if (embedded) return;
     void (async () => {
-      await bridge.start();
-      const key = await getApiKey();
+      // Bridge info and the saved API key are independent IPCs; fetch them
+      // together so the connect command reaches the sidecar one round-trip
+      // sooner. Queued commands flush in order once the socket opens.
+      const [, key] = await Promise.all([bridge.start(), getApiKey()]);
       connect(key ?? '');
       listFactoryDefaults();
     })();
