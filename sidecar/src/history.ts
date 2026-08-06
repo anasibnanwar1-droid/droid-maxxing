@@ -1691,6 +1691,12 @@ export function invalidateSessionIndex(): void {
   sessionIndexMemo = null;
 }
 
+// Builds the memoized session index ahead of the first history lookup, so the
+// first session restore after boot does not pay the ~/.factory/sessions walk.
+export function warmSessionIndex(): void {
+  buildSessionIndex();
+}
+
 function buildSessionIndex(): Map<string, string> {
   if (sessionIndexMemo) return sessionIndexMemo;
   const index = new Map<string, string>();

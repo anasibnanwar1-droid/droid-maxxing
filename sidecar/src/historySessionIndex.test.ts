@@ -14,6 +14,7 @@ const {
   loadSessionPage,
   loadSessionTranscriptWindow,
   resolveSessionChain,
+  warmSessionIndex,
 } = await import('./history.js');
 
 test.after(() => {
@@ -100,6 +101,20 @@ test('loadSessionHistory reuses the memoized index until invalidateSessionIndex'
   assert.equal(loadSessionHistory().length, before, 'memoized index does not rescan');
   invalidateSessionIndex();
   assert.equal(loadSessionHistory().length, before + 1, 'invalidation forces a rescan');
+});
+
+test('warmSessionIndex prebuilds the memo so later enumeration is frozen', () => {
+  invalidateSessionIndex();
+  warmSessionIndex();
+  const id = nextId('warm');
+  writeSession(id);
+  // Written after the warm: invisible to the plain memoized enumeration...
+  assert.equal(
+    loadSessionHistory().some((row) => row.providerSessionId === id),
+    false,
+  );
+  // ...but a targeted lookup still self-heals and finds it.
+  assert.deepEqual(resolveSessionChain(id, id), [id]);
 });
 
 test('loadSessionTranscriptWindow serves repeat loads through the memoized index', () => {

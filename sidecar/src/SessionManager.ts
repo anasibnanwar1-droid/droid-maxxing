@@ -33,7 +33,12 @@ import {
 } from './DroidRuntime.js';
 import { detectEnvironment } from './Environment.js';
 import { buildInstallCommand, buildUpdateCommand, runStreaming } from './CliInstaller.js';
-import { HistoryIndex, loadMissionControlSessions, readFactoryDefaults } from './history.js';
+import {
+  HistoryIndex,
+  loadMissionControlSessions,
+  readFactoryDefaults,
+  warmSessionIndex,
+} from './history.js';
 import { mergeModelCatalog } from './modelCatalog.js';
 import { readDroidCliModelCatalog, readDroidCliModelCatalogCache } from './DroidCliCatalog.js';
 import { BrowserSessionManager } from './browser/BrowserSessionManager.js';
@@ -914,6 +919,12 @@ export class SessionManager {
   private reconcileSessionFileCache(): void {
     if (this.historyReconciled) return;
     this.historyReconciled = true;
+    // Warm the memoized session id -> file index in the background so the
+    // first session restore or history page does not pay the sessions walk.
+    setImmediate(() => {
+      if (this.shutdownPromise) return;
+      warmSessionIndex();
+    });
     if (this.history.sessionFileCacheSize === 0) {
       this.history.reconcileSessionFiles();
       return;
