@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import type * as Protocol from './protocol.js';
 import { SessionManager } from './SessionManager.js';
 
@@ -10,7 +11,8 @@ const originalHome = process.env.HOME;
 const home = mkdtempSync(join(tmpdir(), 'droid-history-cache-home-'));
 process.env.HOME = home;
 
-const { HistoryIndex, loadHistoricalSessions } = await import('./history.js');
+const { HistoryIndex, loadHistoricalSessions, SESSION_INDEX_FILENAME } =
+  await import('./history.js');
 
 type SessionListEvent = Extract<Protocol.ServerEvent, { type: 'sessions.list' }>;
 
@@ -176,6 +178,47 @@ test('cached list applies app summary patches before filtering', () => {
     );
   } finally {
     index.close();
+  }
+});
+
+test('a corrupt cache row is dropped and rebuilt on the next boot', () => {
+  const freshHome = mkdtempSync(join(tmpdir(), 'droid-history-cache-corrupt-'));
+  const previousHome = process.env.HOME;
+  process.env.HOME = freshHome;
+  try {
+    writeSession(freshHome, 'corrupt-row', join(freshHome, 'workspace'));
+    const dbPath = join(freshHome, '.factory', 'droidex', SESSION_INDEX_FILENAME);
+
+    const first = new HistoryIndex();
+    try {
+      assert.equal(first.reconcileSessionFiles(), 1);
+      assert.equal(first.sessionFileCacheSize, 1);
+    } finally {
+      first.close();
+    }
+
+    const db = new DatabaseSync(dbPath);
+    try {
+      db.prepare(
+        'UPDATE session_file_cache SET summary_json = ? WHERE provider_session_id = ?',
+      ).run('{not json', 'corrupt-row');
+    } finally {
+      db.close();
+    }
+
+    const second = new HistoryIndex();
+    try {
+      // The corrupt row is dropped at load, so the next reconcile rebuilds it.
+      assert.equal(second.sessionFileCacheSize, 0);
+      assert.equal(second.reconcileSessionFiles(), 1);
+      const rows = second.listHistoricalSessions();
+      assert.ok(rows.some((row) => row.summary.appSessionId === 'corrupt-row'));
+    } finally {
+      second.close();
+    }
+  } finally {
+    process.env.HOME = previousHome;
+    rmSync(freshHome, { recursive: true, force: true });
   }
 });
 
