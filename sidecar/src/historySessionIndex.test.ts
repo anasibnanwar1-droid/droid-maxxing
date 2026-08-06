@@ -30,7 +30,7 @@ function nextId(prefix: string): string {
   return `${prefix}-${seq}`;
 }
 
-function writeSession(id: string, text?: string): void {
+function writeSession(id: string, text?: string): string {
   const dir = join(home, '.factory', 'sessions');
   mkdirSync(dir, { recursive: true });
   const lines = [
@@ -51,7 +51,9 @@ function writeSession(id: string, text?: string): void {
       }),
     );
   }
-  writeFileSync(join(dir, `${id}.jsonl`), `${lines.join('\n')}\n`);
+  const path = join(dir, `${id}.jsonl`);
+  writeFileSync(path, `${lines.join('\n')}\n`);
+  return path;
 }
 
 test('resolveSessionChain finds a session file created after the index was memoized', () => {
@@ -148,6 +150,40 @@ test('reconcileSessionFiles invalidates the index after a session file is remove
     assert.equal(index.reconcileSessionFiles(), 1, 'the deleted file is reconciled away');
     const window = loadSessionTranscriptWindow(id, [id]);
     assert.equal(window.events.length, 0, 'a removed session resolves no transcript');
+  } finally {
+    index.close();
+  }
+});
+
+test('targeted reconciliation invalidates history enumeration for creation and deletion', () => {
+  invalidateSessionIndex();
+  warmSessionIndex();
+  const id = nextId('targeted-memo');
+  const path = writeSession(id, 'external session');
+  const index = new HistoryIndex();
+  try {
+    assert.equal(
+      index.reconcileSessionFilePaths([{ providerSessionId: id, path }]),
+      1,
+      'the new file enters the cache',
+    );
+    assert.equal(
+      loadSessionHistory().some((row) => row.providerSessionId === id),
+      true,
+      'targeted creation refreshes history enumeration',
+    );
+
+    rmSync(path);
+    assert.equal(
+      index.reconcileSessionFilePaths([{ providerSessionId: id, path }]),
+      1,
+      'the removed file leaves the cache',
+    );
+    assert.equal(
+      loadSessionHistory().some((row) => row.providerSessionId === id),
+      false,
+      'targeted deletion refreshes history enumeration',
+    );
   } finally {
     index.close();
   }

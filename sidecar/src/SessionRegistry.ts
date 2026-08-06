@@ -198,7 +198,7 @@ export class SessionRegistry<TLive extends RegisteredSession> {
     return copySummary({
       ...summary,
       ...withoutIdentityFields(patch),
-      ...(touchActivity ? { updatedAt: this.dependencies.now() } : {}),
+      updatedAt: touchActivity ? this.dependencies.now() : summary.updatedAt,
     });
   }
 

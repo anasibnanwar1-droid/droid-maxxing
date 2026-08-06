@@ -247,7 +247,7 @@ test('updateSummary with touchActivity false keeps the activity timestamp', () =
 
   const updated = registry.updateSummary(
     'stable-app',
-    { tokensIn: 500, contextTokens: 128 },
+    { tokensIn: 500, contextTokens: 128, updatedAt: 999 },
     { touchActivity: false },
   );
 

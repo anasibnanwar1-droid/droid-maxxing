@@ -316,13 +316,9 @@ export class HistoryIndex {
   // cache entries written or removed.
   reconcileSessionFiles(): number {
     const changed = this.sessionFiles.reconcile();
-    // A full reconcile is the only path that detects bulk/unexplained changes
-    // (a removed sessions subtree, foreign files). When it does, the lifetime
-    // session id -> file memo can hold ids whose files no longer exist, so a
-    // later transcript load would resolve a stale path. Drop the memo so the
-    // next lookup rebuilds it from disk; targeted watcher reconciles do not
-    // need this because sessionIndexFor self-heals on a miss and deleted
-    // sessions are never loaded.
+    // The lifetime session id -> file memo must follow cache reconciliation:
+    // otherwise history.list can miss new files, and transcript lookup can
+    // follow stale paths after deletion.
     if (changed > 0) invalidateSessionIndex();
     return changed;
   }
@@ -331,7 +327,9 @@ export class HistoryIndex {
   // external change costs a stat (and at most one re-parse) per changed file
   // instead of a walk of the whole sessions tree.
   reconcileSessionFilePaths(changes: { providerSessionId: string; path: string }[]): number {
-    return this.sessionFiles.reconcilePaths(changes);
+    const changed = this.sessionFiles.reconcilePaths(changes);
+    if (changed > 0) invalidateSessionIndex();
+    return changed;
   }
 
   private static initializeOrValidateHistorySchema(db: DatabaseSync): void {
