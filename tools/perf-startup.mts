@@ -9,9 +9,11 @@
  *   2. loadMissionControlSessions - mission rows for the sidebar
  *   3. loadSessionTranscriptWindow - first history page of the newest session
  *
- * The session list is always served from a fresh scan of the session files,
- * so the first measurement below is the cost every sessions.list request
- * pays.
+ * The session list is always served from a fresh stat scan of the session
+ * files; only the parsing of files whose mtime/size are unchanged is
+ * memoized. Call #1 below is the once-per-process cold parse (in the app it
+ * runs in the background during boot), call #2 is the steady-state cost
+ * every sessions.list request pays.
  *
  * Run from the repo root:
  *   node --import tsx tools/perf-startup.mts
@@ -67,11 +69,11 @@ function newestProviderSessionId(): string | null {
 console.log('DROIDEX startup perf benchmark (real ~/.factory data, read-only)\n');
 
 // The renderer calls sessions.list with its workspace cwds; the expensive part
-// (index rebuild + per-file head reads) runs for every file regardless of the
-// filter, so plain-chat mode measures the same scan cost.
+// (the stat walk + parsing changed files) runs for every file regardless of
+// the filter, so plain-chat mode measures the same scan cost.
 const listOptions = { includePlainChats: true };
 
-console.log('— sessions.list fresh scan (the serving path on every request) —');
+console.log('— sessions.list fresh stat scan (the serving path on every request) —');
 time('loadHistoricalSessions (sessions.list) call #1', () =>
   loadHistoricalSessions(listOptions),
 );

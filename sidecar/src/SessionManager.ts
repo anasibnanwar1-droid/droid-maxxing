@@ -37,7 +37,7 @@ import {
   HistoryIndex,
   loadMissionControlSessions,
   readFactoryDefaults,
-  warmSessionIndex,
+  warmSessionListServing,
 } from './history.js';
 import {
   startSessionFileWatcher,
@@ -923,17 +923,18 @@ export class SessionManager {
   }
 
   // Runs once per boot, on the first sessions.list: warms the memoized
-  // session id -> file index in the background so the first session restore
-  // or history page does not pay the sessions walk, and starts the
-  // sessions-dir watcher so sessions created, updated, or deleted outside
-  // this app instance are republished live. The list itself is always served
-  // from a fresh disk scan.
+  // session id -> file index and the parsed-summary memo in the background
+  // so the first sessions.list or session restore does not pay the sessions
+  // walk and parse, and starts the sessions-dir watcher so sessions created,
+  // updated, or deleted outside this app instance are republished live. The
+  // list itself is always served from a fresh stat scan of the session
+  // files; only the parsing of unchanged files is memoized.
   private bootstrapSessionListServing(): void {
     if (this.sessionsBootstrapDone) return;
     this.sessionsBootstrapDone = true;
     setImmediate(() => {
       if (this.shutdownPromise) return;
-      warmSessionIndex();
+      warmSessionListServing();
     });
     this.sessionFileWatcher = this.startWatcher({
       isLiveSession: (id) => this.registry.getLive(id) !== undefined,

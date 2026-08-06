@@ -35,6 +35,9 @@ interface SessionFileStat {
   birthtimeMs: number;
   mtimeMs: number;
   sizeBytes: number;
+  // Mtime of the sibling <id>.settings.json the summary also reads, null when
+  // no settings file exists. Part of the summary memo's freshness key.
+  settingsMtimeMs: number | null;
 }
 
 interface StoredMissionState {
@@ -210,8 +213,16 @@ export function loadHistoricalSessions(options: HistoricalSummaryFilter = {}): H
     ? new Set(options.workspaceCwds.filter(Boolean))
     : null;
   if (workspaceCwds && workspaceCwds.size === 0 && !options.includePlainChats) return [];
-  for (const [providerSessionId, file] of scanSessionFiles()) {
-    const summary = summarizeSessionFile(providerSessionId, file);
+  const files = scanSessionFiles();
+  // Drop memo entries for files deleted since the previous scan so the memo
+  // tracks the current history size.
+  const scannedPaths = new Set<string>();
+  for (const file of files.values()) scannedPaths.add(file.path);
+  for (const path of sessionSummaryMemo.keys()) {
+    if (!scannedPaths.has(path)) sessionSummaryMemo.delete(path);
+  }
+  for (const [providerSessionId, file] of files) {
+    const summary = summarizeSessionFileMemoized(providerSessionId, file);
     if (!summary) continue;
     const patched = applyCachedSummary(summary, cached);
     if (
@@ -1626,6 +1637,7 @@ function scanSessionFiles(): Map<string, SessionFileStat> {
   const files = new Map<string, SessionFileStat>();
   if (!existsSync(root)) return files;
 
+  const settingsMtimes = new Map<string, number>();
   const walk = (dir: string, depth: number) => {
     if (depth > 4) return;
     for (const name of readdirSync(dir)) {
@@ -1643,11 +1655,17 @@ function scanSessionFiles(): Map<string, SessionFileStat> {
           birthtimeMs: stat.birthtimeMs,
           mtimeMs: stat.mtimeMs,
           sizeBytes: stat.size,
+          settingsMtimeMs: null,
         });
+      } else if (name.endsWith('.settings.json')) {
+        settingsMtimes.set(name.slice(0, -'.settings.json'.length), stat.mtimeMs);
       }
     }
   };
   walk(root, 0);
+  for (const [id, file] of files) {
+    file.settingsMtimeMs = settingsMtimes.get(id) ?? null;
+  }
   return files;
 }
 
@@ -1665,10 +1683,30 @@ export function invalidateSessionIndex(): void {
   sessionIndexMemo = null;
 }
 
-// Builds the memoized session index ahead of the first history lookup, so the
-// first session restore after boot does not pay the ~/.factory/sessions walk.
-export function warmSessionIndex(): void {
+// Builds the memoized session index and parses session summaries in small
+// setImmediate slices ahead of the first sessions.list, so the first list or
+// session restore after boot hits warm memos instead of walking and parsing
+// thousands of session files on the request path. Slicing keeps the bridge
+// responsive during boot; a single synchronous parse pass would stall it for
+// seconds on large histories.
+export function warmSessionListServing(): void {
   buildSessionIndex();
+  const files = [...scanSessionFiles()];
+  let next = 0;
+  const step = (): void => {
+    const end = Math.min(next + 50, files.length);
+    for (; next < end; next += 1) {
+      const [providerSessionId, file] = files[next];
+      try {
+        summarizeSessionFileMemoized(providerSessionId, file);
+      } catch {
+        // A file deleted or rotated mid-warm is skipped; the next
+        // sessions.list re-stats everything and parses what exists.
+      }
+    }
+    if (next < files.length) setImmediate(step);
+  };
+  if (files.length > 0) setImmediate(step);
 }
 
 function buildSessionIndex(): Map<string, string> {
@@ -1723,6 +1761,45 @@ function summarizeSessionFile(
     createdAt: file.birthtimeMs,
     updatedAt: file.mtimeMs,
   };
+}
+
+// Re-parsing the session_start head and settings sidecar of every session
+// file on every sessions.list is the dominant list cost (seconds for large
+// histories), while the readdir + stat walk that enumerates the files costs
+// a few ms. So every list still walks and stats every file, and only files
+// whose recorded metadata changed since the previous scan are re-parsed.
+// The memo cannot serve a stale row: it is keyed by path, checked against
+// the filesystem's own mtime + size (session file and settings sidecar) on
+// every call, pruned of deleted files on every scan, and lives only for the
+// sidecar process lifetime.
+interface SessionSummaryMemoEntry {
+  mtimeMs: number;
+  sizeBytes: number;
+  settingsMtimeMs: number | null;
+  summary: SessionSummary | null;
+}
+const sessionSummaryMemo = new Map<string, SessionSummaryMemoEntry>();
+
+function summarizeSessionFileMemoized(
+  providerSessionId: string,
+  file: SessionFileStat,
+): SessionSummary | null {
+  const hit = sessionSummaryMemo.get(file.path);
+  if (hit) {
+    const unchanged =
+      hit.mtimeMs === file.mtimeMs &&
+      hit.sizeBytes === file.sizeBytes &&
+      hit.settingsMtimeMs === file.settingsMtimeMs;
+    if (unchanged) return hit.summary;
+  }
+  const summary = summarizeSessionFile(providerSessionId, file);
+  sessionSummaryMemo.set(file.path, {
+    mtimeMs: file.mtimeMs,
+    sizeBytes: file.sizeBytes,
+    settingsMtimeMs: file.settingsMtimeMs,
+    summary,
+  });
+  return summary;
 }
 
 function readJson<T>(path: string): T {
