@@ -1,4 +1,12 @@
-import { createContext, useContext, useMemo, useReducer, ReactNode, useEffect } from 'react';
+import {
+  createContext,
+  useContext,
+  useMemo,
+  useReducer,
+  useRef,
+  ReactNode,
+  useEffect,
+} from 'react';
 import { bridge } from '../lib/bridge';
 import { normalizeAppIconMode, type AppIconMode } from '../lib/appIcon';
 import { updateCompactionSettings } from '../lib/commands';
@@ -48,6 +56,7 @@ import {
   saveSessionNotes,
   type SessionNotesMap,
 } from '../lib/sessionNotes';
+import { loadSessionSnapshot, saveSessionSnapshot } from '../lib/sessionSnapshot';
 import { toast } from '../lib/toast';
 import { DIFF_SCOPES, type DiffScope } from '../types/vcs';
 import {
@@ -146,6 +155,10 @@ export interface AppState {
   // Sessions domain
   sessions: Record<string, SessionSummary>;
   sessionOrder: string[];
+  // Ids hydrated from the local snapshot that the sidecar has not confirmed
+  // yet; the first SESSION_LIST after connect prunes any it does not report.
+  // Null once pruned (or when nothing was hydrated).
+  snapshotSessionIds: string[] | null;
   activeAppSessionId: string | null;
   // appSessionId -> last time the user viewed it. A session reads as "unread" when
   // its updatedAt (latest model activity) is newer than this. Internal only:
@@ -868,14 +881,18 @@ function applySessionOverride(
 }
 
 const persistedUiState = loadPersistedUiState();
+const sessionSnapshot = loadSessionSnapshot();
 
 export const initialState: AppState = {
   connection: 'idle',
-  sessions: {},
-  sessionOrder: [],
+  sessions: sessionSnapshot?.sessions ?? {},
+  sessionOrder: sessionSnapshot?.sessionOrder ?? [],
+  snapshotSessionIds: sessionSnapshot?.sessionOrder ?? null,
   activeAppSessionId: persistedUiState.activeAppSessionId ?? null,
   sessionLastSeen: loadSessionLastSeen(),
-  transcripts: {},
+  transcripts: sessionSnapshot?.transcript
+    ? { [sessionSnapshot.transcript.appSessionId]: sessionSnapshot.transcript.events }
+    : {},
   progress: {},
   childSessions: {},
   historyLoaded: {},
@@ -1663,7 +1680,17 @@ function baseReducer(state: AppState, action: Action): AppState {
     }
 
     case 'SESSION_LIST': {
-      const map: Record<string, SessionSummary> = { ...state.sessions };
+      const incoming = new Set(action.sessions.map((m) => m.appSessionId));
+      // The first list after connect confirms which hydrated snapshot rows
+      // still exist; drop the rest so a chat deleted while the app was closed
+      // does not linger in the sidebar. Sessions created locally in the
+      // meantime are not in the snapshot set and survive.
+      const unconfirmed = state.snapshotSessionIds;
+      const map: Record<string, SessionSummary> = {};
+      for (const [id, summary] of Object.entries(state.sessions)) {
+        if (unconfirmed?.includes(id) && !incoming.has(id)) continue;
+        map[id] = summary;
+      }
       for (const m of action.sessions) {
         map[m.appSessionId] = applySessionOverride(
           m,
@@ -1689,6 +1716,7 @@ function baseReducer(state: AppState, action: Action): AppState {
         sessions: map,
         sessionOrder: order,
         sessionLastSeen: seededLastSeen,
+        snapshotSessionIds: null,
         activeAppSessionId:
           state.activeAppSessionId && map[state.activeAppSessionId]
             ? state.activeAppSessionId
@@ -2815,6 +2843,46 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     updateCompactionSettings(compactionSettingsSnapshot(state));
   }, [state.compactionSettingsRev]);
+
+  // Persist the reload snapshot only when the session list or the active
+  // transcript actually changed (references are immutable), debounced so
+  // streaming bursts coalesce into one write.
+  const snapshotRef = useRef<{
+    sessions: AppState['sessions'];
+    sessionOrder: AppState['sessionOrder'];
+    transcript: TranscriptEvent[] | undefined;
+  }>(undefined);
+  useEffect(() => {
+    const transcript = state.activeAppSessionId
+      ? state.transcripts[state.activeAppSessionId]
+      : undefined;
+    const prev = snapshotRef.current;
+    if (prev) {
+      const unchanged =
+        prev.sessions === state.sessions &&
+        prev.sessionOrder === state.sessionOrder &&
+        prev.transcript === transcript;
+      if (unchanged) return;
+    }
+    snapshotRef.current = {
+      sessions: state.sessions,
+      sessionOrder: state.sessionOrder,
+      transcript,
+    };
+    const timer = setTimeout(() => {
+      const activeId = state.activeAppSessionId;
+      saveSessionSnapshot(
+        state.sessions,
+        state.sessionOrder,
+        activeId !== null && transcript !== undefined
+          ? { appSessionId: activeId, events: transcript }
+          : undefined,
+      );
+    }, 400);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [state.sessions, state.sessionOrder, state.activeAppSessionId, state.transcripts]);
 
   useEffect(() => {
     const unsub = bridge.subscribe((ev) => {
