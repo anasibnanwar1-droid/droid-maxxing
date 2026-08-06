@@ -72,6 +72,7 @@ export function useOnboarding(): OnboardingController {
   );
   const reDetectedForKey = useRef(false);
   const deferEnvDetect = useRef(false);
+  const onboardingReady = useRef(false);
   const cancelScheduledEnvDetect = useRef<(() => void) | null>(null);
   // Coalesces env detects: a later schedule cancels a pending deferred one,
   // so boot runs at most one probe pass even when connect's runtime.updated
@@ -83,13 +84,20 @@ export function useOnboarding(): OnboardingController {
 
   useEffect(() => {
     let cancelled = false;
-    void getOnboarding().then((state) => {
-      if (cancelled) return;
-      setOnboardingState(state);
-      setReady(true);
-      deferEnvDetect.current = state.completed;
-      scheduleDetect(state.completed);
-    });
+    void getOnboarding()
+      .then((state) => {
+        if (cancelled) return;
+        setOnboardingState(state);
+        setReady(true);
+        onboardingReady.current = true;
+        deferEnvDetect.current = state.completed;
+        scheduleDetect(state.completed);
+      })
+      .catch(() => {
+        // A failed onboarding read must not skip env detection entirely;
+        // ready stays false (the app stays gated) exactly as before.
+        if (!cancelled) scheduleDetect(false);
+      });
     return () => {
       cancelled = true;
       cancelScheduledEnvDetect.current?.();
@@ -105,7 +113,10 @@ export function useOnboarding(): OnboardingController {
           // App restores a saved API key via connect() after the initial
           // detect; connect only emits runtime.updated, so re-detect once to
           // refresh auth state instead of leaving the user shown as signed out.
-          if (ev.status.apiKeyConfigured && !reDetectedForKey.current) {
+          // Gated on onboarding readiness so a runtime.updated that lands
+          // before getOnboarding resolves cannot fire an immediate probe that
+          // the mount effect then duplicates with a deferred one.
+          if (ev.status.apiKeyConfigured && !reDetectedForKey.current && onboardingReady.current) {
             reDetectedForKey.current = true;
             scheduleDetect(deferEnvDetect.current);
           }
