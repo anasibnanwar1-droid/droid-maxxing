@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
-import { AnimatePresence, motion } from 'framer-motion';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { AnimatePresence } from 'framer-motion';
 import { useStore } from '../hooks/useStore';
+import { useDocumentVisible } from '../hooks/useDocumentVisible';
 import { pickDirectory } from '../lib/desktop';
 import { dismissSidebarCard, loadSidebarCardSeen } from '../lib/sidebarCards';
 import { SIDEBAR_WELCOME_CARD_ID, SidebarWelcomeCard } from './SidebarWelcomeCard';
@@ -20,7 +21,7 @@ import {
   resolveNewChatCwd,
   SIDEBAR_VISIBLE_SESSION_LIMIT,
 } from '../lib/workspaces';
-import { useSessionLive } from '../hooks/useSessionLive';
+import { sessionIsLive } from '../lib/sessions';
 import { useAppUpdate } from '../lib/appUpdate';
 import { formatRelativeTime } from '../lib/time';
 import type { SessionSummary } from '../types/bridge';
@@ -61,45 +62,61 @@ function WorkingSpinner() {
   );
 }
 
-// Typing-style animated ellipsis shown where the timestamp sits while the model
-// is generating, so an in-flight turn reads as "working…" at a glance.
+// Typing-style ellipsis shown in place of the timestamp while the model works.
 function WorkingDots() {
   return (
     <span className="flex items-center gap-[3px]" aria-label="working">
       {[0, 1, 2].map((i) => (
-        <motion.span
+        <span
           key={i}
-          className="rounded-full bg-current"
-          style={{ width: 3, height: 3 }}
-          animate={{ opacity: [0.25, 1, 0.25], y: [1, -1.5, 1] }}
-          transition={{ duration: 0.9, repeat: Infinity, ease: 'easeInOut', delay: i * 0.16 }}
+          className="dot-pulse rounded-full bg-current"
+          style={{ width: 3, height: 3, animationDelay: `${i * 0.16}s` }}
         />
       ))}
     </span>
   );
 }
 
-function SessionRow({
-  session,
-  active,
-  unread,
-  now,
-  onClick,
-}: {
+export interface SessionRowProps {
   session: SessionSummary;
   active: boolean;
   unread: boolean;
+  running: boolean;
   now: number;
-  onClick: () => void;
-}) {
-  const running = useSessionLive(session.appSessionId);
+  onSelect: (appSessionId: string) => void;
+}
+
+export function areSessionRowPropsEqual(prev: SessionRowProps, next: SessionRowProps): boolean {
+  return (
+    prev.session.appSessionId === next.session.appSessionId &&
+    prev.session.title === next.session.title &&
+    prev.session.updatedAt === next.session.updatedAt &&
+    prev.active === next.active &&
+    prev.unread === next.unread &&
+    prev.running === next.running &&
+    prev.now === next.now &&
+    prev.onSelect === next.onSelect
+  );
+}
+
+// `running` is derived by the parent so this row can skip unrelated store updates.
+export const SessionRow = memo(function SessionRow({
+  session,
+  active,
+  unread,
+  running,
+  now,
+  onSelect,
+}: SessionRowProps) {
   const timeLabel = formatRelativeTime(session.updatedAt, now);
   return (
     <div>
       <button
         data-testid="top-level-session-row"
         data-app-session-id={session.appSessionId}
-        onClick={onClick}
+        onClick={() => {
+          onSelect(session.appSessionId);
+        }}
         className={`group w-full flex items-center gap-2.5 pl-3 pr-2 py-1.5 rounded-xl text-left transition-colors ${
           active ? 'bg-droid-active' : 'hover:bg-droid-elevated/40'
         }`}
@@ -138,7 +155,7 @@ function SessionRow({
       </button>
     </div>
   );
-}
+}, areSessionRowPropsEqual);
 
 export default function Sidebar() {
   const { state, dispatch } = useStore();
@@ -148,17 +165,18 @@ export default function Sidebar() {
   // each "Show more" so long lists page in (5 + 5 + 5...) rather than loading all.
   const [shownCount, setShownCount] = useState<Map<string, number>>(new Map());
 
-  // Re-render on a slow cadence so relative timestamps ("23m") stay fresh while
-  // the window sits idle; activity already triggers its own renders.
+  const documentVisible = useDocumentVisible();
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
+    if (!documentVisible) return;
+    setNow(Date.now());
     const timer = setInterval(() => {
       setNow(Date.now());
     }, 30_000);
     return () => {
       clearInterval(timer);
     };
-  }, []);
+  }, [documentVisible]);
 
   const toggleCollapse = (key: string) => {
     setCollapsed((prev) => {
@@ -234,17 +252,23 @@ export default function Sidebar() {
     return buildWorkspaceSections(state.workspaceCwds, sessions);
   }, [state.sessionOrder, state.sessions, state.workspaceCwds]);
 
+  const handleSelectSession = useCallback(
+    (appSessionId: string) => {
+      dispatch({ type: 'SET_ACTIVE_SESSION', id: appSessionId });
+      dispatch({ type: 'SELECT_CHILD', selection: null });
+    },
+    [dispatch],
+  );
+
   const renderRow = (m: SessionSummary) => (
     <SessionRow
       key={m.appSessionId}
       session={m}
       active={state.activeAppSessionId === m.appSessionId}
       unread={isUnread(m)}
+      running={sessionIsLive(m)}
       now={now}
-      onClick={() => {
-        dispatch({ type: 'SET_ACTIVE_SESSION', id: m.appSessionId });
-        dispatch({ type: 'SELECT_CHILD', selection: null });
-      }}
+      onSelect={handleSelectSession}
     />
   );
 

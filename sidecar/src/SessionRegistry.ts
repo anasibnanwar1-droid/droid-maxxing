@@ -15,10 +15,7 @@ type IdentityField =
 
 export type SessionSummaryPatch = Omit<Partial<SessionSummary>, IdentityField>;
 
-type RegistryHistory = Pick<
-  HistoryIndex,
-  'syncSummaries' | 'summaryPatches' | 'hiddenProviderSessionIds'
->;
+type RegistryHistory = Pick<HistoryIndex, 'syncSummaries' | 'summaryPatchesAndHidden'>;
 
 type SummaryLoader = (options?: SessionListFilterOptions) => HistoricalSession[];
 
@@ -151,8 +148,8 @@ export class SessionRegistry<TLive extends RegisteredSession> {
 
   private mergeCanonicalSummaries(options?: SessionListFilterOptions): Map<string, SessionSummary> {
     const summaries = new Map<string, SessionSummary>();
-    const patches = this.dependencies.history.summaryPatches();
-    const hiddenProviderSessionIds = this.dependencies.history.hiddenProviderSessionIds();
+    const { patches, hiddenProviderSessionIds } =
+      this.dependencies.history.summaryPatchesAndHidden();
     const loaderOptions = options ? { ...options } : undefined;
     if (loaderOptions) delete loaderOptions.limitPerWorkspace;
 

@@ -69,24 +69,21 @@ export class FakeHistoryIndex implements SessionHistoryDependencies {
     for (const child of children) this.upsertChildSession(child);
   }
 
-  summaryPatches(): Map<string, Partial<Protocol.SessionSummary>> {
+  summaryPatchesAndHidden(): {
+    patches: Map<string, Partial<Protocol.SessionSummary>>;
+    hiddenProviderSessionIds: Set<string>;
+  } {
     const patches = new Map<string, Partial<Protocol.SessionSummary>>();
+    const hiddenProviderSessionIds = new Set<string>();
     for (const patch of this.summariesByAppId.values()) {
       patches.set(patch.appSessionId, patch);
       patches.set(patch.providerSessionId ?? patch.appSessionId, patch);
-    }
-    return patches;
-  }
-
-  hiddenProviderSessionIds(): Set<string> {
-    const hidden = new Set<string>();
-    for (const patch of this.summariesByAppId.values()) {
       for (const providerSessionId of patch.compactedFromProviderSessionIds ?? []) {
         if (providerSessionId && providerSessionId !== patch.appSessionId)
-          hidden.add(providerSessionId);
+          hiddenProviderSessionIds.add(providerSessionId);
       }
     }
-    return hidden;
+    return { patches, hiddenProviderSessionIds };
   }
 
   // SessionManager tests pin a temp HOME and write provider session files into

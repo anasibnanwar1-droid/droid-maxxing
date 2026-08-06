@@ -33,6 +33,20 @@ function assistant(text: string): string {
   });
 }
 
+function userMessage(text: string, visibility?: 'llm_only' | 'user_only' | 'both'): string {
+  clock += 1000;
+  return JSON.stringify({
+    type: 'message',
+    id: `${text}-id`,
+    timestamp: new Date(clock).toISOString(),
+    message: {
+      role: 'user',
+      ...(visibility ? { visibility } : {}),
+      content: [{ type: 'text', text }],
+    },
+  });
+}
+
 // One stored line that yields THREE events (thinking + text + tool_call), so
 // page boundaries can split it.
 function rich(id: string): string {
@@ -142,6 +156,26 @@ test('corrupt lines are skipped without losing their neighbors', () => {
     all.map((e) => e.text),
     ['a1', 'a2'],
   );
+});
+
+test('LLM-only user messages stay hidden in eager and paged transcript replay', () => {
+  const path = writeSession([
+    userMessage('ordinary user prompt'),
+    userMessage('internal child-session handoff', 'llm_only'),
+    userMessage('user-only prompt', 'user_only'),
+    userMessage('shared prompt', 'both'),
+    assistant('assistant reply'),
+  ]);
+
+  for (const events of [
+    collectAll(path, 2),
+    parseFullSessionTranscript('app', 'provider', path, 'primary'),
+  ]) {
+    assert.deepEqual(
+      events.map((event) => event.text),
+      ['ordinary user prompt', 'user-only prompt', 'shared prompt', 'assistant reply'],
+    );
+  }
 });
 
 test('a leading compaction_state surfaces exactly one divider at the very top', () => {

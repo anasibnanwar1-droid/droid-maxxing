@@ -83,6 +83,11 @@ export interface HistoricalSummaryFilter {
   limitPerWorkspace?: number;
 }
 
+interface SummaryPatchesAndHidden {
+  patches: Map<string, Partial<SessionSummary>>;
+  hiddenProviderSessionIds: Set<string>;
+}
+
 export interface HydratedSessionHistory {
   progress: ProgressEntry[];
   transcripts: TranscriptEvent[];
@@ -523,25 +528,18 @@ export class HistoryIndex {
     }
   }
 
-  summaryPatches(): Map<string, Partial<SessionSummary>> {
+  summaryPatchesAndHidden(): SummaryPatchesAndHidden {
+    const rows = this.db.prepare('SELECT * FROM app_sessions').all() as Record<string, unknown>[];
+    const patches = summaryPatchesFromRows(rows);
+    applyStoredCompactionGenerations(this.db, patches);
+    return { patches, hiddenProviderSessionIds: hiddenProviderSessionIdsFromRows(rows) };
+  }
+
+  private summaryPatches(): Map<string, Partial<SessionSummary>> {
     const rows = this.db.prepare('SELECT * FROM app_sessions').all() as Record<string, unknown>[];
     const patches = summaryPatchesFromRows(rows);
     applyStoredCompactionGenerations(this.db, patches);
     return patches;
-  }
-
-  hiddenProviderSessionIds(): Set<string> {
-    const rows = this.db
-      .prepare('SELECT app_session_id, compacted_from_provider_session_ids FROM app_sessions')
-      .all() as Record<string, unknown>[];
-    const hidden = new Set<string>();
-    for (const row of rows) {
-      const appSessionId = stringValue(row.app_session_id);
-      for (const providerSessionId of jsonStringArray(row.compacted_from_provider_session_ids)) {
-        if (providerSessionId && providerSessionId !== appSessionId) hidden.add(providerSessionId);
-      }
-    }
-    return hidden;
   }
 
   recordEvent(event: TranscriptEvent): void {
@@ -977,6 +975,17 @@ function summaryPatchesFromRows(
     patches.set(providerSessionId, patch);
   }
   return patches;
+}
+
+function hiddenProviderSessionIdsFromRows(rows: Record<string, unknown>[]): Set<string> {
+  const hidden = new Set<string>();
+  for (const row of rows) {
+    const appSessionId = stringValue(row.app_session_id);
+    for (const providerSessionId of jsonStringArray(row.compacted_from_provider_session_ids)) {
+      if (providerSessionId && providerSessionId !== appSessionId) hidden.add(providerSessionId);
+    }
+  }
+  return hidden;
 }
 
 export function applyCachedSummary(

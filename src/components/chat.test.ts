@@ -13,6 +13,7 @@ import {
   isResultFor,
   sameFeedEvents,
   MessageFeed,
+  StreamingCaret,
   WebFetchBody,
   type FeedItem,
 } from './chat';
@@ -717,6 +718,14 @@ test('#14 a normal assistant response still renders in chat while a spec exists'
   assert.ok(html.includes('a perfectly normal answer'));
 });
 
+test('restored feed rows render immediately instead of replaying entrance motion', () => {
+  const events = [userMsg('hi'), asst('restored answer')];
+  const html = renderToStaticMarkup(createElement(MessageFeed, { events, pending: false }));
+
+  assert.doesNotMatch(html, /opacity:\s*0/);
+  assert.doesNotMatch(html, /translateY\(4px\)/);
+});
+
 test('live thinking stays collapsed until the user opens it', () => {
   const events = [
     userMsg('inspect this'),
@@ -987,4 +996,16 @@ test('sameFeedEvents compares grouped tool runs by underlying event refs', () =>
   const g3 = buildFeed([a, grep()]).find((it) => it.type === 'tools');
   assert.ok(g3);
   assert.equal(sameFeedEvents(g1!, g3!), false);
+});
+
+test('StreamingCaret renders a plain span carrying the caret-blink CSS class', () => {
+  const html = renderToStaticMarkup(createElement(StreamingCaret));
+  assert.ok(html.startsWith('<span '), 'caret should render as a plain span');
+  assert.ok(html.includes('class="caret-blink '), 'caret should carry the caret-blink class');
+  assert.ok(html.includes('w-[2px]'), 'caret should keep its 2px width');
+  assert.ok(html.includes('h-[1.05em]'), 'caret should keep its 1.05em height');
+  assert.ok(
+    html.includes('background:var(--droid-accent)'),
+    'caret should keep the accent background',
+  );
 });

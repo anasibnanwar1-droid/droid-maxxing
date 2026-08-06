@@ -32,11 +32,11 @@ class TestHistory {
     this.persisted.push(...summaries.map((summary) => ({ ...summary })));
     this.calls.push({ target: 'history', method: 'syncSummaries', args: summaries });
   }
-  summaryPatches(): Map<string, Partial<SessionSummary>> {
-    return this.patches;
-  }
-  hiddenProviderSessionIds(): Set<string> {
-    return this.hidden;
+  summaryPatchesAndHidden(): {
+    patches: Map<string, Partial<SessionSummary>>;
+    hiddenProviderSessionIds: Set<string>;
+  } {
+    return { patches: this.patches, hiddenProviderSessionIds: this.hidden };
   }
 }
 

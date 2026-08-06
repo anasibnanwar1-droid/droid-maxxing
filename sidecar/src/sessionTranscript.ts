@@ -31,6 +31,7 @@ export interface StoredMessageLine {
   message?: {
     role?: string;
     content?: unknown[];
+    visibility?: unknown;
   };
 }
 
@@ -231,6 +232,8 @@ export function parseSessionLineEvents(
   }
   if (line.type !== 'message' || !('message' in line)) return [];
   const message = line.message;
+  // Internal orchestration context is model-visible, not a user conversation turn.
+  if (message?.visibility === 'llm_only') return [];
   const content = Array.isArray(message?.content) ? message.content : [];
   const ts = dateMs(line.timestamp) || Date.now();
   const base: EventBase = {

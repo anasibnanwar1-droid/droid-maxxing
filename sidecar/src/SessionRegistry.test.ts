@@ -17,6 +17,7 @@ class FakeHistory {
   readonly persisted: SessionSummary[] = [];
   readonly hiddenProviderIds = new Set<string>();
   readonly trace: string[] = [];
+  summaryReadCount = 0;
   nextSyncError?: Error;
   private readonly patches = new Map<string, Partial<SessionSummary>>();
 
@@ -33,12 +34,15 @@ class FakeHistory {
     }
   }
 
-  summaryPatches(): Map<string, Partial<SessionSummary>> {
-    return new Map(this.patches);
-  }
-
-  hiddenProviderSessionIds(): Set<string> {
-    return new Set(this.hiddenProviderIds);
+  summaryPatchesAndHidden(): {
+    patches: Map<string, Partial<SessionSummary>>;
+    hiddenProviderSessionIds: Set<string>;
+  } {
+    this.summaryReadCount += 1;
+    return {
+      patches: new Map(this.patches),
+      hiddenProviderSessionIds: new Set(this.hiddenProviderIds),
+    };
   }
 
   clearPatches(): void {
@@ -576,4 +580,12 @@ test('snapshot permits sequential unregister without skipping sessions', () => {
   assert.equal(registry.getLive('provider-first'), undefined);
   assert.equal(registry.getLive('provider-second-old'), undefined);
   assert.equal(registry.unregister('missing'), undefined);
+});
+
+test('listSummaries reads patches and hidden ids through a single history call', () => {
+  const { history, registry } = createHarness({ ordinary: [summary('ordinary')] });
+
+  registry.listSummaries();
+
+  assert.equal(history.summaryReadCount, 1);
 });

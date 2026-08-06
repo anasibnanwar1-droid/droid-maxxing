@@ -5,6 +5,7 @@ import type { GitWorktree } from '../types/vcs';
 import {
   sessionWorkingDirectory,
   sessionWorkingDirectoryForSource,
+  worktreeDiscoveryRevision,
   workingDirectoryDuringDiscovery,
 } from './sessionWorkingDirectory';
 
@@ -118,6 +119,32 @@ test('scopes worktree evidence to the visible child session', () => {
     linked,
   );
   assert.equal(sessionWorkingDirectoryForSource(main, [primary, child], worktrees), main);
+});
+
+test('worktree discovery refreshes only after a scoped tool completes', () => {
+  const primaryResult = {
+    ...tool('primary-result', 'exec_command', {}),
+    kind: 'tool_result' as const,
+  };
+  const childResult = {
+    ...tool('child-result', 'exec_command', {}),
+    kind: 'tool_result' as const,
+    sourceSessionId: 'worker-1',
+    role: 'worker' as const,
+  };
+  const laterText = {
+    ...tool('later-text', 'exec_command', {}),
+    kind: 'text' as const,
+  };
+
+  assert.equal(
+    worktreeDiscoveryRevision([primaryResult, childResult, laterText]),
+    'primary-result',
+  );
+  assert.equal(
+    worktreeDiscoveryRevision([primaryResult, childResult, laterText], 'worker-1'),
+    'child-result',
+  );
 });
 
 test('retains a migrated worktree until its discovery snapshot loads', () => {

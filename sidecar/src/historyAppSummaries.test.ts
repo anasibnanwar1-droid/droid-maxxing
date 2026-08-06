@@ -201,3 +201,38 @@ test('loadHistoricalSessions returns every session when no limit is requested', 
 
   assert.equal(rows.filter((row) => row.summary.cwd === cwd).length, 7);
 });
+
+test('summaryPatchesAndHidden derives patches and hidden ids from one read', () => {
+  const cwd = join(home, 'workspace-combined-read');
+  writeSession('cur-1', cwd);
+  const index = new HistoryIndex();
+  index.syncSummaries([
+    {
+      ...summary('app-1', cwd),
+      providerSessionId: 'cur-1',
+      compactedFromProviderSessionIds: ['old-1'],
+      tokensIn: 20,
+      contextTokens: 800,
+    },
+  ]);
+  for (let i = 0; i < 2; i++) {
+    index.recordEvent({
+      id: `compaction-app-1-${String(i)}`,
+      appSessionId: 'app-1',
+      sourceSessionId: 'app-1',
+      role: 'primary',
+      kind: 'compaction',
+      ts: i,
+    });
+  }
+  try {
+    const { patches, hiddenProviderSessionIds } = index.summaryPatchesAndHidden();
+    assert.equal(patches.get('app-1')?.providerSessionId, 'cur-1');
+    assert.equal(patches.get('cur-1')?.tokensIn, 20);
+    assert.equal(patches.get('cur-1')?.contextTokens, 800);
+    assert.equal(patches.get('app-1')?.autoCompactions, 2);
+    assert.deepEqual([...hiddenProviderSessionIds], ['old-1']);
+  } finally {
+    index.close();
+  }
+});

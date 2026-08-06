@@ -80,8 +80,7 @@ type Emit = (event: ServerEvent) => void;
 type SessionHistory = Pick<
   HistoryIndex,
   | 'syncSummaries'
-  | 'summaryPatches'
-  | 'hiddenProviderSessionIds'
+  | 'summaryPatchesAndHidden'
   | 'listHistoricalSessions'
   | 'reconcileSessionFiles'
   | 'reconcileSessionFilePaths'

@@ -160,6 +160,37 @@
     animation: shimmer 1.8s linear infinite;
   }
 
+  /* Keep infinite status indicators compositor-only. */
+  @keyframes caret-blink {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.15;
+    }
+  }
+
+  .caret-blink {
+    animation: caret-blink 1s ease-in-out infinite;
+  }
+
+  @keyframes dot-pulse {
+    0%,
+    100% {
+      opacity: 0.25;
+      transform: translateY(1px);
+    }
+    50% {
+      opacity: 1;
+      transform: translateY(-1.5px);
+    }
+  }
+
+  .dot-pulse {
+    animation: dot-pulse 0.9s ease-in-out infinite;
+  }
+
   /* DROIDEX brand pixel font (Silkscreen, loaded from Google Fonts in
      index.html). Falls back to the mono stack when offline. */
   .font-pixel {
@@ -245,6 +276,13 @@
       scroll-behavior: auto !important;
       transition-duration: 0.01ms !important;
     }
+  }
+
+  /* Stop hidden-window animation work. */
+  html[data-window-hidden='true'] *,
+  html[data-window-hidden='true'] *::before,
+  html[data-window-hidden='true'] *::after {
+    animation-play-state: paused !important;
   }
 }
 

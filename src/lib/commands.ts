@@ -178,10 +178,6 @@ export const loadSessionHistory = (appSessionId: string, cursor?: string) => {
   bridge.send({ type: 'session.loadHistory', appSessionId, cursor });
 };
 
-export const resumeSession = (appSessionId: string) => {
-  bridge.send({ type: 'session.resume', appSessionId });
-};
-
 export const updateAgentSettings = (input: {
   appSessionId?: string;
   agent: ConfigurableSessionRole;
