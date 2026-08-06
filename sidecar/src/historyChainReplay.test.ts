@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SessionSummary } from './protocol.js';
@@ -9,8 +9,13 @@ const originalHome = process.env.HOME;
 const home = mkdtempSync(join(tmpdir(), 'droid-chain-replay-'));
 process.env.HOME = home;
 
-const { HistoryIndex, invalidateSessionIndex, loadSessionTranscriptWindow, resolveSessionChain } =
-  await import('./history.js');
+const {
+  HistoryIndex,
+  invalidateSessionIndex,
+  invalidateSessionTranscripts,
+  loadSessionTranscriptWindow,
+  resolveSessionChain,
+} = await import('./history.js');
 
 test.after(() => {
   if (originalHome === undefined) delete process.env.HOME;
@@ -20,10 +25,12 @@ test.after(() => {
 
 // These tests call loadSessionTranscriptWindow directly with hand-built
 // chains, bypassing the resolveSessionChain self-heal that refreshes the
-// memoized session index in production. Reset the memo so each test sees the
-// files it just wrote, mirroring a freshly booted sidecar.
+// memoized session index in production. Reset the memos (session index and
+// parsed-transcript readers) so each test sees the files it just wrote,
+// mirroring a freshly booted sidecar.
 test.beforeEach(() => {
   invalidateSessionIndex();
+  invalidateSessionTranscripts();
 });
 
 let clock = 0;
@@ -276,3 +283,102 @@ function historicalSummary(
     updatedAt: 0,
   };
 }
+
+function sessionFilePath(id: string): string {
+  return join(home, '.factory', 'sessions', '2026', '06', `${id}.jsonl`);
+}
+
+// chmod 0 does not block root reads; the memoization proofs below rely on
+// reads failing.
+const canBlockReads = process.getuid?.() !== 0;
+
+test(
+  'a memoized reader serves repeat pages without re-reading the file',
+  { skip: !canBlockReads },
+  () => {
+    writeSession('memo1', [assistant('m1'), assistant('m2'), assistant('m3')]);
+    const first = loadSessionTranscriptWindow('app', ['memo1'], { limit: 1 });
+    assert.deepEqual(
+      first.events.map((e) => e.text),
+      ['m3'],
+    );
+    assert.ok(first.olderCursor);
+    // Make the file unreadable: a re-read would throw, so a successful page
+    // proves the memoized reader (validated by unchanged mtime + size)
+    // served it from memory.
+    chmodSync(sessionFilePath('memo1'), 0);
+    try {
+      const second = loadSessionTranscriptWindow('app', ['memo1'], {
+        cursor: first.olderCursor,
+        limit: 5,
+      });
+      assert.deepEqual(
+        second.events.map((e) => e.text),
+        ['m1', 'm2'],
+      );
+      assert.equal(second.olderCursor, undefined);
+    } finally {
+      chmodSync(sessionFilePath('memo1'), 0o644);
+    }
+  },
+);
+
+test('a live-appended session file invalidates the memoized reader', () => {
+  writeSession('live1', [assistant('l1')]);
+  const first = loadSessionTranscriptWindow('app', ['live1'], { limit: 10 });
+  assert.deepEqual(
+    first.events.map((e) => e.text),
+    ['l1'],
+  );
+  appendFileSync(sessionFilePath('live1'), `${assistant('l2')}\n`);
+  const second = loadSessionTranscriptWindow('app', ['live1'], { limit: 10 });
+  assert.deepEqual(
+    second.events.map((e) => e.text),
+    ['l1', 'l2'],
+  );
+});
+
+test('pre-v2 cursors end paging cleanly instead of serving a wrong page', () => {
+  seedChain();
+  // The pre-v2 "<ci>:end" form still maps to a segment tail.
+  const legacy = loadSessionTranscriptWindow('app', ['s0', 's1', 's2'], {
+    cursor: '1:end',
+    limit: 3,
+  });
+  assert.deepEqual(
+    legacy.events.filter((e) => e.kind === 'text').map((e) => e.text),
+    ['a1-1', 'a1-2'],
+  );
+  // Item-index cursors no longer address anything: empty page, no cursor.
+  const stale = loadSessionTranscriptWindow('app', ['s0', 's1', 's2'], {
+    cursor: '2:1',
+    limit: 10,
+  });
+  assert.deepEqual(stale.events, []);
+  assert.equal(stale.olderCursor, undefined);
+});
+
+test('parsed-transcript readers are LRU-bounded', { skip: !canBlockReads }, () => {
+  // MAX_TRANSCRIPT_READERS is 12; the 13th distinct session evicts the
+  // first, so paging it must re-read (and fail on the unreadable file)
+  // while a still-cached session keeps serving from memory. All files are
+  // written up front because the session index memoizes after first use.
+  for (let i = 0; i < 13; i++) writeSession(`lru${i}`, [assistant(`lru-${i}`)]);
+  for (let i = 0; i < 13; i++) loadSessionTranscriptWindow('app', [`lru${i}`], { limit: 1 });
+  chmodSync(sessionFilePath('lru0'), 0);
+  try {
+    assert.throws(() => loadSessionTranscriptWindow('app', ['lru0'], { limit: 1 }));
+  } finally {
+    chmodSync(sessionFilePath('lru0'), 0o644);
+  }
+  chmodSync(sessionFilePath('lru12'), 0);
+  try {
+    const page = loadSessionTranscriptWindow('app', ['lru12'], { limit: 1 });
+    assert.deepEqual(
+      page.events.map((e) => e.text),
+      ['lru-12'],
+    );
+  } finally {
+    chmodSync(sessionFilePath('lru12'), 0o644);
+  }
+});

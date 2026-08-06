@@ -10,6 +10,8 @@
  *   3. HistoryIndex.listHistoricalSessions - the cached sessions.list path
  *   4. loadMissionControlSessions - mission rows for the sidebar
  *   5. loadSessionTranscriptWindow - first history page of the newest session
+ *   6. a synthetic oversized session: eager full parse (the pre-lazy per-page
+ *      cost) vs SessionTranscriptReader backward pages
  *
  * Live external changes go through HistoryIndex.reconcileSessionFilePaths,
  * which stats (and at most re-parses) exactly the files the watcher reported,
@@ -34,6 +36,7 @@ import {
   rmSync,
   statSync,
   symlinkSync,
+  writeFileSync,
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -45,6 +48,11 @@ import {
   loadSessionTranscriptWindow,
   resolveSessionChain,
 } from '../sidecar/src/history.js';
+import {
+  SessionTranscriptReader,
+  parseFullSessionTranscript,
+  type TranscriptWindowCursor,
+} from '../sidecar/src/sessionTranscript.js';
 
 function time<T>(label: string, fn: () => T): { ms: number; result: T } {
   const start = performance.now();
@@ -110,6 +118,43 @@ if (newest) {
   );
 } else {
   console.log('no session files found; skipping transcript benchmark');
+}
+
+// Synthetic oversized session: the lazy reader's target case. A long chat is
+// mostly small messages, so a >5MB file holds far more events than one page;
+// the eager parse paid the full window on every page, the reader parses only
+// the lines the page needs (and repeat pages hit the per-line memo).
+const synthDir = mkdtempSync(join(tmpdir(), 'droidex-perf-synth-'));
+try {
+  const filler = 'x'.repeat(1000);
+  const lines = [JSON.stringify({ type: 'session_start', id: 'synth', cwd: synthDir })];
+  for (let i = 0; i < 6000; i++) {
+    lines.push(
+      JSON.stringify({
+        type: 'message',
+        id: `m${i}`,
+        timestamp: new Date(1_770_000_000_000 + i * 1000).toISOString(),
+        message: { role: 'assistant', content: [{ type: 'text', text: `${i}-${filler}` }] },
+      }),
+    );
+  }
+  const synthPath = join(synthDir, 'synth.jsonl');
+  writeFileSync(synthPath, `${lines.join('\n')}\n`);
+  const sizeMb = (statSync(synthPath).size / 1_000_000).toFixed(1);
+  console.log(`\n— synthetic oversized session (${sizeMb} MB, 6000 small messages) —`);
+  time('parseFullSessionTranscript (pre-lazy per-page cost)', () =>
+    parseFullSessionTranscript('synth', 'synth', synthPath, 'primary'),
+  );
+  const reader = new SessionTranscriptReader('synth', 'synth', synthPath, 'primary');
+  const { result: page1 } = time('reader first page (limit 400)', () =>
+    reader.windowBackward(400, 0),
+  );
+  time('reader first page repeat (memoized lines)', () => reader.windowBackward(400, 0));
+  let cursor: TranscriptWindowCursor | undefined = page1.older;
+  time('reader older page #2', () => reader.windowBackward(400, 0, cursor));
+  time('reader older page #2 repeat', () => reader.windowBackward(400, 0, cursor));
+} finally {
+  rmSync(synthDir, { recursive: true, force: true });
 }
 
 // Cached path: scratch HOME with a symlinked sessions dir keeps the benchmark

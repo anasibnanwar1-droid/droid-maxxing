@@ -12,6 +12,26 @@ export function numberValue(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
+export function objectValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+export function dateMs(value?: string): number {
+  if (!value) return 0;
+  const ms = +new Date(value);
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+export function safeStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
 export function boundedInt(
   value: string | undefined,
   fallback: number,
