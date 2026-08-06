@@ -1,0 +1,115 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+const originalHome = process.env.HOME;
+const home = mkdtempSync(join(tmpdir(), 'droid-history-index-home-'));
+process.env.HOME = home;
+
+const {
+  invalidateSessionIndex,
+  loadSessionHistory,
+  loadSessionPage,
+  loadSessionTranscriptWindow,
+  resolveSessionChain,
+} = await import('./history.js');
+
+test.after(() => {
+  if (originalHome === undefined) delete process.env.HOME;
+  else process.env.HOME = originalHome;
+  rmSync(home, { recursive: true, force: true });
+});
+
+let seq = 0;
+function nextId(prefix: string): string {
+  seq += 1;
+  return `${prefix}-${seq}`;
+}
+
+function writeSession(id: string, text?: string): void {
+  const dir = join(home, '.factory', 'sessions');
+  mkdirSync(dir, { recursive: true });
+  const lines = [
+    JSON.stringify({
+      type: 'session_start',
+      cwd: '',
+      sessionTitle: `Chat ${id}`,
+      settings: { interactionMode: 'auto' },
+    }),
+  ];
+  if (text !== undefined) {
+    lines.push(
+      JSON.stringify({
+        type: 'message',
+        id: `m-${id}`,
+        timestamp: new Date().toISOString(),
+        message: { role: 'user', content: [{ type: 'text', text }] },
+      }),
+    );
+  }
+  writeFileSync(join(dir, `${id}.jsonl`), `${lines.join('\n')}\n`);
+}
+
+test('resolveSessionChain finds a session file created after the index was memoized', () => {
+  invalidateSessionIndex();
+  const first = nextId('idx-first');
+  writeSession(first);
+  assert.deepEqual(resolveSessionChain(first, first), [first]);
+
+  // A session started after the first lookup must not read as missing: the
+  // memoized index rebuilds once on a miss instead of requiring a restart.
+  const later = nextId('idx-later');
+  writeSession(later);
+  assert.deepEqual(resolveSessionChain(later, later), [later]);
+  assert.deepEqual(resolveSessionChain(first, first), [first]);
+});
+
+test('resolveSessionChain returns an empty chain for a session that exists nowhere', () => {
+  invalidateSessionIndex();
+  assert.deepEqual(resolveSessionChain('idx-unknown', 'idx-unknown'), []);
+});
+
+test('loadSessionPage pages a session file created after the index was memoized', () => {
+  invalidateSessionIndex();
+  const first = nextId('page-first');
+  writeSession(first, 'first');
+  loadSessionPage(first, first);
+
+  const later = nextId('page-later');
+  writeSession(later, 'later hello');
+  const page = loadSessionPage(later, later);
+  assert.equal(page.events.length, 1);
+  assert.equal(page.events[0]?.kind, 'text');
+});
+
+test('loadSessionPage still rejects a session that exists nowhere', () => {
+  invalidateSessionIndex();
+  assert.throws(() => loadSessionPage('page-missing', 'page-missing'), /not found/);
+});
+
+test('loadSessionHistory reuses the memoized index until invalidateSessionIndex', () => {
+  invalidateSessionIndex();
+  const first = nextId('list-first');
+  writeSession(first);
+  const before = loadSessionHistory().length;
+
+  const later = nextId('list-later');
+  writeSession(later);
+  assert.equal(loadSessionHistory().length, before, 'memoized index does not rescan');
+  invalidateSessionIndex();
+  assert.equal(loadSessionHistory().length, before + 1, 'invalidation forces a rescan');
+});
+
+test('loadSessionTranscriptWindow serves repeat loads through the memoized index', () => {
+  invalidateSessionIndex();
+  const id = nextId('window');
+  writeSession(id, 'windowed hello');
+  const chain = resolveSessionChain(id, id);
+  const first = loadSessionTranscriptWindow(id, chain);
+  assert.equal(first.events.length, 1);
+  const repeat = loadSessionTranscriptWindow(id, chain);
+  assert.equal(repeat.events.length, 1);
+  assert.equal(repeat.events[0]?.id, first.events[0]?.id);
+});

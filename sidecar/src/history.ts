@@ -248,7 +248,7 @@ export function loadSessionPage(
   cursor?: string,
   limit = 200,
 ): HistoryPage {
-  const path = buildSessionIndex().get(providerSessionId);
+  const path = sessionIndexFor(providerSessionId).get(providerSessionId);
   if (!path) throw new Error(`Session history not found for ${providerSessionId}`);
   const role = roleFromSessionStart(readSessionStart(path));
   const all = parseSessionTranscript(appSessionId, providerSessionId, path, role);
@@ -1021,13 +1021,12 @@ export function hydrateHistoricalSession(
     storedProgress,
     readStoredChildSessions(summary.appSessionId),
   );
-  const sessionIndex = buildSessionIndex();
 
   // The orchestrator backing session is rekeyed on every compaction, so the
   // full conversation is spread across a CHAIN of session files. Resolve that
   // chain (oldest -> newest) from the persisted app-session row; replaying only
   // the latest segment is what made compacted chats lose their scrollback.
-  const chain = orchestratorChain(summary, sessionIndex);
+  const chain = orchestratorChain(summary);
   const window = loadSessionTranscriptWindow(summary.appSessionId, chain, opts);
 
   // Older pages only extend the orchestrator scrollback upward; workers and
@@ -1043,13 +1042,14 @@ export function hydrateHistoricalSession(
 // ids) for a mission. The persisted app-session row keeps the authoritative
 // chain (previous backing ids + current); fall back to the summary when it is
 // already hydrated with one. Filtered to ids that still have a session file.
-function orchestratorChain(summary: SessionSummary, sessionIndex: Map<string, string>): string[] {
+function orchestratorChain(summary: SessionSummary): string[] {
   const patches = readStoredSummaryPatches();
   const patch =
     patches.get(summary.appSessionId) ??
     patches.get(summary.providerSessionId ?? summary.appSessionId);
   const currentSession =
     patch?.providerSessionId ?? summary.providerSessionId ?? summary.appSessionId;
+  const sessionIndex = sessionIndexFor(currentSession);
   const compactedFrom =
     patch?.compactedFromProviderSessionIds ?? summary.compactedFromProviderSessionIds ?? [];
   return dedupeStrings([summary.appSessionId, ...compactedFrom, currentSession]).filter((id) =>
@@ -1064,10 +1064,10 @@ function orchestratorChain(summary: SessionSummary, sessionIndex: Map<string, st
 // straight from the persisted app-session row (keyed by either id) and filters
 // to ids that still have a session file on disk.
 export function resolveSessionChain(appSessionId: string, providerSessionId: string): string[] {
-  const sessionIndex = buildSessionIndex();
   const patches = readStoredSummaryPatches();
   const patch = patches.get(appSessionId) ?? patches.get(providerSessionId);
   const currentSession = patch?.providerSessionId ?? providerSessionId;
+  const sessionIndex = sessionIndexFor(currentSession);
   const compactedFrom = patch?.compactedFromProviderSessionIds ?? [];
   return dedupeStrings([appSessionId, ...compactedFrom, currentSession]).filter((id) =>
     sessionIndex.has(id),
@@ -1677,12 +1677,35 @@ function scanSessionFiles(): Map<string, SessionFileStat> {
   return files;
 }
 
+// The session id -> file index backs every history page and transcript window
+// load, and several of those run per session restore. Walking ~/.factory/
+// sessions on each call made every restore and page pay the full directory
+// scan (~50ms warm, much more cold, with thousands of session files), so the
+// index is memoized for the sidecar's lifetime. The sidecar never moves or
+// deletes session files, and sessionIndexFor rebuilds the memo once when a
+// lookup misses, so a file created by a session started or compacted after
+// the memo was built still resolves on first access.
+let sessionIndexMemo: Map<string, string> | null = null;
+
+export function invalidateSessionIndex(): void {
+  sessionIndexMemo = null;
+}
+
 function buildSessionIndex(): Map<string, string> {
+  if (sessionIndexMemo) return sessionIndexMemo;
   const index = new Map<string, string>();
   for (const [providerSessionId, file] of scanSessionFiles()) {
     index.set(providerSessionId, file.path);
   }
+  sessionIndexMemo = index;
   return index;
+}
+
+function sessionIndexFor(requiredId: string): Map<string, string> {
+  const index = buildSessionIndex();
+  if (index.has(requiredId)) return index;
+  invalidateSessionIndex();
+  return buildSessionIndex();
 }
 
 // Builds the base summary for one on-disk session file, or null when the file

@@ -9,13 +9,21 @@ const originalHome = process.env.HOME;
 const home = mkdtempSync(join(tmpdir(), 'droid-chain-replay-'));
 process.env.HOME = home;
 
-const { HistoryIndex, loadSessionTranscriptWindow, resolveSessionChain } =
+const { HistoryIndex, invalidateSessionIndex, loadSessionTranscriptWindow, resolveSessionChain } =
   await import('./history.js');
 
 test.after(() => {
   if (originalHome === undefined) delete process.env.HOME;
   else process.env.HOME = originalHome;
   rmSync(home, { recursive: true, force: true });
+});
+
+// These tests call loadSessionTranscriptWindow directly with hand-built
+// chains, bypassing the resolveSessionChain self-heal that refreshes the
+// memoized session index in production. Reset the memo so each test sees the
+// files it just wrote, mirroring a freshly booted sidecar.
+test.beforeEach(() => {
+  invalidateSessionIndex();
 });
 
 let clock = 0;
