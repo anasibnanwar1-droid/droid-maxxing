@@ -310,6 +310,23 @@ test('reconcileSessionFilePaths touches exactly the reported files', () => {
         .some((row) => row.summary.appSessionId === 'cache-target-change'),
       false,
     );
+
+    // A settings-sidecar-only change (the session file itself untouched)
+    // still re-summarizes the reported file.
+    writeFileSync(
+      join(home, '.factory', 'sessions', 'cache-target-keep.settings.json'),
+      JSON.stringify({ modelId: 'targeted-settings-model' }),
+    );
+    assert.equal(
+      second.reconcileSessionFilePaths([
+        { providerSessionId: 'cache-target-keep', path: keepPath },
+      ]),
+      1,
+    );
+    const reconfigured = second
+      .listHistoricalSessions()
+      .find((row) => row.summary.appSessionId === 'cache-target-keep');
+    assert.equal(reconfigured?.summary.modelId, 'targeted-settings-model');
   } finally {
     second.close();
   }

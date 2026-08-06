@@ -88,8 +88,11 @@ export function startSessionFileWatcher(
   // directory event only justifies a full reconcile when no changed file in
   // the same batch explains it.
   let pendingPaths = new Map<string, string>();
-  let pendingLiveFiles: string[] = [];
-  let pendingUnknown: string[] = [];
+  // Live writes and unknown names are deduped sets: a continuously streaming
+  // session keeps resetting the debounce timer, and an unbounded array would
+  // grow for the whole stream.
+  let pendingLiveFiles = new Set<string>();
+  let pendingUnknown = new Set<string>();
   let pendingUnexplainable = false;
   let closed = false;
 
@@ -100,10 +103,10 @@ export function startSessionFileWatcher(
       if (closed) return;
       const target = sessionTargetFromFileName(filename);
       if (target) {
-        if (options.isLiveSession?.(target.id)) pendingLiveFiles.push(target.sessionFile);
+        if (options.isLiveSession?.(target.id)) pendingLiveFiles.add(target.sessionFile);
         else pendingPaths.set(target.id, target.sessionFile);
       } else if (filename) {
-        pendingUnknown.push(filename);
+        pendingUnknown.add(filename);
       } else {
         pendingUnexplainable = true;
       }
@@ -115,8 +118,8 @@ export function startSessionFileWatcher(
         const live = pendingLiveFiles;
         const unexplainable = pendingUnexplainable;
         pendingPaths = new Map();
-        pendingUnknown = [];
-        pendingLiveFiles = [];
+        pendingUnknown = new Set();
+        pendingLiveFiles = new Set();
         pendingUnexplainable = false;
         if (closed) return;
         const explains = (name: string): boolean => {
@@ -125,16 +128,16 @@ export function startSessionFileWatcher(
           // the batch; alone, it means a whole tree vanished and only a full
           // reconcile restores freshness.
           if (name === rootName || name === '.' || name === root) {
-            return paths.size > 0 || live.length > 0;
+            return paths.size > 0 || live.size > 0;
           }
           const prefixes = [`${name}/`, `${name}\\`];
           const inside = (file: string) => prefixes.some((prefix) => file.startsWith(prefix));
-          return [...paths.values()].some(inside) || live.some(inside);
+          return [...paths.values()].some(inside) || [...live].some(inside);
         };
         // Unexplained events (a removed tree, foreign files, a lost event
         // stream) fall back to a full reconcile; anything else reconciles
         // exactly the changed files.
-        if (unexplainable || unknown.some((name) => !explains(name))) {
+        if (unexplainable || [...unknown].some((name) => !explains(name))) {
           options.onExternalChange(null);
         } else if (paths.size > 0) {
           options.onExternalChange(
