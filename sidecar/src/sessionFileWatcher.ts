@@ -63,6 +63,8 @@ export function startSessionFileWatcher(
   let watcher: FSWatcher;
   try {
     watcher = watch(root, { recursive: true }, (_eventType, filename) => {
+      // An fs callback can race close(); never arm a new timer afterwards.
+      if (closed) return;
       const id = sessionIdFromSessionFileName(filename);
       if (id) {
         if (options.isLiveSession?.(id)) pendingLiveSeen = true;
