@@ -157,12 +157,23 @@ test('sessions.list commands queued during the boot reconcile emit only the late
   const ctx = createSessionManagerTestContext();
   try {
     ctx.history.sessionFileCacheSize = 2;
+    writeExternalSession(ctx.home, 'queued-first-session', '/tmp/first');
+    writeExternalSession(ctx.home, 'queued-second-session', '/tmp/second');
     await ctx.handle({ type: 'sessions.list', workspaceCwds: ['/tmp/first'] });
     await ctx.handle({ type: 'sessions.list', workspaceCwds: ['/tmp/second'] });
     await ctx.waitForIdle();
     const lists = ctx.events.filter((event) => event.type === 'sessions.list');
     assert.equal(lists.length, 1, 'only the latest queued request emits after the reconcile');
     assert.equal(ctx.history.fullReconcileCalls, 1);
+    assert.ok(
+      lists[0]?.sessions.some((session) => session.appSessionId === 'queued-second-session'),
+      'the emit uses the latest request filter',
+    );
+    assert.equal(
+      lists[0]?.sessions.some((session) => session.appSessionId === 'queued-first-session'),
+      false,
+      'the superseded request filter is not used',
+    );
   } finally {
     await ctx.dispose();
   }
