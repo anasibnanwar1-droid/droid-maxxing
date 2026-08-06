@@ -11,7 +11,7 @@ import {
   ThumbsUp,
   X,
 } from 'lucide-react';
-import type { FeedbackCategory, FeedbackReportRequest } from '../lib/desktop';
+import type { FeedbackAttachments, FeedbackCategory, FeedbackReportRequest } from '../lib/desktop';
 import { submitFeedbackReport } from '../lib/feedbackReport';
 
 const FOCUSABLE_SELECTOR =
@@ -37,6 +37,11 @@ interface FeedbackModalProps {
 export function FeedbackModal({ initialReport, onClose }: FeedbackModalProps) {
   const [category, setCategory] = useState(initialReport.category);
   const [description, setDescription] = useState(initialReport.description);
+  const [attachments, setAttachments] = useState<FeedbackAttachments>({
+    sessionLog: true,
+    screenshot: false,
+    appState: true,
+  });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [reportId, setReportId] = useState('');
@@ -107,7 +112,7 @@ export function FeedbackModal({ initialReport, onClose }: FeedbackModalProps) {
     setSubmitting(true);
     setError('');
     try {
-      const receipt = await submitFeedbackReport({ category, description: details });
+      const receipt = await submitFeedbackReport({ category, description: details, attachments });
       setReportId(receipt.reportId);
     } catch (submitError) {
       setError(
@@ -282,8 +287,8 @@ export function FeedbackModal({ initialReport, onClose }: FeedbackModalProps) {
                 <p className="max-w-[500px] text-[11px] leading-[17px] text-droid-text-muted">
                   Includes a random pseudonymous ID (report-scoped while automatic diagnostics are
                   off), app version, macOS version, architecture, and runtime versions. Chats,
-                  files, browser content, keys, and credentials are not attached to this manual
-                  report.
+                  files, browser content, keys, and credentials are not attached unless you opt in
+                  to a screenshot below.
                 </p>
                 <span className="shrink-0 font-mono text-[10px] text-droid-text-muted">
                   {description.length}/2000
@@ -294,6 +299,43 @@ export function FeedbackModal({ initialReport, onClose }: FeedbackModalProps) {
                   {error}
                 </p>
               )}
+
+              <div className="mt-4 border-t border-droid-border/50 pt-4">
+                <div className="mb-2 text-[11px] font-medium text-droid-text-muted">
+                  Include with this report
+                </div>
+                <div className="flex flex-wrap gap-4">
+                  {(
+                    [
+                      ['sessionLog', 'Recent session log'],
+                      ['screenshot', 'Screenshot'],
+                      ['appState', 'App state'],
+                    ] as const
+                  ).map(([key, label]) => (
+                    <label
+                      key={key}
+                      className="flex cursor-pointer items-center gap-1.5 text-[11.5px] text-droid-text-secondary"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={attachments[key]}
+                        disabled={submitting}
+                        onChange={(event) => {
+                          setAttachments((prev) => ({ ...prev, [key]: event.target.checked }));
+                          if (error) setError('');
+                        }}
+                        className="accent-droid-accent"
+                      />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+                <p className="mt-2 text-[10px] leading-[15px] text-droid-text-muted">
+                  Optional. Session log and app state contain anonymized operational facts only. The
+                  screenshot captures the full app window, which may include chats, file paths, and
+                  browser content. Uncheck all to exclude these optional attachments.
+                </p>
+              </div>
             </div>
 
             <footer className="flex items-center justify-between gap-4 px-7 py-4">

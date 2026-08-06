@@ -43,9 +43,9 @@ function createDiagnostics(options) {
         environment: options.app.isPackaged ? 'production' : 'development',
         initialScope: { user: { id: userId } },
         sendDefaultPii: false,
-        maxBreadcrumbs: 0,
+        maxBreadcrumbs: 50,
         tracesSampleRate: 0,
-        beforeBreadcrumb: () => null,
+        beforeBreadcrumb: filterBreadcrumb,
         beforeSend: scrubEvent,
       });
       isInitialized = true;
@@ -93,13 +93,15 @@ function createDiagnostics(options) {
     return { enabled: false };
   }
 
-  async function reportFeedback(report) {
+  async function reportFeedback(report, context = {}) {
     const normalized = normalizeFeedbackReport(report);
     if (!dsn) throw new Error('Feedback reporting is not configured for this build.');
     const { userId } = await manualFeedbackIdentity();
     const reportId = createReportId(options.now?.() ?? new Date(), options.randomBytes);
     const technicalDiagnostics = createTechnicalDiagnostics(options);
     const eventId = createEventId(options.eventRandomBytes);
+    const attachmentData = normalizeAttachmentData(report.attachmentData);
+    const screenshotPng = context.screenshotPng || null;
     const event = scrubManualFeedbackEvent({
       event_id: eventId,
       timestamp: (options.now?.() ?? new Date()).toISOString(),
@@ -116,11 +118,14 @@ function createDiagnostics(options) {
         ...technicalDiagnostics,
       },
       user: { id: userId },
+      extra: buildExtra(attachmentData),
+      contexts: buildContexts(attachmentData),
     });
     await deliverFeedbackEvent(event, {
       dsn,
       fetch: options.fetch,
       timeoutMs: options.deliveryTimeoutMs,
+      screenshotPng,
     });
     return { reportId, userId, eventId };
   }
@@ -275,7 +280,10 @@ function createTechnicalDiagnostics(options) {
 
 function scrubEvent(event) {
   if (event.tags?.report_kind === 'manual_feedback') return scrubManualFeedbackEvent(event);
-  const sanitized = { ...event, breadcrumbs: [], request: undefined };
+  const filteredBreadcrumbs = Array.isArray(event.breadcrumbs)
+    ? event.breadcrumbs.filter((b) => filterBreadcrumb(b) !== null)
+    : [];
+  const sanitized = { ...event, breadcrumbs: filteredBreadcrumbs, request: undefined };
   if (event.user?.id) sanitized.user = { id: event.user.id };
   else delete sanitized.user;
   return sanitized;
@@ -285,7 +293,7 @@ function scrubManualFeedbackEvent(event) {
   const tags = Object.fromEntries(
     Object.entries(event.tags || {}).filter(([key]) => MANUAL_FEEDBACK_TAGS.has(key)),
   );
-  return {
+  const sanitized = {
     event_id: event.event_id,
     timestamp: event.timestamp,
     message: event.message,
@@ -296,6 +304,89 @@ function scrubManualFeedbackEvent(event) {
     tags,
     user: event.user?.id ? { id: event.user.id } : undefined,
   };
+  if (event.extra && typeof event.extra === 'object') {
+    const filtered = Object.fromEntries(
+      Object.entries(event.extra).filter(([key]) => MANUAL_FEEDBACK_EXTRA_KEYS.has(key)),
+    );
+    if (Object.keys(filtered).length > 0) sanitized.extra = sanitizeAttachmentData(filtered);
+  }
+  if (event.contexts && typeof event.contexts === 'object') {
+    const filtered = Object.fromEntries(
+      Object.entries(event.contexts).filter(([key]) => MANUAL_FEEDBACK_CONTEXT_KEYS.has(key)),
+    );
+    if (Object.keys(filtered).length > 0) sanitized.contexts = sanitizeAttachmentData(filtered);
+  }
+  return sanitized;
+}
+
+function sanitizeAttachmentData(data) {
+  const result = Object.create(null);
+  for (const [key, value] of Object.entries(data)) {
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
+    if (value === undefined || value === null) continue;
+    if (Array.isArray(value)) {
+      result[key] = value.map(sanitizeAttachmentEntry).filter((v) => v !== null);
+    } else if (typeof value === 'object') {
+      result[key] = sanitizeAttachmentData(value);
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
+function sanitizeAttachmentEntry(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+  const category = typeof entry.category === 'string' ? entry.category.slice(0, 64) : 'unknown';
+  const message = typeof entry.message === 'string' ? entry.message.slice(0, 500) : '';
+  const level = ['info', 'warning', 'error'].includes(entry.level) ? entry.level : 'info';
+  const timestamp = typeof entry.timestamp === 'number' ? entry.timestamp : Date.now();
+  return { category, message, level, timestamp };
+}
+
+const ALLOWED_BREADCRUMB_CATEGORIES = new Set(['app', 'session', 'bridge', 'navigation']);
+const MANUAL_FEEDBACK_EXTRA_KEYS = new Set(['session_log']);
+const MANUAL_FEEDBACK_CONTEXT_KEYS = new Set(['app_state']);
+const ALLOWED_APP_STATE_KEYS = new Set([
+  'interactionMode',
+  'autonomy',
+  'activeSessionCount',
+  'view',
+]);
+
+function filterBreadcrumb(breadcrumb) {
+  if (!breadcrumb?.category) return null;
+  if (ALLOWED_BREADCRUMB_CATEGORIES.has(breadcrumb.category)) return breadcrumb;
+  return null;
+}
+
+function normalizeAttachmentData(data) {
+  if (!data || typeof data !== 'object') return {};
+  const result = {};
+  if (Array.isArray(data.sessionLog)) {
+    result.sessionLog = data.sessionLog
+      .filter((entry) => entry && typeof entry === 'object')
+      .map(sanitizeAttachmentEntry)
+      .slice(-50);
+  }
+  if (data.appState && typeof data.appState === 'object') {
+    const filtered = {};
+    for (const [key, value] of Object.entries(data.appState)) {
+      if (ALLOWED_APP_STATE_KEYS.has(key)) filtered[key] = value;
+    }
+    result.appState = filtered;
+  }
+  return result;
+}
+
+function buildExtra(attachmentData) {
+  if (!attachmentData.sessionLog) return undefined;
+  return { session_log: attachmentData.sessionLog };
+}
+
+function buildContexts(attachmentData) {
+  if (!attachmentData.appState) return undefined;
+  return { app_state: attachmentData.appState };
 }
 
 async function deliverFeedbackEvent(event, options) {
@@ -310,10 +401,23 @@ async function deliverFeedbackEvent(event, options) {
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs || 5_000);
   let response;
   try {
+    const envelope = createEventEnvelope({ ...event }, dsn);
+    if (options.screenshotPng && options.screenshotPng.length > 0) {
+      envelope[1].push([
+        {
+          type: 'attachment',
+          length: options.screenshotPng.length,
+          filename: 'screenshot.png',
+          content_type: 'image/png',
+          attachment_type: 'event.attachment',
+        },
+        options.screenshotPng,
+      ]);
+    }
     response = await fetchImpl(getEnvelopeEndpointWithUrlEncodedAuth(dsn), {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-sentry-envelope' },
-      body: serializeEnvelope(createEventEnvelope({ ...event }, dsn)),
+      body: serializeEnvelope(envelope),
       signal: controller.signal,
     });
   } catch (error) {
@@ -342,8 +446,10 @@ module.exports = {
   createTechnicalDiagnostics,
   createPseudonymousUserId,
   deliverFeedbackEvent,
+  filterBreadcrumb,
   loadOrCreateIdentity,
   loadAutomaticDiagnosticsPreference,
+  normalizeAttachmentData,
   normalizeFeedbackReport,
   scrubEvent,
   scrubManualFeedbackEvent,

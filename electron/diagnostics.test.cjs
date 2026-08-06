@@ -11,6 +11,8 @@ const {
   loadAutomaticDiagnosticsPreference,
   loadOrCreateIdentity,
   normalizeFeedbackReport,
+  filterBreadcrumb,
+  normalizeAttachmentData,
   scrubEvent,
 } = require('./diagnostics.cjs');
 
@@ -81,6 +83,12 @@ test('Sentry receives the stable pseudonymous profile identity before SDK integr
   assert.equal(initialization.environment, 'production');
   assert.equal(initialization.sendDefaultPii, false);
   assert.equal(initialization.tracesSampleRate, 0);
+  assert.equal(initialization.maxBreadcrumbs, 50);
+  assert.deepEqual(initialization.beforeBreadcrumb({ category: 'session', message: 'x' }), {
+    category: 'session',
+    message: 'x',
+  });
+  assert.equal(initialization.beforeBreadcrumb({ category: 'console', message: 'y' }), null);
 });
 
 test('automatic diagnostics default on and disabling closes Sentry and resets local identity', async () => {
@@ -305,15 +313,24 @@ test('manual feedback retains retry state on network failure and timeout', async
   );
 });
 
-test('crash payloads remove requests, breadcrumbs, and user fields except id', () => {
+test('crash payloads remove requests and user fields except id, keep filtered breadcrumbs', () => {
   assert.deepEqual(
     scrubEvent({
       message: 'boom',
       request: { url: 'https://secret.example/?token=x' },
-      breadcrumbs: [{ message: 'secret' }],
+      breadcrumbs: [
+        { message: 'secret' },
+        { category: 'session', message: 'mode changed to spec' },
+        { category: 'console', message: 'leaked log' },
+      ],
       user: { id: 'USR-1', email: 'person@example.com', ip_address: '127.0.0.1' },
     }),
-    { message: 'boom', request: undefined, breadcrumbs: [], user: { id: 'USR-1' } },
+    {
+      message: 'boom',
+      request: undefined,
+      breadcrumbs: [{ category: 'session', message: 'mode changed to spec' }],
+      user: { id: 'USR-1' },
+    },
   );
 });
 
@@ -408,4 +425,242 @@ test('technical diagnostics include only deterministic runtime facts', () => {
       packaged: 'false',
     },
   );
+});
+
+test('breadcrumb filter allows all operational categories and drops everything else', () => {
+  for (const category of ['app', 'session', 'bridge', 'navigation']) {
+    const result = filterBreadcrumb({ category, message: 'test' });
+    assert.equal(result?.category, category, `${category} should pass filter`);
+  }
+  assert.deepEqual(filterBreadcrumb({ category: 'app', message: 'focused', type: 'default' }), {
+    category: 'app',
+    message: 'focused',
+    type: 'default',
+  });
+  assert.equal(filterBreadcrumb({ category: 'console', message: 'log stuff' }), null);
+  assert.equal(filterBreadcrumb({ category: 'fetch', message: 'GET /api' }), null);
+  assert.equal(filterBreadcrumb({ category: '', message: 'empty' }), null);
+  assert.equal(filterBreadcrumb({ message: 'no category' }), null);
+  assert.equal(filterBreadcrumb(null), null);
+});
+
+test('normalizeAttachmentData caps session log, sanitizes fields, and filters appState', () => {
+  const longLog = Array.from({ length: 100 }, (_, i) => ({
+    category: 'session',
+    message: `entry ${i}`,
+    level: 'info',
+    timestamp: Date.now() + i,
+  }));
+  const result = normalizeAttachmentData({ sessionLog: longLog });
+  assert.equal(result.sessionLog.length, 50);
+  assert.equal(result.sessionLog[0].message, 'entry 50');
+  assert.equal(result.sessionLog[49].message, 'entry 99');
+
+  const messy = normalizeAttachmentData({
+    sessionLog: [
+      { category: 'a'.repeat(100), message: 'ok', level: 'invalid', timestamp: 'not-a-number' },
+      { category: 'good', message: 'fine', level: 'warning', timestamp: 123 },
+      null,
+      'not an object',
+    ],
+  });
+  assert.equal(messy.sessionLog.length, 2);
+  assert.equal(messy.sessionLog[0].category.length, 64);
+  assert.equal(messy.sessionLog[0].level, 'info');
+  assert.deepEqual(messy.sessionLog[1], {
+    category: 'good',
+    message: 'fine',
+    level: 'warning',
+    timestamp: 123,
+  });
+
+  // appState field-level allowlist: unknown keys are dropped
+  const withAppState = normalizeAttachmentData({
+    appState: {
+      interactionMode: 'spec',
+      autonomy: 'high',
+      activeSessionCount: 3,
+      view: 'chat',
+      secretKey: 'must disappear',
+      cwd: '/Users/person/secret',
+    },
+  });
+  assert.deepEqual(withAppState.appState, {
+    interactionMode: 'spec',
+    autonomy: 'high',
+    activeSessionCount: 3,
+    view: 'chat',
+  });
+
+  // Non-object appState is dropped
+  const badAppState = normalizeAttachmentData({ appState: 'not-an-object' });
+  assert.deepEqual(badAppState, {});
+});
+
+test('manual feedback with attachments delivers session log and app state in envelope', async () => {
+  const requests = [];
+  const diagnostics = createDiagnostics(
+    diagnosticsOptions(
+      {},
+      {
+        fetch: async (url, request) => {
+          requests.push({ url, request });
+          return { ok: true, status: 200 };
+        },
+      },
+    ),
+  );
+
+  await diagnostics.reportFeedback({
+    category: 'bug',
+    description: 'crashed on mode switch',
+    attachmentData: {
+      sessionLog: [
+        {
+          category: 'session',
+          message: 'mode changed to spec',
+          level: 'info',
+          timestamp: 1720000000000,
+        },
+      ],
+      appState: { interactionMode: 'spec', autonomy: 'high', activeSessionCount: 2 },
+    },
+  });
+
+  assert.equal(requests.length, 1);
+  const envelopeBody =
+    typeof requests[0].request.body === 'string'
+      ? requests[0].request.body
+      : Buffer.from(requests[0].request.body).toString('utf8');
+  const lines = envelopeBody.split('\n');
+  const event = JSON.parse(lines[2]);
+  assert.deepEqual(event.extra.session_log, [
+    {
+      category: 'session',
+      message: 'mode changed to spec',
+      level: 'info',
+      timestamp: 1720000000000,
+    },
+  ]);
+  assert.deepEqual(event.contexts.app_state, {
+    interactionMode: 'spec',
+    autonomy: 'high',
+    activeSessionCount: 2,
+  });
+});
+
+test('manual feedback with screenshot attaches raw PNG bytes to envelope', async () => {
+  const requests = [];
+  const diagnostics = createDiagnostics(
+    diagnosticsOptions(
+      {},
+      {
+        fetch: async (url, request) => {
+          requests.push({ url, request });
+          return { ok: true, status: 200 };
+        },
+      },
+    ),
+  );
+
+  const fakePng = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  await diagnostics.reportFeedback(
+    { category: 'bug', description: 'visual glitch on sidebar' },
+    { screenshotPng: fakePng },
+  );
+
+  assert.equal(requests.length, 1);
+  const rawBody = requests[0].request.body;
+  const bodyBuffer = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(rawBody);
+
+  // Envelope text portion ends with \n, then raw PNG bytes follow
+  const textEnd = bodyBuffer.length - fakePng.length;
+  const textPortion = bodyBuffer.subarray(0, textEnd).toString('utf8');
+  const lines = textPortion.split('\n');
+  // lines: [envHeaders, eventItemHeaders, eventPayload, attachmentHeaders, '']
+  const attachmentHeader = JSON.parse(lines[3]);
+  assert.equal(attachmentHeader.type, 'attachment');
+  assert.equal(attachmentHeader.filename, 'screenshot.png');
+  assert.equal(attachmentHeader.content_type, 'image/png');
+  assert.equal(attachmentHeader.length, fakePng.length);
+
+  // Verify raw bytes at end of body match fakePng exactly
+  assert.deepEqual(bodyBuffer.subarray(textEnd), fakePng);
+});
+
+test('manual feedback without attachments omits extra and contexts', async () => {
+  const requests = [];
+  const diagnostics = createDiagnostics(
+    diagnosticsOptions(
+      {},
+      {
+        fetch: async (url, request) => {
+          requests.push({ url, request });
+          return { ok: true, status: 200 };
+        },
+      },
+    ),
+  );
+
+  await diagnostics.reportFeedback({ category: 'other', description: 'just text report' });
+
+  const body =
+    typeof requests[0].request.body === 'string'
+      ? requests[0].request.body
+      : Buffer.from(requests[0].request.body).toString('utf8');
+  const event = JSON.parse(body.split('\n')[2]);
+  assert.equal(event.extra, undefined);
+  assert.equal(event.contexts, undefined);
+});
+
+test('manual feedback with all attachments delivers session log, app state, and screenshot', async () => {
+  const requests = [];
+  const diagnostics = createDiagnostics(
+    diagnosticsOptions(
+      {},
+      {
+        fetch: async (url, request) => {
+          requests.push({ url, request });
+          return { ok: true, status: 200 };
+        },
+      },
+    ),
+  );
+
+  const fakePng = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+  await diagnostics.reportFeedback(
+    {
+      category: 'bug',
+      description: 'crashed with visual glitch',
+      attachmentData: {
+        sessionLog: [
+          { category: 'session', message: 'mode changed', level: 'info', timestamp: 100 },
+        ],
+        appState: { interactionMode: 'spec', view: 'chat' },
+      },
+    },
+    { screenshotPng: fakePng },
+  );
+
+  assert.equal(requests.length, 1);
+  const rawBody = requests[0].request.body;
+  const bodyBuffer = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(rawBody);
+  const textEnd = bodyBuffer.length - fakePng.length;
+  const textPortion = bodyBuffer.subarray(0, textEnd).toString('utf8');
+  const lines = textPortion.split('\n');
+
+  // Event payload has session log + app state
+  const event = JSON.parse(lines[2]);
+  assert.deepEqual(event.extra.session_log, [
+    { category: 'session', message: 'mode changed', level: 'info', timestamp: 100 },
+  ]);
+  assert.deepEqual(event.contexts.app_state, { interactionMode: 'spec', view: 'chat' });
+
+  // Attachment header has correct length
+  const attachmentHeader = JSON.parse(lines[3]);
+  assert.equal(attachmentHeader.type, 'attachment');
+  assert.equal(attachmentHeader.length, fakePng.length);
+
+  // Raw bytes at end
+  assert.deepEqual(bodyBuffer.subarray(textEnd), fakePng);
 });

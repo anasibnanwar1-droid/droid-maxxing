@@ -81,7 +81,7 @@ test('manual feedback reports require the trusted renderer', () => {
 
   assert.notEqual(handlerStart, -1);
   assert.match(handler, /assertMainRenderer\(event\)/);
-  assert.match(handler, /diagnostics\.reportFeedback\(report\)/);
+  assert.match(handler, /diagnostics\.reportFeedback\(report,/);
 });
 
 test('diagnostics initialize before app readiness and preferences require the trusted renderer', () => {
