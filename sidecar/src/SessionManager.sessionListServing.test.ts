@@ -117,3 +117,53 @@ test('the watcher starts once per boot, not per sessions.list command', async ()
     await ctx.dispose();
   }
 });
+
+test('the first sessions.list waits for the warm-cache boot reconcile to settle', async () => {
+  const ctx = createSessionManagerTestContext();
+  try {
+    // A nonzero cache size takes the warm path: refresh from disk in the
+    // background instead of populating synchronously.
+    ctx.history.sessionFileCacheSize = 2;
+    writeExternalSession(ctx.home, 'boot-external-session', '/tmp/boot-workspace');
+
+    await ctx.handle({ type: 'sessions.list' });
+    assert.equal(
+      ctx.events.filter((event) => event.type === 'sessions.list').length,
+      0,
+      'no list is emitted while the boot reconcile is pending',
+    );
+
+    await ctx.waitForIdle();
+    const lists = ctx.events.filter((event) => event.type === 'sessions.list');
+    assert.equal(lists.length, 1, 'the first list is emitted once the boot reconcile settles');
+    assert.equal(ctx.history.fullReconcileCalls, 1, 'the boot reconcile ran exactly once');
+    assert.ok(
+      lists[0]?.sessions.some((session) => session.appSessionId === 'boot-external-session'),
+      'the first list already includes sessions created while the app was away',
+    );
+
+    await ctx.handle({ type: 'sessions.list' });
+    assert.equal(
+      ctx.events.filter((event) => event.type === 'sessions.list').length,
+      2,
+      'lists after the boot reconcile are served immediately',
+    );
+  } finally {
+    await ctx.dispose();
+  }
+});
+
+test('sessions.list commands queued during the boot reconcile emit only the latest', async () => {
+  const ctx = createSessionManagerTestContext();
+  try {
+    ctx.history.sessionFileCacheSize = 2;
+    await ctx.handle({ type: 'sessions.list', workspaceCwds: ['/tmp/first'] });
+    await ctx.handle({ type: 'sessions.list', workspaceCwds: ['/tmp/second'] });
+    await ctx.waitForIdle();
+    const lists = ctx.events.filter((event) => event.type === 'sessions.list');
+    assert.equal(lists.length, 1, 'only the latest queued request emits after the reconcile');
+    assert.equal(ctx.history.fullReconcileCalls, 1);
+  } finally {
+    await ctx.dispose();
+  }
+});

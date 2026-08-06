@@ -100,10 +100,11 @@ export class FakeHistoryIndex implements SessionHistoryDependencies {
   // synchronous populate path, and reconciles are counted no-ops because the
   // fake's listHistoricalSessions already scans the disk on every call.
   // Counters stay out of the recorded-call log so strict call-sequence
-  // assertions are unaffected by the boot reconcile.
+  // assertions are unaffected by the boot reconcile. Tests can set a nonzero
+  // sessionFileCacheSize to exercise the warm-cache background boot reconcile.
   fullReconcileCalls = 0;
   readonly targetedReconcileCalls: { providerSessionId: string; path: string }[][] = [];
-  readonly sessionFileCacheSize = 0;
+  sessionFileCacheSize = 0;
 
   reconcileSessionFiles(): number {
     this.fullReconcileCalls += 1;

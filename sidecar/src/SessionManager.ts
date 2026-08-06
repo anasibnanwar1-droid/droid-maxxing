@@ -188,6 +188,9 @@ export class SessionManager {
   >();
   private shutdownPromise?: Promise<void>;
   private sessionsBootstrapDone = false;
+  // Non-null while the one-time warm-cache boot reconcile is pending;
+  // sessions.list responses wait for it (see bootstrapSessionListServing).
+  private sessionsBootReconcile: Promise<void> | null = null;
   private sessionFileWatcher: SessionFileWatcher | null = null;
   private readonly startWatcher: (options: SessionFileWatcherOptions) => SessionFileWatcher | null;
   private lastSessionListOptions?: SessionListFilterOptions;
@@ -500,6 +503,17 @@ export class SessionManager {
       case 'sessions.list':
         this.lastSessionListOptions = cmd;
         this.bootstrapSessionListServing();
+        if (this.sessionsBootReconcile) {
+          // Hold list responses until the one-time boot reconcile settles so
+          // the first list the renderer sees is already authoritative; only
+          // the latest queued request emits.
+          const boot = this.sessionsBootReconcile;
+          void boot.then(() => {
+            if (this.shutdownPromise || this.lastSessionListOptions !== cmd) return;
+            this.emitSessionList(cmd);
+          });
+          return;
+        }
         this.emitSessionList(cmd);
         return;
       case 'history.list':
@@ -925,16 +939,17 @@ export class SessionManager {
     this.emit({ type: 'sessions.list', sessions: this.registry.listSummaries(options) });
   }
 
-  // Runs once per boot, on the first sessions.list: warms the memoized
   // Runs once per boot, on the first sessions.list. An empty session file
   // cache (first run after install or a rebuilt index) is populated
   // synchronously so the first list returns the same rows an uncached scan
-  // would. A warm cache is served immediately and refreshed from disk in the
-  // background; the list is republished only when sessions changed while the
-  // app was away. Also warms the memoized session id -> file index so the
-  // first session restore does not pay the sessions walk, and starts the
-  // sessions-dir watcher so sessions created, updated, or deleted outside
-  // this app instance are reconciled into the cache and republished live.
+  // would. A warm cache is refreshed from disk in the background, and the
+  // first list is held until that reconcile settles: the sidebar paints
+  // instantly from its local snapshot, and the authoritative list lands
+  // moments later without ever pruning rows a stale list happened to omit.
+  // Also warms the memoized session id -> file index so the first session
+  // restore does not pay the sessions walk, and starts the sessions-dir
+  // watcher so sessions created, updated, or deleted outside this app
+  // instance are reconciled into the cache and republished live.
   private bootstrapSessionListServing(): void {
     if (this.sessionsBootstrapDone) return;
     this.sessionsBootstrapDone = true;
@@ -960,21 +975,25 @@ export class SessionManager {
       },
     });
     if (this.history.sessionFileCacheSize === 0) {
-      this.history.reconcileSessionFiles();
-      return;
-    }
-    setImmediate(() => {
-      if (this.shutdownPromise) return;
-      let changed = 0;
       try {
-        changed = this.history.reconcileSessionFiles();
+        this.history.reconcileSessionFiles();
       } catch (error) {
         console.error(`Session file cache reconcile failed: ${errMsg(error)}`);
-        return;
       }
-      if (changed > 0 && this.lastSessionListOptions) {
-        this.emitSessionList(this.lastSessionListOptions);
-      }
+      return;
+    }
+    this.sessionsBootReconcile = new Promise((resolve) => {
+      setImmediate(() => {
+        if (!this.shutdownPromise) {
+          try {
+            this.history.reconcileSessionFiles();
+          } catch (error) {
+            console.error(`Session file cache reconcile failed: ${errMsg(error)}`);
+          }
+        }
+        this.sessionsBootReconcile = null;
+        resolve();
+      });
     });
   }
 

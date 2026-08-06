@@ -126,8 +126,10 @@ export class SessionFileCache {
   }
 
   // Diff cached session files against the files on disk, re-summarizing only
-  // new or changed files and dropping deleted ones. Returns the number of
-  // cache entries written or removed.
+  // new or changed files and dropping deleted ones. A file that vanishes or
+  // breaks mid-reconcile is skipped and retried on the next reconcile, so
+  // one bad file cannot abort the whole diff. Returns the number of cache
+  // entries written or removed.
   reconcile(): number {
     const onDisk = this.scanFiles();
     let changed = 0;
@@ -143,18 +145,23 @@ export class SessionFileCache {
     for (const [id, file] of onDisk) {
       const cached = this.files.get(id);
       if (cached && matchesFreshnessKey(cached, file)) continue;
-      const summary = this.summarizeFile(id, file);
-      this.files.set(id, { providerSessionId: id, ...file, summary });
-      upsert.run(
-        id,
-        file.path,
-        file.birthtimeMs,
-        file.mtimeMs,
-        file.sizeBytes,
-        file.settingsMtimeMs,
-        summary === null ? null : JSON.stringify(summary),
-      );
-      changed += 1;
+      try {
+        const summary = this.summarizeFile(id, file);
+        this.files.set(id, { providerSessionId: id, ...file, summary });
+        upsert.run(
+          id,
+          file.path,
+          file.birthtimeMs,
+          file.mtimeMs,
+          file.sizeBytes,
+          file.settingsMtimeMs,
+          summary === null ? null : JSON.stringify(summary),
+        );
+        changed += 1;
+      } catch {
+        // The file was deleted or rotated between the scan and the read;
+        // the next watcher event or boot reconcile retries it.
+      }
     }
     return changed;
   }

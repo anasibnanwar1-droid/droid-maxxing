@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type * as Protocol from './protocol.js';
+import { SessionFileCache, type SessionFileStat } from './sessionFileCache.js';
 import { SessionManager } from './SessionManager.js';
 
 const originalHome = process.env.HOME;
@@ -332,6 +333,40 @@ test('reconcileSessionFilePaths touches exactly the reported files', () => {
   }
 });
 
+test('a file that breaks mid-reconcile is skipped without aborting the diff', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    const stat = (path: string): SessionFileStat => ({
+      path,
+      birthtimeMs: 1,
+      mtimeMs: 1,
+      sizeBytes: 10,
+      settingsMtimeMs: null,
+    });
+    const onDisk = new Map<string, SessionFileStat>([
+      ['good-session', stat('/sessions/good.jsonl')],
+      ['bad-session', stat('/sessions/bad.jsonl')],
+    ]);
+    const cache = new SessionFileCache(
+      db,
+      () => onDisk,
+      (providerSessionId, file) => {
+        // The bad file vanished between the scan and the read.
+        if (providerSessionId === 'bad-session') throw new Error('ENOENT');
+        return patchFor(providerSessionId, file.path);
+      },
+      () => null,
+    );
+    assert.equal(cache.reconcile(), 1, 'the good file is cached despite the broken one');
+    assert.deepEqual(
+      cache.summaries().map((summary) => summary.appSessionId),
+      ['good-session'],
+    );
+  } finally {
+    db.close();
+  }
+});
+
 test('first sessions.list on an empty cache scans synchronously and serves rows', async () => {
   const freshHome = mkdtempSync(join(tmpdir(), 'droid-history-cache-boot-'));
   const previousHome = process.env.HOME;
@@ -354,7 +389,7 @@ test('first sessions.list on an empty cache scans synchronously and serves rows'
   }
 });
 
-test('a warm cache is served first and a background reconcile republishes changes', async () => {
+test('a warm cache holds the first list until the boot reconcile settles', async () => {
   const freshHome = mkdtempSync(join(tmpdir(), 'droid-history-cache-warm-'));
   const previousHome = process.env.HOME;
   process.env.HOME = freshHome;
@@ -379,24 +414,22 @@ test('a warm cache is served first and a background reconcile republishes change
     const manager = new SessionManager((event) => events.push(event));
     try {
       await manager.handle({ type: 'sessions.list' });
-      const first = events.filter(isSessionList).at(-1);
-      assert.ok(first);
-      // The stale cached row is served immediately.
       assert.equal(
-        first.sessions.find((session) => session.appSessionId === 'warm-session')?.title,
-        'Chat warm-session',
+        events.filter(isSessionList).length,
+        0,
+        'no list is served from the warm cache before the boot reconcile',
       );
 
-      // The background reconcile republishes the list with the changed row.
-      let republished: SessionListEvent | undefined;
-      for (let i = 0; i < 10 && !republished; i++) {
+      // The first list lands once the background reconcile settles, already
+      // reflecting the change made while the app was away.
+      let lists = events.filter(isSessionList);
+      for (let i = 0; i < 10 && lists.length === 0; i++) {
         await new Promise((resolve) => setImmediate(resolve));
-        const list = events.filter(isSessionList).at(-1);
-        if (list && list !== first) republished = list;
+        lists = events.filter(isSessionList);
       }
-      assert.ok(republished);
+      assert.equal(lists.length, 1);
       assert.equal(
-        republished.sessions.find((session) => session.appSessionId === 'warm-session')?.title,
+        lists[0]?.sessions.find((session) => session.appSessionId === 'warm-session')?.title,
         'Edited elsewhere',
       );
     } finally {
