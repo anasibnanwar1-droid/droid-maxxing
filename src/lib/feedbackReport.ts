@@ -1,4 +1,5 @@
-import { isDesktop, type FeedbackReportReceipt, type FeedbackReportRequest } from './desktop';
+import type { FeedbackReportReceipt, FeedbackReportRequest } from './desktop';
+import { getSessionLog, getCurrentAppState } from './rendererDiagnostics';
 
 export function feedbackDraftFromCommand(text: string): FeedbackReportRequest | null {
   if (text === '/bug') return { category: 'bug', description: '' };
@@ -15,8 +16,18 @@ export function feedbackDraftFromCommand(text: string): FeedbackReportRequest | 
 export async function submitFeedbackReport(
   report: FeedbackReportRequest,
 ): Promise<FeedbackReportReceipt> {
-  if (!isDesktop()) throw new Error('Feedback is available only in the desktop app.');
+  if (typeof window === 'undefined')
+    throw new Error('Feedback is available only in the desktop app.');
   const desktop = window.droidControl;
   if (!desktop) throw new Error('DROIDEX desktop bridge is unavailable.');
-  return desktop.submitFeedbackReport(report);
+
+  const enriched: FeedbackReportRequest = { ...report };
+  if (report.attachments) {
+    const data: Record<string, unknown> = {};
+    if (report.attachments.sessionLog) data.sessionLog = getSessionLog();
+    if (report.attachments.appState) data.appState = getCurrentAppState();
+    if (Object.keys(data).length > 0) enriched.attachmentData = data;
+  }
+
+  return desktop.submitFeedbackReport(enriched);
 }

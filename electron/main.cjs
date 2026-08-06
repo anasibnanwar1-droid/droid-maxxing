@@ -258,9 +258,26 @@ function registerIpc() {
     assertMainRenderer(event);
     return appUpdater.downloadAndInstall();
   });
-  ipcMain.handle('feedback-report', (event, report) => {
+  ipcMain.handle('feedback-report', async (event, report) => {
     assertMainRenderer(event);
-    return diagnostics.reportFeedback(report);
+    let screenshotPng = null;
+    if (report?.attachments?.screenshot && event.sender && !event.sender.isDestroyed()) {
+      try {
+        const image = await Promise.race([
+          event.sender.capturePage(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('capture timeout')), 3_000)),
+        ]);
+        if (!image.isEmpty()) {
+          const buffer = image.toPNG();
+          if (buffer && buffer.length > 0 && buffer.length <= 500_000) {
+            screenshotPng = buffer;
+          }
+        }
+      } catch (error) {
+        console.error('[feedback] screenshot capture skipped:', error?.message || error);
+      }
+    }
+    return diagnostics.reportFeedback(report, { screenshotPng });
   });
   ipcMain.handle('diagnostics-preference-get', (event) => {
     assertMainRenderer(event);

@@ -49,6 +49,7 @@ import { closeTerminalForTab } from './lib/terminal';
 import { utilityPanelForSession, type UtilityTool } from './lib/utilityPanel';
 import { isTerminalInputTarget, isTerminalTabShortcut } from './lib/keyboardShortcuts';
 import { useSessionWorkingDirectory } from './hooks/useSessionWorkingDirectory';
+import { useDiagnosticsContext } from './hooks/useDiagnosticsContext';
 
 function ContextListIcon({ className }: { className?: string }) {
   return (
@@ -78,6 +79,7 @@ export default function App() {
   const { state, dispatch } = useStore();
   const embedded = isEmbedded();
   const onboard = useOnboarding();
+  useDiagnosticsContext();
   const [forceWizard, setForceWizard] = useState(false);
   const [bannerDismissed, setBannerDismissed] = useState(false);
   const [expandedBrowserAppSessionId, setExpandedBrowserAppSessionId] = useState<string | null>(

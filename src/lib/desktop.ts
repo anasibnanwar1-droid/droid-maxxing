@@ -112,9 +112,20 @@ export interface FilePreviewPayload {
 
 export type FeedbackCategory = 'bug' | 'bad_result' | 'good_result' | 'safety' | 'other';
 
+export interface FeedbackAttachments {
+  sessionLog?: boolean;
+  screenshot?: boolean;
+  appState?: boolean;
+}
+
 export interface FeedbackReportRequest {
   category: FeedbackCategory;
   description: string;
+  attachments?: FeedbackAttachments;
+  attachmentData?: {
+    sessionLog?: Array<{ category: string; message: string; level?: string; timestamp: number }>;
+    appState?: Record<string, unknown>;
+  };
 }
 
 export interface FeedbackReportReceipt {
