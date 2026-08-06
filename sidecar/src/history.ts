@@ -28,7 +28,14 @@ import type {
 import { mapFeature } from './normalize.js';
 import { designPromptDisplayFromText } from './browser/designPromptDisplay.js';
 import { normalizeCompactionTokenLimit } from './compaction.js';
-import { SessionFileCache, type SessionFileStat } from './sessionFileCache.js';
+
+// One session file under ~/.factory/sessions, as found by scanSessionFiles.
+interface SessionFileStat {
+  path: string;
+  birthtimeMs: number;
+  mtimeMs: number;
+  sizeBytes: number;
+}
 
 interface StoredMissionState {
   missionId?: string;
@@ -263,7 +270,6 @@ export function loadSessionPage(
 
 export class HistoryIndex {
   private db: DatabaseSync;
-  private readonly sessionFiles: SessionFileCache;
 
   constructor() {
     const dir = join(homedir(), '.factory', 'droidex');
@@ -273,50 +279,18 @@ export class HistoryIndex {
       HistoryIndex.initializeOrValidateHistorySchema(db);
       db.exec('PRAGMA journal_mode = WAL');
       this.db = db;
-      this.sessionFiles = new SessionFileCache(db, scanSessionFiles, summarizeSessionFile);
     } catch (error) {
       db.close();
       throw error;
     }
   }
 
-  get sessionFileCacheSize(): number {
-    return this.sessionFiles.size;
-  }
-
-  // Serves the historical session list from the session file cache instead of
-  // walking and re-reading every session file on each request. Rows are as of
-  // the last reconcileSessionFiles() run; the app_sessions patch overlay is
-  // always fresh.
+  // The historical session list is always served from a fresh scan of the
+  // session files on disk, so sessions created, updated, or deleted outside
+  // this app instance appear on the next request. Exposed on this seam so
+  // SessionManager tests can substitute a fake.
   listHistoricalSessions(options: HistoricalSummaryFilter = {}): HistoricalSession[] {
-    const workspaceCwds = options.workspaceCwds
-      ? new Set(options.workspaceCwds.filter(Boolean))
-      : null;
-    if (workspaceCwds && workspaceCwds.size === 0 && !options.includePlainChats) return [];
-    const patches = this.summaryPatches();
-    const rows: HistoricalSession[] = [];
-    for (const cached of this.sessionFiles.summaries()) {
-      const summary = applyCachedSummary({ ...cached }, patches);
-      if (
-        (workspaceCwds || options.includePlainChats) &&
-        !shouldIncludeCwd(summary.cwd ?? '', workspaceCwds, options.includePlainChats)
-      )
-        continue;
-      rows.push({ summary, progress: [] });
-    }
-    return limitHistoricalRows(
-      rows.sort((a, b) => b.summary.updatedAt - a.summary.updatedAt),
-      workspaceCwds,
-      options.limitPerWorkspace,
-      options.includePlainChats,
-    );
-  }
-
-  // Diff-cached session files against the files on disk, re-summarizing only
-  // new or changed files and dropping deleted ones. Returns the number of
-  // cache entries written or removed.
-  reconcileSessionFiles(): number {
-    return this.sessionFiles.reconcile();
+    return loadHistoricalSessions(options);
   }
 
   private static initializeOrValidateHistorySchema(db: DatabaseSync): void {

@@ -39,6 +39,11 @@ import {
   readFactoryDefaults,
   warmSessionIndex,
 } from './history.js';
+import {
+  startSessionFileWatcher,
+  type SessionFileWatcher,
+  type SessionFileWatcherOptions,
+} from './sessionFileWatcher.js';
 import { mergeModelCatalog } from './modelCatalog.js';
 import { readDroidCliModelCatalog, readDroidCliModelCatalogCache } from './DroidCliCatalog.js';
 import { BrowserSessionManager } from './browser/BrowserSessionManager.js';
@@ -78,8 +83,6 @@ type SessionHistory = Pick<
   | 'summaryPatches'
   | 'hiddenProviderSessionIds'
   | 'listHistoricalSessions'
-  | 'reconcileSessionFiles'
-  | 'sessionFileCacheSize'
   | 'childSessions'
   | 'childSession'
   | 'upsertChildSession'
@@ -117,6 +120,10 @@ export interface SessionManagerDependencies {
   createLocalMcpResource: (appSessionId: () => string) => StartableLocalMcpResource;
   getFactoryDefaults?: () => Promise<FactoryDefaultSettings>;
   nextChildSessionId?: () => string;
+  // Injectable so tests can capture the republish callback instead of
+  // watching the real sessions directory. Defaults to a no-op when other
+  // dependencies are faked.
+  startSessionFileWatcher?: (options: SessionFileWatcherOptions) => SessionFileWatcher | null;
 }
 
 export interface SessionManagerOptions {
@@ -177,7 +184,9 @@ export class SessionManager {
     Partial<Record<ConfigurableSessionRole, AgentSettingPatch>>
   >();
   private shutdownPromise?: Promise<void>;
-  private historyReconciled = false;
+  private sessionsBootstrapDone = false;
+  private sessionFileWatcher: SessionFileWatcher | null = null;
+  private readonly startWatcher: (options: SessionFileWatcherOptions) => SessionFileWatcher | null;
   private lastSessionListOptions?: SessionListFilterOptions;
   // Per-session autonomy mutation queue: rapid changes settle against the
   // provider in the order they were requested.
@@ -199,6 +208,7 @@ export class SessionManager {
       this.createLocalMcpResource = options.dependencies.createLocalMcpResource;
       this.factoryDefaultsOverride = options.dependencies.getFactoryDefaults;
       this.nextChildSessionId = options.dependencies.nextChildSessionId ?? nextChildSessionId;
+      this.startWatcher = options.dependencies.startSessionFileWatcher ?? (() => null);
     } else {
       this.runtime = new DroidRuntime();
       this.history = new HistoryIndex();
@@ -221,6 +231,7 @@ export class SessionManager {
         createBrowserMcpServer(browsers, appSessionId);
       this.factoryDefaultsOverride = undefined;
       this.nextChildSessionId = nextChildSessionId;
+      this.startWatcher = startSessionFileWatcher;
     }
     this.cachedModels = options.initialModels ? [...options.initialModels] : null;
     this.registry = new SessionRegistry({
@@ -485,7 +496,7 @@ export class SessionManager {
         return;
       case 'sessions.list':
         this.lastSessionListOptions = cmd;
-        this.reconcileSessionFileCache();
+        this.bootstrapSessionListServing();
         this.emitSessionList(cmd);
         return;
       case 'history.list':
@@ -911,36 +922,25 @@ export class SessionManager {
     this.emit({ type: 'sessions.list', sessions: this.registry.listSummaries(options) });
   }
 
-  // Runs once per boot, on the first sessions.list. An empty cache (first run
-  // after install or a rebuilt index) is populated synchronously so the first
-  // list returns the same rows the previous uncached scan did. A warm cache is
-  // served immediately and refreshed from disk in the background; the list is
-  // republished only when sessions changed while the app was away.
-  private reconcileSessionFileCache(): void {
-    if (this.historyReconciled) return;
-    this.historyReconciled = true;
-    // Warm the memoized session id -> file index in the background so the
-    // first session restore or history page does not pay the sessions walk.
+  // Runs once per boot, on the first sessions.list: warms the memoized
+  // session id -> file index in the background so the first session restore
+  // or history page does not pay the sessions walk, and starts the
+  // sessions-dir watcher so sessions created, updated, or deleted outside
+  // this app instance are republished live. The list itself is always served
+  // from a fresh disk scan.
+  private bootstrapSessionListServing(): void {
+    if (this.sessionsBootstrapDone) return;
+    this.sessionsBootstrapDone = true;
     setImmediate(() => {
       if (this.shutdownPromise) return;
       warmSessionIndex();
     });
-    if (this.history.sessionFileCacheSize === 0) {
-      this.history.reconcileSessionFiles();
-      return;
-    }
-    setImmediate(() => {
-      if (this.shutdownPromise) return;
-      let changed = 0;
-      try {
-        changed = this.history.reconcileSessionFiles();
-      } catch (error) {
-        console.error(`Session file cache reconcile failed: ${errMsg(error)}`);
-        return;
-      }
-      if (changed > 0 && this.lastSessionListOptions) {
+    this.sessionFileWatcher = this.startWatcher({
+      isLiveSession: (id) => this.registry.getLive(id) !== undefined,
+      onExternalChange: () => {
+        if (this.shutdownPromise || !this.lastSessionListOptions) return;
         this.emitSessionList(this.lastSessionListOptions);
-      }
+      },
     });
   }
 
@@ -1506,6 +1506,7 @@ export class SessionManager {
       }
     };
 
+    await run(() => this.sessionFileWatcher?.close());
     await run(() => this.lifecycle.closeAll());
     await run(() => this.childSessions.shutdown());
     await run(() => {

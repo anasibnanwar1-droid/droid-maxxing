@@ -76,6 +76,7 @@ export function createSessionManagerTestContext(
   options: {
     defaults?: Protocol.FactoryDefaultSettings;
     getFactoryDefaults?: () => Promise<Protocol.FactoryDefaultSettings>;
+    startSessionFileWatcher?: SessionManagerDependencies['startSessionFileWatcher'];
   } = {},
 ): SessionManagerTestContext {
   const calls: RecordedCall[] = [];
@@ -96,6 +97,9 @@ export function createSessionManagerTestContext(
     createLocalMcpResource: () => new FakeLocalMcpResource(calls),
     nextChildSessionId: () => `child-${String(++childSequence)}`,
     ...(options.getFactoryDefaults ? { getFactoryDefaults: options.getFactoryDefaults } : {}),
+    ...(options.startSessionFileWatcher
+      ? { startSessionFileWatcher: options.startSessionFileWatcher }
+      : {}),
   };
 
   try {

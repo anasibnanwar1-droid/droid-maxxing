@@ -90,17 +90,11 @@ export class FakeHistoryIndex implements SessionHistoryDependencies {
   }
 
   // SessionManager tests pin a temp HOME and write provider session files into
-  // it, so the fake delegates to the real disk scan exactly like the previous
-  // production wiring did.
+  // it, so the fake delegates to the real disk scan exactly like the
+  // production wiring does.
   listHistoricalSessions(options: HistoricalSummaryFilter = {}): HistoricalSession[] {
     return loadHistoricalSessions(options);
   }
-
-  reconcileSessionFiles(): number {
-    return 0;
-  }
-
-  readonly sessionFileCacheSize = 0;
 
   upsertChildSession(child: PersistedChildSession): void {
     const children =
