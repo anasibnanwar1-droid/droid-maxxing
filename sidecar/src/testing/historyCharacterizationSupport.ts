@@ -3,7 +3,12 @@ import path from 'node:path';
 
 import type * as Protocol from '../protocol.js';
 import type { SessionManagerDependencies } from '../SessionManager.js';
-import type { PersistedChildSession } from '../history.js';
+import {
+  loadHistoricalSessions,
+  type HistoricalSession,
+  type HistoricalSummaryFilter,
+  type PersistedChildSession,
+} from '../history.js';
 import type { RecordedCall } from './fakeFactoryRuntime.js';
 
 type SessionHistoryDependencies = SessionManagerDependencies['history'];
@@ -83,6 +88,19 @@ export class FakeHistoryIndex implements SessionHistoryDependencies {
     }
     return hidden;
   }
+
+  // SessionManager tests pin a temp HOME and write provider session files into
+  // it, so the fake delegates to the real disk scan exactly like the previous
+  // production wiring did.
+  listHistoricalSessions(options: HistoricalSummaryFilter = {}): HistoricalSession[] {
+    return loadHistoricalSessions(options);
+  }
+
+  reconcileSessionFiles(): number {
+    return 0;
+  }
+
+  readonly sessionFileCacheSize = 0;
 
   upsertChildSession(child: PersistedChildSession): void {
     const children =

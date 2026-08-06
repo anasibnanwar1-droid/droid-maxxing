@@ -28,6 +28,7 @@ import type {
 import { mapFeature } from './normalize.js';
 import { designPromptDisplayFromText } from './browser/designPromptDisplay.js';
 import { normalizeCompactionTokenLimit } from './compaction.js';
+import { SessionFileCache, type SessionFileStat } from './sessionFileCache.js';
 
 interface StoredMissionState {
   missionId?: string;
@@ -202,46 +203,17 @@ export function loadHistoricalSessions(options: HistoricalSummaryFilter = {}): H
     ? new Set(options.workspaceCwds.filter(Boolean))
     : null;
   if (workspaceCwds && workspaceCwds.size === 0 && !options.includePlainChats) return [];
-  for (const [providerSessionId, path] of buildSessionIndex()) {
-    const start = readSessionStart(path);
-    const classification = classifyStoredSession(start);
-    if (!classification) continue;
-    const stat = statSync(path);
-    const title = start.sessionTitle || start.title || `Session ${providerSessionId.slice(0, 8)}`;
-    const settings = readSessionModelSettings(start, path);
-    const summary = applyCachedSummary(
-      {
-        appSessionId: providerSessionId,
-        providerSessionId,
-        missionId: classification.missionId,
-        sessionPurpose: classification.sessionPurpose,
-        interactionMode: classification.interactionMode,
-        role: classification.role,
-        title,
-        goal: title,
-        cwd: start.cwd ?? '',
-        workspaceKind: start.cwd ? 'folder' : 'none',
-        ...settings,
-        autonomy: settings.autonomy ?? 'low',
-        phase: 'paused',
-        streaming: false,
-        queuedSends: 0,
-        features: [],
-        tokensIn: 0,
-        tokensOut: 0,
-        contextTokens: 0,
-        createdAt: stat.birthtimeMs,
-        updatedAt: stat.mtimeMs,
-      },
-      cached,
-    );
+  for (const [providerSessionId, file] of scanSessionFiles()) {
+    const summary = summarizeSessionFile(providerSessionId, file);
+    if (!summary) continue;
+    const patched = applyCachedSummary(summary, cached);
     if (
       (workspaceCwds || options.includePlainChats) &&
-      !shouldIncludeCwd(summary.cwd ?? '', workspaceCwds, options.includePlainChats)
+      !shouldIncludeCwd(patched.cwd ?? '', workspaceCwds, options.includePlainChats)
     )
       continue;
     rows.push({
-      summary,
+      summary: patched,
       progress: [],
     });
   }
@@ -291,6 +263,7 @@ export function loadSessionPage(
 
 export class HistoryIndex {
   private db: DatabaseSync;
+  private readonly sessionFiles: SessionFileCache;
 
   constructor() {
     const dir = join(homedir(), '.factory', 'droidex');
@@ -300,10 +273,50 @@ export class HistoryIndex {
       HistoryIndex.initializeOrValidateHistorySchema(db);
       db.exec('PRAGMA journal_mode = WAL');
       this.db = db;
+      this.sessionFiles = new SessionFileCache(db, scanSessionFiles, summarizeSessionFile);
     } catch (error) {
       db.close();
       throw error;
     }
+  }
+
+  get sessionFileCacheSize(): number {
+    return this.sessionFiles.size;
+  }
+
+  // Serves the historical session list from the session file cache instead of
+  // walking and re-reading every session file on each request. Rows are as of
+  // the last reconcileSessionFiles() run; the app_sessions patch overlay is
+  // always fresh.
+  listHistoricalSessions(options: HistoricalSummaryFilter = {}): HistoricalSession[] {
+    const workspaceCwds = options.workspaceCwds
+      ? new Set(options.workspaceCwds.filter(Boolean))
+      : null;
+    if (workspaceCwds && workspaceCwds.size === 0 && !options.includePlainChats) return [];
+    const patches = this.summaryPatches();
+    const rows: HistoricalSession[] = [];
+    for (const cached of this.sessionFiles.summaries()) {
+      const summary = applyCachedSummary({ ...cached }, patches);
+      if (
+        (workspaceCwds || options.includePlainChats) &&
+        !shouldIncludeCwd(summary.cwd ?? '', workspaceCwds, options.includePlainChats)
+      )
+        continue;
+      rows.push({ summary, progress: [] });
+    }
+    return limitHistoricalRows(
+      rows.sort((a, b) => b.summary.updatedAt - a.summary.updatedAt),
+      workspaceCwds,
+      options.limitPerWorkspace,
+      options.includePlainChats,
+    );
+  }
+
+  // Diff-cached session files against the files on disk, re-summarizing only
+  // new or changed files and dropping deleted ones. Returns the number of
+  // cache entries written or removed.
+  reconcileSessionFiles(): number {
+    return this.sessionFiles.reconcile();
   }
 
   private static initializeOrValidateHistorySchema(db: DatabaseSync): void {
@@ -1634,10 +1647,10 @@ function shouldIncludeCwd(
   return workspaceCwds.has(cwd);
 }
 
-function buildSessionIndex(): Map<string, string> {
+function scanSessionFiles(): Map<string, SessionFileStat> {
   const root = join(homedir(), '.factory', 'sessions');
-  const index = new Map<string, string>();
-  if (!existsSync(root)) return index;
+  const files = new Map<string, SessionFileStat>();
+  if (!existsSync(root)) return files;
 
   const walk = (dir: string, depth: number) => {
     if (depth > 4) return;
@@ -1650,11 +1663,63 @@ function buildSessionIndex(): Map<string, string> {
         continue;
       }
       if (stat.isDirectory()) walk(path, depth + 1);
-      else if (name.endsWith('.jsonl')) index.set(name.slice(0, -'.jsonl'.length), path);
+      else if (name.endsWith('.jsonl')) {
+        files.set(name.slice(0, -'.jsonl'.length), {
+          path,
+          birthtimeMs: stat.birthtimeMs,
+          mtimeMs: stat.mtimeMs,
+          sizeBytes: stat.size,
+        });
+      }
     }
   };
   walk(root, 0);
+  return files;
+}
+
+function buildSessionIndex(): Map<string, string> {
+  const index = new Map<string, string>();
+  for (const [providerSessionId, file] of scanSessionFiles()) {
+    index.set(providerSessionId, file.path);
+  }
   return index;
+}
+
+// Builds the base summary for one on-disk session file, or null when the file
+// is a worker/validator/Task-child session that never appears as top-level
+// history. The app_sessions patch overlay is applied by the caller.
+function summarizeSessionFile(
+  providerSessionId: string,
+  file: SessionFileStat,
+): SessionSummary | null {
+  const start = readSessionStart(file.path);
+  const classification = classifyStoredSession(start);
+  if (!classification) return null;
+  const title = start.sessionTitle || start.title || `Session ${providerSessionId.slice(0, 8)}`;
+  const settings = readSessionModelSettings(start, file.path);
+  return {
+    appSessionId: providerSessionId,
+    providerSessionId,
+    missionId: classification.missionId,
+    sessionPurpose: classification.sessionPurpose,
+    interactionMode: classification.interactionMode,
+    role: classification.role,
+    title,
+    goal: title,
+    cwd: start.cwd ?? '',
+    workspaceKind: start.cwd ? 'folder' : 'none',
+    ...settings,
+    autonomy: settings.autonomy ?? 'low',
+    phase: 'paused',
+    streaming: false,
+    queuedSends: 0,
+    features: [],
+    tokensIn: 0,
+    tokensOut: 0,
+    contextTokens: 0,
+    createdAt: file.birthtimeMs,
+    updatedAt: file.mtimeMs,
+  };
 }
 
 function readJson<T>(path: string): T {

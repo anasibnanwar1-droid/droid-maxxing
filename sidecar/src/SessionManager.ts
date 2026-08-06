@@ -33,12 +33,7 @@ import {
 } from './DroidRuntime.js';
 import { detectEnvironment } from './Environment.js';
 import { buildInstallCommand, buildUpdateCommand, runStreaming } from './CliInstaller.js';
-import {
-  HistoryIndex,
-  loadHistoricalSessions,
-  loadMissionControlSessions,
-  readFactoryDefaults,
-} from './history.js';
+import { HistoryIndex, loadMissionControlSessions, readFactoryDefaults } from './history.js';
 import { mergeModelCatalog } from './modelCatalog.js';
 import { readDroidCliModelCatalog, readDroidCliModelCatalogCache } from './DroidCliCatalog.js';
 import { BrowserSessionManager } from './browser/BrowserSessionManager.js';
@@ -77,6 +72,9 @@ type SessionHistory = Pick<
   | 'syncSummaries'
   | 'summaryPatches'
   | 'hiddenProviderSessionIds'
+  | 'listHistoricalSessions'
+  | 'reconcileSessionFiles'
+  | 'sessionFileCacheSize'
   | 'childSessions'
   | 'childSession'
   | 'upsertChildSession'
@@ -174,6 +172,8 @@ export class SessionManager {
     Partial<Record<ConfigurableSessionRole, AgentSettingPatch>>
   >();
   private shutdownPromise?: Promise<void>;
+  private historyReconciled = false;
+  private lastSessionListOptions?: SessionListFilterOptions;
   // Per-session autonomy mutation queue: rapid changes settle against the
   // provider in the order they were requested.
   private readonly autonomyMutationTails = new Map<string, Promise<void>>();
@@ -220,7 +220,7 @@ export class SessionManager {
     this.cachedModels = options.initialModels ? [...options.initialModels] : null;
     this.registry = new SessionRegistry({
       history: this.history,
-      loadOrdinarySessions: loadHistoricalSessions,
+      loadOrdinarySessions: (options) => this.history.listHistoricalSessions(options),
       loadMissionControlSessions,
       projectSummary: (summary) => this.applyPendingSettingsToSummary({ ...summary }),
       onSummaryUpdated: (summary) => {
@@ -479,6 +479,8 @@ export class SessionManager {
         await this.lifecycle.close(cmd.appSessionId);
         return;
       case 'sessions.list':
+        this.lastSessionListOptions = cmd;
+        this.reconcileSessionFileCache();
         this.emitSessionList(cmd);
         return;
       case 'history.list':
@@ -902,6 +904,33 @@ export class SessionManager {
 
   private emitSessionList(options?: SessionListFilterOptions): void {
     this.emit({ type: 'sessions.list', sessions: this.registry.listSummaries(options) });
+  }
+
+  // Runs once per boot, on the first sessions.list. An empty cache (first run
+  // after install or a rebuilt index) is populated synchronously so the first
+  // list returns the same rows the previous uncached scan did. A warm cache is
+  // served immediately and refreshed from disk in the background; the list is
+  // republished only when sessions changed while the app was away.
+  private reconcileSessionFileCache(): void {
+    if (this.historyReconciled) return;
+    this.historyReconciled = true;
+    if (this.history.sessionFileCacheSize === 0) {
+      this.history.reconcileSessionFiles();
+      return;
+    }
+    setImmediate(() => {
+      if (this.shutdownPromise) return;
+      let changed = 0;
+      try {
+        changed = this.history.reconcileSessionFiles();
+      } catch (error) {
+        console.error(`Session file cache reconcile failed: ${errMsg(error)}`);
+        return;
+      }
+      if (changed > 0 && this.lastSessionListOptions) {
+        this.emitSessionList(this.lastSessionListOptions);
+      }
+    });
   }
 
   private async runPrimaryTurn(liveSession: LiveSession, prompt: string): Promise<void> {
