@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import type { SessionSummary, TranscriptEvent } from '../types/bridge';
 import { withLocalStorageMap } from '../test/localStorage';
 import {
+  createSnapshotScheduler,
   loadSessionSnapshot,
   saveSessionSnapshot,
   MAX_SNAPSHOT_SESSIONS,
+  MAX_SNAPSHOT_SUMMARY_BYTES,
   MAX_SNAPSHOT_TRANSCRIPT_EVENTS,
   MAX_SNAPSHOT_TRANSCRIPT_BYTES,
 } from './sessionSnapshot';
@@ -124,9 +126,115 @@ test('the transcript is capped to the newest events and the byte budget', () => 
   const kept = bounded?.transcript?.events ?? [];
   assert.ok(kept.length < bulky.length, 'oldest events dropped to fit the byte budget');
   assert.ok(
-    JSON.stringify(kept).length <= MAX_SNAPSHOT_TRANSCRIPT_BYTES * 2,
-    'serialized size roughly within budget',
+    JSON.stringify(kept).length <= MAX_SNAPSHOT_TRANSCRIPT_BYTES,
+    'serialized size within budget',
   );
+});
+
+test('duplicate session ids in a stored payload are collapsed', () => {
+  withLocalStorageMap(
+    { [SNAPSHOT_KEY]: JSON.stringify({ sessions: [summary('s1', 1), summary('s1', 2)] }) },
+    () => {
+      const snapshot = loadSessionSnapshot();
+      assert.deepEqual(snapshot?.sessionOrder, ['s1']);
+    },
+  );
+});
+
+test('malformed transcript events are dropped on load', () => {
+  withLocalStorageMap(
+    {
+      [SNAPSHOT_KEY]: JSON.stringify({
+        sessions: [summary('s1')],
+        transcript: {
+          appSessionId: 's1',
+          events: [
+            event('ok', 1),
+            { ...event('bad-id', 2), id: 9 },
+            { ...event('bad-ts', 3), ts: 'now' },
+          ],
+        },
+      }),
+    },
+    () => {
+      const snapshot = loadSessionSnapshot();
+      assert.deepEqual(
+        snapshot?.transcript?.events.map((item) => item.id),
+        ['ok'],
+      );
+    },
+  );
+});
+
+test('the summary list is bounded to the byte budget, keeping the newest', () => {
+  const bulky = Array.from({ length: 200 }, (_, i) => ({
+    ...summary(`s${i}`, i),
+    title: `Chat ${i} ${'t'.repeat(8 * 1024)}`,
+  }));
+  const snapshot = saveAndLoad(bulky);
+  const kept = snapshot?.sessionOrder ?? [];
+  assert.ok(kept.length >= 2, 'more than one summary fits the budget');
+  assert.ok(kept.length < bulky.length, 'oldest summaries dropped to fit the byte budget');
+  assert.equal(kept[0], 's0', 'the front of the order (newest) is kept');
+  const serialized = JSON.stringify(kept.map((id) => snapshot?.sessions[id]));
+  assert.ok(serialized.length <= MAX_SNAPSHOT_SUMMARY_BYTES);
+});
+
+test('the scheduler writes after the debounce delay', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  withLocalStorageMap({}, () => {
+    const scheduler = createSnapshotScheduler(400);
+    scheduler.push({ sessions: { s1: summary('s1') }, sessionOrder: ['s1'] });
+    t.mock.timers.tick(399);
+    assert.equal(loadSessionSnapshot(), undefined);
+    t.mock.timers.tick(1);
+    assert.deepEqual(loadSessionSnapshot()?.sessionOrder, ['s1']);
+  });
+});
+
+test('an unchanged push never cancels a pending write', (t) => {
+  // Regression: the previous effect-owned timer was cleared by React cleanup
+  // when an unrelated state change re-ran the effect, silently dropping the
+  // scheduled snapshot.
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  withLocalStorageMap({}, () => {
+    const scheduler = createSnapshotScheduler(400);
+    const sessions = { s1: summary('s1') };
+    const sessionOrder = ['s1'];
+    scheduler.push({ sessions, sessionOrder });
+    t.mock.timers.tick(200);
+    scheduler.push({ sessions, sessionOrder });
+    t.mock.timers.tick(200);
+    assert.deepEqual(loadSessionSnapshot()?.sessionOrder, ['s1']);
+  });
+});
+
+test('a changed push reschedules and the latest input wins', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  withLocalStorageMap({}, () => {
+    const scheduler = createSnapshotScheduler(400);
+    scheduler.push({ sessions: { s1: summary('s1') }, sessionOrder: ['s1'] });
+    t.mock.timers.tick(200);
+    scheduler.push({
+      sessions: { s1: summary('s1'), s2: summary('s2') },
+      sessionOrder: ['s2', 's1'],
+    });
+    t.mock.timers.tick(399);
+    assert.equal(loadSessionSnapshot(), undefined, 'rescheduled write has not fired yet');
+    t.mock.timers.tick(1);
+    assert.deepEqual(loadSessionSnapshot()?.sessionOrder, ['s2', 's1']);
+  });
+});
+
+test('cancel discards a pending write', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  withLocalStorageMap({}, () => {
+    const scheduler = createSnapshotScheduler(400);
+    scheduler.push({ sessions: { s1: summary('s1') }, sessionOrder: ['s1'] });
+    scheduler.cancel();
+    t.mock.timers.tick(1000);
+    assert.equal(loadSessionSnapshot(), undefined);
+  });
 });
 
 test('a transcript for an unknown session is not hydrated', () => {

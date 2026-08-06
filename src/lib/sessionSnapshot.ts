@@ -13,6 +13,7 @@ import type { SessionSummary, TranscriptEvent } from '../types/bridge';
 
 const SESSION_SNAPSHOT_STORAGE_KEY = 'droid-session-snapshot-v1';
 export const MAX_SNAPSHOT_SESSIONS = 200;
+export const MAX_SNAPSHOT_SUMMARY_BYTES = 512 * 1024;
 export const MAX_SNAPSHOT_TRANSCRIPT_EVENTS = 40;
 export const MAX_SNAPSHOT_TRANSCRIPT_BYTES = 256 * 1024;
 
@@ -20,6 +21,17 @@ export interface SessionSnapshot {
   sessions: Record<string, SessionSummary>;
   sessionOrder: string[];
   transcript?: { appSessionId: string; events: TranscriptEvent[] };
+}
+
+export interface SnapshotInput {
+  sessions: Record<string, SessionSummary>;
+  sessionOrder: string[];
+  activeTranscript?: { appSessionId: string; events: TranscriptEvent[] };
+}
+
+export interface SnapshotScheduler {
+  push(input: SnapshotInput): void;
+  cancel(): void;
 }
 
 function getLocalStorage(): Storage | undefined {
@@ -100,10 +112,11 @@ export function loadSessionSnapshot(): SessionSnapshot | undefined {
     const stored = parsed as { sessions?: unknown; transcript?: unknown };
     if (!Array.isArray(stored.sessions)) return undefined;
     const sessions: Record<string, SessionSummary> = {};
+    const byId: Partial<Record<string, SessionSummary>> = sessions;
     const sessionOrder: string[] = [];
     for (const value of stored.sessions.slice(0, MAX_SNAPSHOT_SESSIONS)) {
       const summary = sanitizeSummary(value);
-      if (!summary) continue;
+      if (!summary || byId[summary.appSessionId] !== undefined) continue;
       sessions[summary.appSessionId] = summary;
       sessionOrder.push(summary.appSessionId);
     }
@@ -124,10 +137,15 @@ export function saveSessionSnapshot(
 ): void {
   try {
     const byId: Partial<Record<string, SessionSummary>> = sessions;
-    const list: SessionSummary[] = [];
+    let list: SessionSummary[] = [];
     for (const id of sessionOrder.slice(0, MAX_SNAPSHOT_SESSIONS)) {
       const summary = byId[id];
       if (summary) list.push(summary);
+    }
+    // sessionOrder is newest-first, so keeping the front of the list keeps
+    // the most recent sessions when a pathological payload exceeds budget.
+    while (list.length > 1 && JSON.stringify(list).length > MAX_SNAPSHOT_SUMMARY_BYTES) {
+      list = list.slice(0, Math.ceil(list.length / 2));
     }
     const payload: {
       sessions: SessionSummary[];
@@ -143,4 +161,37 @@ export function saveSessionSnapshot(
   } catch {
     /* ignore */
   }
+}
+
+// Coalesces snapshot writes for the store provider: a write is scheduled only
+// when one of the tracked references actually changed, and the latest push
+// wins within the debounce window. The scheduler owns its timer (rather than
+// relying on effect cleanup), so an unrelated re-render can never cancel a
+// pending write. cancel() is for unmount.
+export function createSnapshotScheduler(delayMs: number): SnapshotScheduler {
+  let prev: SnapshotInput | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return {
+    push(input: SnapshotInput): void {
+      const prevInput = prev;
+      prev = input;
+      if (prevInput) {
+        const unchanged =
+          prevInput.sessions === input.sessions &&
+          prevInput.sessionOrder === input.sessionOrder &&
+          prevInput.activeTranscript?.appSessionId === input.activeTranscript?.appSessionId &&
+          prevInput.activeTranscript?.events === input.activeTranscript?.events;
+        if (unchanged) return;
+      }
+      if (timer !== undefined) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = undefined;
+        saveSessionSnapshot(input.sessions, input.sessionOrder, input.activeTranscript);
+      }, delayMs);
+    },
+    cancel(): void {
+      if (timer !== undefined) clearTimeout(timer);
+      timer = undefined;
+    },
+  };
 }

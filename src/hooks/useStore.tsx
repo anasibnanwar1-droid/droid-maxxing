@@ -3,7 +3,7 @@ import {
   useContext,
   useMemo,
   useReducer,
-  useRef,
+  useState,
   ReactNode,
   useEffect,
 } from 'react';
@@ -56,7 +56,7 @@ import {
   saveSessionNotes,
   type SessionNotesMap,
 } from '../lib/sessionNotes';
-import { loadSessionSnapshot, saveSessionSnapshot } from '../lib/sessionSnapshot';
+import { createSnapshotScheduler, loadSessionSnapshot } from '../lib/sessionSnapshot';
 import { toast } from '../lib/toast';
 import { DIFF_SCOPES, type DiffScope } from '../types/vcs';
 import {
@@ -1711,16 +1711,21 @@ function baseReducer(state: AppState, action: Action): AppState {
           seededLastSeen[m.appSessionId] = m.updatedAt;
         }
       }
+      // If the active session was pruned above (a hydrated snapshot row the
+      // sidecar no longer reports), clear the dangling id so the UI does not
+      // point at a session that no longer exists.
+      const mapById: Partial<Record<string, SessionSummary>> = map;
+      const activeAppSessionId =
+        state.activeAppSessionId !== null && mapById[state.activeAppSessionId] !== undefined
+          ? state.activeAppSessionId
+          : null;
       return {
         ...state,
         sessions: map,
         sessionOrder: order,
         sessionLastSeen: seededLastSeen,
         snapshotSessionIds: null,
-        activeAppSessionId:
-          state.activeAppSessionId && map[state.activeAppSessionId]
-            ? state.activeAppSessionId
-            : state.activeAppSessionId,
+        activeAppSessionId,
       };
     }
 
@@ -2846,43 +2851,37 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   // Persist the reload snapshot only when the session list or the active
   // transcript actually changed (references are immutable), debounced so
-  // streaming bursts coalesce into one write.
-  const snapshotRef = useRef<{
-    sessions: AppState['sessions'];
-    sessionOrder: AppState['sessionOrder'];
-    transcript: TranscriptEvent[] | undefined;
-  }>(undefined);
+  // streaming bursts coalesce into one write. The scheduler owns its timer,
+  // so an unrelated state change can never cancel a pending write, and the
+  // effect depends on the derived active transcript so background sessions'
+  // transcript updates do not retrigger it.
+  const [snapshotScheduler] = useState(() => createSnapshotScheduler(400));
+  const activeTranscriptEvents = state.activeAppSessionId
+    ? state.transcripts[state.activeAppSessionId]
+    : undefined;
   useEffect(() => {
-    const transcript = state.activeAppSessionId
-      ? state.transcripts[state.activeAppSessionId]
-      : undefined;
-    const prev = snapshotRef.current;
-    if (prev) {
-      const unchanged =
-        prev.sessions === state.sessions &&
-        prev.sessionOrder === state.sessionOrder &&
-        prev.transcript === transcript;
-      if (unchanged) return;
-    }
-    snapshotRef.current = {
+    const activeId = state.activeAppSessionId;
+    snapshotScheduler.push({
       sessions: state.sessions,
       sessionOrder: state.sessionOrder,
-      transcript,
-    };
-    const timer = setTimeout(() => {
-      const activeId = state.activeAppSessionId;
-      saveSessionSnapshot(
-        state.sessions,
-        state.sessionOrder,
-        activeId !== null && transcript !== undefined
-          ? { appSessionId: activeId, events: transcript }
+      activeTranscript:
+        activeId !== null && activeTranscriptEvents !== undefined
+          ? { appSessionId: activeId, events: activeTranscriptEvents }
           : undefined,
-      );
-    }, 400);
-    return () => {
-      clearTimeout(timer);
-    };
-  }, [state.sessions, state.sessionOrder, state.activeAppSessionId, state.transcripts]);
+    });
+  }, [
+    snapshotScheduler,
+    state.sessions,
+    state.sessionOrder,
+    state.activeAppSessionId,
+    activeTranscriptEvents,
+  ]);
+  useEffect(
+    () => () => {
+      snapshotScheduler.cancel();
+    },
+    [snapshotScheduler],
+  );
 
   useEffect(() => {
     const unsub = bridge.subscribe((ev) => {

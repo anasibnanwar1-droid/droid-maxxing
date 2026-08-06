@@ -54,6 +54,30 @@ test('locally created sessions survive the confirming SESSION_LIST', () => {
   assert.equal(next.snapshotSessionIds, null);
 });
 
+test('a session updated before the first SESSION_LIST survives the prune', () => {
+  // The snapshot marker set is fixed at hydration; a live update for a
+  // session outside it (e.g. a background session the bridge reports before
+  // the first list) must not make it prunable.
+  const updated = reducer(hydratedState(), {
+    type: 'SESSION_UPDATED',
+    session: summary('live', 50),
+  });
+  const next = reducer(updated, { type: 'SESSION_LIST', sessions: [summary('kept', 3)] });
+  assert.deepEqual(Object.keys(next.sessions).sort(), ['kept', 'live']);
+});
+
+test('a pruned active session clears the dangling activeAppSessionId', () => {
+  const state: AppState = { ...hydratedState(), activeAppSessionId: 'stale' };
+  const next = reducer(state, { type: 'SESSION_LIST', sessions: [summary('kept', 3)] });
+  assert.equal(next.activeAppSessionId, null);
+});
+
+test('a confirmed active session keeps activeAppSessionId', () => {
+  const state: AppState = { ...hydratedState(), activeAppSessionId: 'kept' };
+  const next = reducer(state, { type: 'SESSION_LIST', sessions: [summary('kept', 3)] });
+  assert.equal(next.activeAppSessionId, 'kept');
+});
+
 test('later SESSION_LIST merges keep unlisted sessions once the snapshot is confirmed', () => {
   const confirmed = reducer(hydratedState(), {
     type: 'SESSION_LIST',
