@@ -91,10 +91,14 @@ export class SessionCompactionExecution {
             } else if (current) {
               // The provider was swapped; the new session object already keeps
               // stale polls inert, and replaceProvider owns the counters.
-              this.dependencies.registry.updateSummary(appSessionId, {
-                contextTokens: 0,
-                contextAccuracy: undefined,
-              });
+              this.dependencies.registry.updateSummary(
+                appSessionId,
+                {
+                  contextTokens: 0,
+                  contextAccuracy: undefined,
+                },
+                { touchActivity: false },
+              );
             }
             return this.dependencies.context.refresh(this.effects.primaryTarget(liveSession));
           },

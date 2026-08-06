@@ -38,6 +38,9 @@ export class SessionRegistry<TLive extends RegisteredSession> {
   constructor(private readonly dependencies: SessionRegistryDependencies) {}
 
   register(liveSession: TLive): void {
+    // Runtime boundary guard: live session data can carry a child role even
+    // though the type forbids it, so the narrow type alone is not sufficient.
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Runtime validation despite the narrow declared type.
     if (liveSession.summary.role !== 'primary' && liveSession.summary.role !== 'user') {
       throw new Error('SessionRegistry accepts top-level sessions only.');
     }
@@ -76,11 +79,15 @@ export class SessionRegistry<TLive extends RegisteredSession> {
     return filterSessionListSummaries(projected, options);
   }
 
-  updateSummary(id: string, patch: SessionSummaryPatch): SessionSummary | undefined {
+  updateSummary(
+    id: string,
+    patch: SessionSummaryPatch,
+    options: { touchActivity?: boolean } = {},
+  ): SessionSummary | undefined {
     const liveSession = this.getLive(id);
     if (!liveSession) return undefined;
 
-    const updated = this.withPatch(liveSession.summary, patch);
+    const updated = this.withPatch(liveSession.summary, patch, options.touchActivity !== false);
     this.persist(updated);
     liveSession.summary = updated;
     this.publish(updated);
@@ -183,11 +190,18 @@ export class SessionRegistry<TLive extends RegisteredSession> {
     }
   }
 
-  private withPatch(summary: SessionSummary, patch: SessionSummaryPatch): SessionSummary {
+  private withPatch(
+    summary: SessionSummary,
+    patch: SessionSummaryPatch,
+    touchActivity = true,
+  ): SessionSummary {
+    // updatedAt drives sidebar ordering and the renderer's unread marker, so it
+    // must only move for user-visible activity. Passive telemetry patches
+    // (token usage, context stats, compaction counters) keep the timestamp.
     return copySummary({
       ...summary,
       ...withoutIdentityFields(patch),
-      updatedAt: this.dependencies.now(),
+      ...(touchActivity ? { updatedAt: this.dependencies.now() } : {}),
     });
   }
 
