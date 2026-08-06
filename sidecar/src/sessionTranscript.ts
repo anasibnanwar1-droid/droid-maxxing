@@ -401,7 +401,9 @@ export class SessionTranscriptReader {
       /* skip partial/corrupt JSONL rows */
     }
     for (const e of events) {
-      if (e.kind === 'compaction' && e.ts) this.compactionTimestamps.add(e.ts);
+      // Record even ts=0 (missing/invalid timestamp): the old eager parser
+      // deduped the head divider by `e.ts === comp.ts`, where 0 === 0 holds.
+      if (e.kind === 'compaction') this.compactionTimestamps.add(e.ts);
     }
     const base = (index + 1) * LINE_EVENT_STRIDE;
     events.forEach((e, i) => {

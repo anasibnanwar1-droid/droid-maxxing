@@ -160,6 +160,28 @@ test('a leading compaction_state surfaces exactly one divider at the very top', 
   assert.equal(page2.older, undefined);
 });
 
+test('a leading compaction_state without a timestamp still dedupes to one divider', () => {
+  // Regression: ts=0 compaction events must feed the head-dedupe set — the
+  // old eager parser matched `e.ts === comp.ts`, where 0 === 0 holds, but a
+  // truthiness guard on the reader's set-add would emit the divider twice.
+  const noTimestamp = JSON.stringify({ type: 'compaction_state', id: 'comp-0', removedCount: 7 });
+  const path = writeSession([noTimestamp, assistant('after')]);
+  const dividers = collectAll(path, 100).filter((e) => e.kind === 'compaction');
+  assert.equal(dividers.length, 1);
+  assert.equal(dividers[0].removedCount, 7);
+});
+
+test('a leading compaction_state without a timestamp still dedupes to one divider', () => {
+  // Regression: ts=0 compaction events must feed the head-dedupe set — the
+  // old eager parser matched `e.ts === comp.ts`, where 0 === 0 holds, but a
+  // truthiness guard on the reader's set-add would emit the divider twice.
+  const noTimestamp = JSON.stringify({ type: 'compaction_state', id: 'comp-0', removedCount: 7 });
+  const path = writeSession([noTimestamp, assistant('after')]);
+  const dividers = collectAll(path, 100).filter((e) => e.kind === 'compaction');
+  assert.equal(dividers.length, 1);
+  assert.equal(dividers[0].removedCount, 7);
+});
+
 test('an oversized file serves the tail first and the trim status + divider only at the top', () => {
   // ~6 MB across many lines so the tail window holds whole newer lines.
   const filler = 'x'.repeat(30_000);

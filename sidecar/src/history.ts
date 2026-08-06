@@ -140,7 +140,8 @@ const DEFAULT_HISTORY_WINDOW = 400;
 // Per-segment span used to derive a global monotonic `seq` from a chain index +
 // in-segment position. Must exceed any single segment's seq band: a segment is
 // tail-windowed at MAX_SESSION_BYTES, and the reader assigns each line a
-// LINE_EVENT_STRIDE band, so a few million lines fit far below this.
+// LINE_EVENT_STRIDE band, so the ceiling is (1<<27)/256 = 524,288 lines — far
+// above the ~50K lines a 5MB window of real message lines can hold.
 const SEQ_SEGMENT_STRIDE = 1 << 27;
 const HISTORY_SCHEMA_VERSION = 1;
 export const SESSION_INDEX_FILENAME = 'session-index.sqlite';
