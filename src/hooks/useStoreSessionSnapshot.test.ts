@@ -29,7 +29,7 @@ function hydratedState(): AppState {
     ...(initialState as unknown as AppState),
     sessions: { stale: summary('stale', 1), kept: summary('kept', 2) },
     sessionOrder: ['kept', 'stale'],
-    snapshotSessionIds: ['stale', 'kept'],
+    listConfirmedSessionIds: ['stale', 'kept'],
   };
 }
 
@@ -40,7 +40,7 @@ test('the first SESSION_LIST prunes hydrated rows the sidecar does not confirm',
   });
   assert.deepEqual(Object.keys(next.sessions).sort(), ['fresh', 'kept']);
   assert.deepEqual(next.sessionOrder, ['fresh', 'kept']);
-  assert.equal(next.snapshotSessionIds, null);
+  assert.deepEqual(next.listConfirmedSessionIds, ['kept', 'fresh']);
 });
 
 test('locally created sessions survive the confirming SESSION_LIST', () => {
@@ -51,7 +51,7 @@ test('locally created sessions survive the confirming SESSION_LIST', () => {
   });
   const next = reducer(created, { type: 'SESSION_LIST', sessions: [summary('kept', 3)] });
   assert.deepEqual(Object.keys(next.sessions).sort(), ['kept', 'optimistic']);
-  assert.equal(next.snapshotSessionIds, null);
+  assert.deepEqual(next.listConfirmedSessionIds, ['kept']);
 });
 
 test('a session updated before the first SESSION_LIST survives the prune', () => {
@@ -78,24 +78,26 @@ test('a confirmed active session keeps activeAppSessionId', () => {
   assert.equal(next.activeAppSessionId, 'kept');
 });
 
-test('later SESSION_LIST merges keep unlisted sessions once the snapshot is confirmed', () => {
+test('a later SESSION_LIST drops rows the previous list confirmed but it omits', () => {
+  // Regression test: a session deleted outside the app (CLI, parallel
+  // instance) must disappear from the sidebar when the watcher republishes,
+  // not linger until a reload.
   const confirmed = reducer(hydratedState(), {
     type: 'SESSION_LIST',
-    sessions: [summary('kept', 3)],
+    sessions: [summary('kept', 3), summary('external', 4)],
   });
-  // No snapshot marker anymore: an empty list no longer prunes, matching the
-  // merge behavior sessions created this run rely on.
-  const next = reducer(confirmed, { type: 'SESSION_LIST', sessions: [] });
+  const next = reducer(confirmed, { type: 'SESSION_LIST', sessions: [summary('kept', 5)] });
   assert.deepEqual(Object.keys(next.sessions), ['kept']);
-  assert.equal(next.sessions.kept?.updatedAt, 3);
+  assert.equal(next.sessions.kept?.updatedAt, 5);
+  assert.deepEqual(next.listConfirmedSessionIds, ['kept']);
 });
 
-test('without a snapshot the SESSION_LIST merge behavior is unchanged', () => {
+test('rows never confirmed by a list survive lists that omit them', () => {
   const state: AppState = {
     ...(initialState as unknown as AppState),
     sessions: { local: summary('local', 1) },
     sessionOrder: ['local'],
-    snapshotSessionIds: null,
+    listConfirmedSessionIds: null,
   };
   const next = reducer(state, { type: 'SESSION_LIST', sessions: [summary('server', 2)] });
   assert.deepEqual(Object.keys(next.sessions).sort(), ['local', 'server']);

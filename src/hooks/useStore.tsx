@@ -155,10 +155,13 @@ export interface AppState {
   // Sessions domain
   sessions: Record<string, SessionSummary>;
   sessionOrder: string[];
-  // Ids hydrated from the local snapshot that the sidecar has not confirmed
-  // yet; the first SESSION_LIST after connect prunes any it does not report.
-  // Null once pruned (or when nothing was hydrated).
-  snapshotSessionIds: string[] | null;
+  // Ids vouched for by the last authoritative listing: the boot snapshot
+  // before the first SESSION_LIST, then the sessions of the most recent
+  // SESSION_LIST. A SESSION_LIST prunes confirmed rows it no longer reports,
+  // so a session deleted outside the app disappears on the next list push.
+  // Rows added locally this run (SESSION_CREATED/SESSION_UPDATED) are not in
+  // the set and survive lists that do not mention them yet.
+  listConfirmedSessionIds: string[] | null;
   activeAppSessionId: string | null;
   // appSessionId -> last time the user viewed it. A session reads as "unread" when
   // its updatedAt (latest model activity) is newer than this. Internal only:
@@ -887,7 +890,7 @@ export const initialState: AppState = {
   connection: 'idle',
   sessions: sessionSnapshot?.sessions ?? {},
   sessionOrder: sessionSnapshot?.sessionOrder ?? [],
-  snapshotSessionIds: sessionSnapshot?.sessionOrder ?? null,
+  listConfirmedSessionIds: sessionSnapshot?.sessionOrder ?? null,
   activeAppSessionId: persistedUiState.activeAppSessionId ?? null,
   sessionLastSeen: loadSessionLastSeen(),
   transcripts: sessionSnapshot?.transcript
@@ -1681,14 +1684,15 @@ function baseReducer(state: AppState, action: Action): AppState {
 
     case 'SESSION_LIST': {
       const incoming = new Set(action.sessions.map((m) => m.appSessionId));
-      // The first list after connect confirms which hydrated snapshot rows
-      // still exist; drop the rest so a chat deleted while the app was closed
-      // does not linger in the sidebar. Sessions created locally in the
-      // meantime are not in the snapshot set and survive.
-      const unconfirmed = state.snapshotSessionIds;
+      // Every list is a fresh scan of what exists, so it is authoritative for
+      // the rows the previous listing confirmed: drop confirmed rows it no
+      // longer reports (deleted outside the app, or pruned from a hydrated
+      // snapshot). Rows added locally this run are not confirmed yet and
+      // survive.
+      const confirmed = state.listConfirmedSessionIds;
       const map: Record<string, SessionSummary> = {};
       for (const [id, summary] of Object.entries(state.sessions)) {
-        if (unconfirmed?.includes(id) && !incoming.has(id)) continue;
+        if (confirmed?.includes(id) && !incoming.has(id)) continue;
         map[id] = summary;
       }
       for (const m of action.sessions) {
@@ -1724,7 +1728,7 @@ function baseReducer(state: AppState, action: Action): AppState {
         sessions: map,
         sessionOrder: order,
         sessionLastSeen: seededLastSeen,
-        snapshotSessionIds: null,
+        listConfirmedSessionIds: action.sessions.map((m) => m.appSessionId),
         activeAppSessionId,
       };
     }
