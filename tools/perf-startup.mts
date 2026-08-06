@@ -5,15 +5,19 @@
  * chat on every app start / renderer reload, against the real on-disk
  * Factory session data (read-only):
  *
- *   1. loadHistoricalSessions  - the sessions.list backing scan (per call)
- *   2. loadMissionControlSessions - mission rows for the sidebar
- *   3. loadSessionTranscriptWindow - first history page of the newest session
+ *   1. loadHistoricalSessions  - the old sessions.list backing scan (per call)
+ *   2. HistoryIndex.reconcileSessionFiles - one-time cache populate / refresh
+ *   3. HistoryIndex.listHistoricalSessions - the cached sessions.list path
+ *   4. loadMissionControlSessions - mission rows for the sidebar
+ *   5. loadSessionTranscriptWindow - first history page of the newest session
  *
- * The session list is always served from a fresh stat scan of the session
- * files; only the parsing of files whose mtime/size are unchanged is
- * memoized. Call #1 below is the once-per-process cold parse (in the app it
- * runs in the background during boot), call #2 is the steady-state cost
- * every sessions.list request pays.
+ * Live external changes go through HistoryIndex.reconcileSessionFilePaths,
+ * which stats (and at most re-parses) exactly the files the watcher reported,
+ * so the steady-state cost per external edit is microseconds, not a tree walk.
+ *
+ * The HistoryIndex measurements run in a scratch HOME whose sessions dir is a
+ * symlink to the real one, so the sqlite cache writes land in the scratch dir
+ * and the real ~/.factory data is never modified.
  *
  * Run from the repo root:
  *   node --import tsx tools/perf-startup.mts
@@ -21,11 +25,21 @@
  * Keep this script honest: it must stay read-only and must exercise the same
  * production entry points the bridge uses, not private reimplementations.
  */
-import { readdirSync, statSync } from 'node:fs';
-import { homedir } from 'node:os';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+} from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import {
+  HistoryIndex,
   loadHistoricalSessions,
   loadMissionControlSessions,
   loadSessionTranscriptWindow,
@@ -69,11 +83,11 @@ function newestProviderSessionId(): string | null {
 console.log('DROIDEX startup perf benchmark (real ~/.factory data, read-only)\n');
 
 // The renderer calls sessions.list with its workspace cwds; the expensive part
-// (the stat walk + parsing changed files) runs for every file regardless of
-// the filter, so plain-chat mode measures the same scan cost.
+// (index rebuild + per-file head reads) runs for every file regardless of the
+// filter, so plain-chat mode measures the same scan cost.
 const listOptions = { includePlainChats: true };
 
-console.log('— sessions.list fresh stat scan (the serving path on every request) —');
+console.log('— uncached path (pre-cache behavior, still the empty-cache fallback) —');
 time('loadHistoricalSessions (sessions.list) call #1', () =>
   loadHistoricalSessions(listOptions),
 );
@@ -98,4 +112,47 @@ if (newest) {
   console.log('no session files found; skipping transcript benchmark');
 }
 
-console.log(`\nsessions.list rows: ${rows2.length} (scan cost is independent of the filter)`);
+// Cached path: scratch HOME with a symlinked sessions dir keeps the benchmark
+// read-only against the real data while scanning the real files.
+const scratchHome = mkdtempSync(join(tmpdir(), 'droidex-perf-home-'));
+const previousHome = process.env.HOME;
+try {
+  mkdirSync(join(scratchHome, '.factory', 'droidex'), { recursive: true });
+  symlinkSync(
+    join(homedir(), '.factory', 'sessions'),
+    join(scratchHome, '.factory', 'sessions'),
+    'dir',
+  );
+  // Copy the summary overlay so the cached list applies the same patches as
+  // the uncached one and the row counts are comparable.
+  for (const suffix of ['', '-wal', '-shm']) {
+    const name = `session-index.sqlite${suffix}`;
+    const source = join(homedir(), '.factory', 'droidex', name);
+    if (existsSync(source)) copyFileSync(source, join(scratchHome, '.factory', 'droidex', name));
+  }
+  process.env.HOME = scratchHome;
+
+  console.log('\n— cached path (scratch HOME, real session files via symlink) —');
+  const index = new HistoryIndex();
+  try {
+    time('reconcileSessionFiles (empty cache: first-run populate)', () =>
+      index.reconcileSessionFiles(),
+    );
+    const { result: cachedRows } = time('cached listHistoricalSessions call #1', () =>
+      index.listHistoricalSessions(listOptions),
+    );
+    time('cached listHistoricalSessions call #2', () => index.listHistoricalSessions(listOptions));
+    time('reconcileSessionFiles (warm cache: steady-state boot diff)', () =>
+      index.reconcileSessionFiles(),
+    );
+    console.log(
+      `\nsessions.list rows: uncached ${rows2.length}, cached ${cachedRows.length} (scan cost is independent of the filter)`,
+    );
+  } finally {
+    index.close();
+  }
+} finally {
+  if (previousHome === undefined) delete process.env.HOME;
+  else process.env.HOME = previousHome;
+  rmSync(scratchHome, { recursive: true, force: true });
+}

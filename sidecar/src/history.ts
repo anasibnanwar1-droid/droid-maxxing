@@ -28,17 +28,7 @@ import type {
 import { mapFeature } from './normalize.js';
 import { designPromptDisplayFromText } from './browser/designPromptDisplay.js';
 import { normalizeCompactionTokenLimit } from './compaction.js';
-
-// One session file under ~/.factory/sessions, as found by scanSessionFiles.
-interface SessionFileStat {
-  path: string;
-  birthtimeMs: number;
-  mtimeMs: number;
-  sizeBytes: number;
-  // Mtime of the sibling <id>.settings.json the summary also reads, null when
-  // no settings file exists. Part of the summary memo's freshness key.
-  settingsMtimeMs: number | null;
-}
+import { SessionFileCache, type SessionFileStat } from './sessionFileCache.js';
 
 interface StoredMissionState {
   missionId?: string;
@@ -213,16 +203,8 @@ export function loadHistoricalSessions(options: HistoricalSummaryFilter = {}): H
     ? new Set(options.workspaceCwds.filter(Boolean))
     : null;
   if (workspaceCwds && workspaceCwds.size === 0 && !options.includePlainChats) return [];
-  const files = scanSessionFiles();
-  // Drop memo entries for files deleted since the previous scan so the memo
-  // tracks the current history size.
-  const scannedPaths = new Set<string>();
-  for (const file of files.values()) scannedPaths.add(file.path);
-  for (const path of sessionSummaryMemo.keys()) {
-    if (!scannedPaths.has(path)) sessionSummaryMemo.delete(path);
-  }
-  for (const [providerSessionId, file] of files) {
-    const summary = summarizeSessionFileMemoized(providerSessionId, file);
+  for (const [providerSessionId, file] of scanSessionFiles()) {
+    const summary = summarizeSessionFile(providerSessionId, file);
     if (!summary) continue;
     const patched = applyCachedSummary(summary, cached);
     if (
@@ -281,6 +263,7 @@ export function loadSessionPage(
 
 export class HistoryIndex {
   private db: DatabaseSync;
+  private readonly sessionFiles: SessionFileCache;
 
   constructor() {
     const dir = join(homedir(), '.factory', 'droidex');
@@ -290,18 +273,64 @@ export class HistoryIndex {
       HistoryIndex.initializeOrValidateHistorySchema(db);
       db.exec('PRAGMA journal_mode = WAL');
       this.db = db;
+      this.sessionFiles = new SessionFileCache(
+        db,
+        scanSessionFiles,
+        summarizeSessionFile,
+        statSessionFile,
+      );
     } catch (error) {
       db.close();
       throw error;
     }
   }
 
-  // The historical session list is always served from a fresh scan of the
-  // session files on disk, so sessions created, updated, or deleted outside
-  // this app instance appear on the next request. Exposed on this seam so
-  // SessionManager tests can substitute a fake.
+  get sessionFileCacheSize(): number {
+    return this.sessionFiles.size;
+  }
+
+  // Serves the historical session list from the session file cache instead of
+  // walking and re-reading every session file on each request. Rows are as of
+  // the last reconcileSessionFiles() run, which happens once per boot and on
+  // every sessions-dir watcher event; the app_sessions patch overlay is
+  // always fresh.
   listHistoricalSessions(options: HistoricalSummaryFilter = {}): HistoricalSession[] {
-    return loadHistoricalSessions(options);
+    const workspaceCwds = options.workspaceCwds
+      ? new Set(options.workspaceCwds.filter(Boolean))
+      : null;
+    if (workspaceCwds?.size === 0 && !options.includePlainChats) return [];
+    const patches = this.summaryPatches();
+    const rows: HistoricalSession[] = [];
+    for (const cached of this.sessionFiles.summaries()) {
+      const summary = applyCachedSummary({ ...cached }, patches);
+      if (
+        (workspaceCwds || options.includePlainChats) &&
+        // Cached rows are validated to hold a string cwd at load/reconcile.
+        !shouldIncludeCwd(summary.cwd, workspaceCwds, options.includePlainChats)
+      )
+        continue;
+      rows.push({ summary, progress: [] });
+    }
+    return limitHistoricalRows(
+      rows.sort((a, b) => b.summary.updatedAt - a.summary.updatedAt),
+      workspaceCwds,
+      options.limitPerWorkspace,
+      options.includePlainChats,
+    );
+  }
+
+  // Diff-cached session files against the files on disk, re-summarizing only
+  // new or changed files and dropping deleted ones. Returns the number of
+  // cache entries written or removed.
+  reconcileSessionFiles(): number {
+    return this.sessionFiles.reconcile();
+  }
+
+  // Reconcile exactly the session files a watcher event reported, so a live
+  // external change costs a stat (and at most one re-parse) per changed file
+  // instead of a walk of the whole sessions tree.
+  reconcileSessionFilePaths(changes: { providerSessionId: string; path: string }[]): number {
+    return this.sessionFiles.reconcilePaths(changes);
   }
 
   private static initializeOrValidateHistorySchema(db: DatabaseSync): void {
@@ -1669,6 +1698,29 @@ function scanSessionFiles(): Map<string, SessionFileStat> {
   return files;
 }
 
+// Stats one session file and its settings sidecar, or returns null when the
+// file is gone (deleted between a watcher event and the reconcile).
+function statSessionFile(path: string): SessionFileStat | null {
+  try {
+    const stat = statSync(path);
+    let settingsMtimeMs: number | null = null;
+    try {
+      settingsMtimeMs = statSync(path.replace(/\.jsonl$/, '.settings.json')).mtimeMs;
+    } catch {
+      settingsMtimeMs = null;
+    }
+    return {
+      path,
+      birthtimeMs: stat.birthtimeMs,
+      mtimeMs: stat.mtimeMs,
+      sizeBytes: stat.size,
+      settingsMtimeMs,
+    };
+  } catch {
+    return null;
+  }
+}
+
 // The session id -> file index backs every history page and transcript window
 // load, and several of those run per session restore. Walking ~/.factory/
 // sessions on each call made every restore and page pay the full directory
@@ -1683,30 +1735,10 @@ export function invalidateSessionIndex(): void {
   sessionIndexMemo = null;
 }
 
-// Builds the memoized session index and parses session summaries in small
-// setImmediate slices ahead of the first sessions.list, so the first list or
-// session restore after boot hits warm memos instead of walking and parsing
-// thousands of session files on the request path. Slicing keeps the bridge
-// responsive during boot; a single synchronous parse pass would stall it for
-// seconds on large histories.
-export function warmSessionListServing(): void {
+// Builds the memoized session index ahead of the first history lookup, so the
+// first session restore after boot does not pay the ~/.factory/sessions walk.
+export function warmSessionIndex(): void {
   buildSessionIndex();
-  const files = [...scanSessionFiles()];
-  let next = 0;
-  const step = (): void => {
-    const end = Math.min(next + 50, files.length);
-    for (; next < end; next += 1) {
-      const [providerSessionId, file] = files[next];
-      try {
-        summarizeSessionFileMemoized(providerSessionId, file);
-      } catch {
-        // A file deleted or rotated mid-warm is skipped; the next
-        // sessions.list re-stats everything and parses what exists.
-      }
-    }
-    if (next < files.length) setImmediate(step);
-  };
-  if (files.length > 0) setImmediate(step);
 }
 
 function buildSessionIndex(): Map<string, string> {
@@ -1761,45 +1793,6 @@ function summarizeSessionFile(
     createdAt: file.birthtimeMs,
     updatedAt: file.mtimeMs,
   };
-}
-
-// Re-parsing the session_start head and settings sidecar of every session
-// file on every sessions.list is the dominant list cost (seconds for large
-// histories), while the readdir + stat walk that enumerates the files costs
-// a few ms. So every list still walks and stats every file, and only files
-// whose recorded metadata changed since the previous scan are re-parsed.
-// The memo cannot serve a stale row: it is keyed by path, checked against
-// the filesystem's own mtime + size (session file and settings sidecar) on
-// every call, pruned of deleted files on every scan, and lives only for the
-// sidecar process lifetime.
-interface SessionSummaryMemoEntry {
-  mtimeMs: number;
-  sizeBytes: number;
-  settingsMtimeMs: number | null;
-  summary: SessionSummary | null;
-}
-const sessionSummaryMemo = new Map<string, SessionSummaryMemoEntry>();
-
-function summarizeSessionFileMemoized(
-  providerSessionId: string,
-  file: SessionFileStat,
-): SessionSummary | null {
-  const hit = sessionSummaryMemo.get(file.path);
-  if (hit) {
-    const unchanged =
-      hit.mtimeMs === file.mtimeMs &&
-      hit.sizeBytes === file.sizeBytes &&
-      hit.settingsMtimeMs === file.settingsMtimeMs;
-    if (unchanged) return hit.summary;
-  }
-  const summary = summarizeSessionFile(providerSessionId, file);
-  sessionSummaryMemo.set(file.path, {
-    mtimeMs: file.mtimeMs,
-    sizeBytes: file.sizeBytes,
-    settingsMtimeMs: file.settingsMtimeMs,
-    summary,
-  });
-  return summary;
 }
 
 function readJson<T>(path: string): T {

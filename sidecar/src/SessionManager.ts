@@ -37,7 +37,7 @@ import {
   HistoryIndex,
   loadMissionControlSessions,
   readFactoryDefaults,
-  warmSessionListServing,
+  warmSessionIndex,
 } from './history.js';
 import {
   startSessionFileWatcher,
@@ -83,6 +83,9 @@ type SessionHistory = Pick<
   | 'summaryPatches'
   | 'hiddenProviderSessionIds'
   | 'listHistoricalSessions'
+  | 'reconcileSessionFiles'
+  | 'reconcileSessionFilePaths'
+  | 'sessionFileCacheSize'
   | 'childSessions'
   | 'childSession'
   | 'upsertChildSession'
@@ -923,25 +926,55 @@ export class SessionManager {
   }
 
   // Runs once per boot, on the first sessions.list: warms the memoized
-  // session id -> file index and the parsed-summary memo in the background
-  // so the first sessions.list or session restore does not pay the sessions
-  // walk and parse, and starts the sessions-dir watcher so sessions created,
-  // updated, or deleted outside this app instance are republished live. The
-  // list itself is always served from a fresh stat scan of the session
-  // files; only the parsing of unchanged files is memoized.
+  // Runs once per boot, on the first sessions.list. An empty session file
+  // cache (first run after install or a rebuilt index) is populated
+  // synchronously so the first list returns the same rows an uncached scan
+  // would. A warm cache is served immediately and refreshed from disk in the
+  // background; the list is republished only when sessions changed while the
+  // app was away. Also warms the memoized session id -> file index so the
+  // first session restore does not pay the sessions walk, and starts the
+  // sessions-dir watcher so sessions created, updated, or deleted outside
+  // this app instance are reconciled into the cache and republished live.
   private bootstrapSessionListServing(): void {
     if (this.sessionsBootstrapDone) return;
     this.sessionsBootstrapDone = true;
     setImmediate(() => {
       if (this.shutdownPromise) return;
-      warmSessionListServing();
+      warmSessionIndex();
     });
     this.sessionFileWatcher = this.startWatcher({
       isLiveSession: (id) => this.registry.getLive(id) !== undefined,
-      onExternalChange: () => {
+      onExternalChange: (changes) => {
         if (this.shutdownPromise || !this.lastSessionListOptions) return;
+        try {
+          // A targeted change list reconciles exactly the reported files;
+          // null means the watcher saw unexplained events and only a full
+          // diff of the sessions tree can restore freshness.
+          if (changes) this.history.reconcileSessionFilePaths(changes);
+          else this.history.reconcileSessionFiles();
+        } catch (error) {
+          console.error(`Session file cache reconcile failed: ${errMsg(error)}`);
+          return;
+        }
         this.emitSessionList(this.lastSessionListOptions);
       },
+    });
+    if (this.history.sessionFileCacheSize === 0) {
+      this.history.reconcileSessionFiles();
+      return;
+    }
+    setImmediate(() => {
+      if (this.shutdownPromise) return;
+      let changed = 0;
+      try {
+        changed = this.history.reconcileSessionFiles();
+      } catch (error) {
+        console.error(`Session file cache reconcile failed: ${errMsg(error)}`);
+        return;
+      }
+      if (changed > 0 && this.lastSessionListOptions) {
+        this.emitSessionList(this.lastSessionListOptions);
+      }
     });
   }
 

@@ -96,6 +96,25 @@ export class FakeHistoryIndex implements SessionHistoryDependencies {
     return loadHistoricalSessions(options);
   }
 
+  // The fake has no sqlite cache: it reports an empty cache so boot takes the
+  // synchronous populate path, and reconciles are counted no-ops because the
+  // fake's listHistoricalSessions already scans the disk on every call.
+  // Counters stay out of the recorded-call log so strict call-sequence
+  // assertions are unaffected by the boot reconcile.
+  fullReconcileCalls = 0;
+  readonly targetedReconcileCalls: { providerSessionId: string; path: string }[][] = [];
+  readonly sessionFileCacheSize = 0;
+
+  reconcileSessionFiles(): number {
+    this.fullReconcileCalls += 1;
+    return 0;
+  }
+
+  reconcileSessionFilePaths(changes: { providerSessionId: string; path: string }[]): number {
+    this.targetedReconcileCalls.push(changes);
+    return 0;
+  }
+
   upsertChildSession(child: PersistedChildSession): void {
     const children =
       this.childrenByParent.get(child.parentAppSessionId) ??

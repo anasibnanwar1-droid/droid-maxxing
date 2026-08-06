@@ -4,7 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { sessionIdFromSessionFileName, startSessionFileWatcher } from './sessionFileWatcher.js';
+import {
+  sessionIdFromSessionFileName,
+  startSessionFileWatcher,
+  type SessionFileChange,
+} from './sessionFileWatcher.js';
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -27,16 +31,16 @@ test('sessionIdFromSessionFileName extracts the provider session id', () => {
   assert.equal(sessionIdFromSessionFileName(null), undefined);
 });
 
-test('external session file changes fire once after writes settle', async () => {
+test('external session file changes fire once with the changed files after writes settle', async () => {
   const root = mkdtempSync(join(tmpdir(), 'session-watcher-'));
   const dir = join(root, 'encoded-cwd');
   mkdirSync(dir);
-  let calls = 0;
+  const payloads: (SessionFileChange[] | null)[] = [];
   const watcher = startSessionFileWatcher({
     root,
     debounceMs: 50,
-    onExternalChange: () => {
-      calls += 1;
+    onExternalChange: (changes) => {
+      payloads.push(changes);
     },
   });
   assert.ok(watcher);
@@ -44,9 +48,44 @@ test('external session file changes fire once after writes settle', async () => 
     writeFileSync(join(dir, 'a.jsonl'), '{}\n');
     writeFileSync(join(dir, 'b.jsonl'), '{}\n');
     writeFileSync(join(dir, 'c.jsonl'), '{}\n');
-    await waitFor(() => calls === 1);
+    await waitFor(() => payloads.length === 1);
     await delay(200);
-    assert.equal(calls, 1, 'a burst of changes coalesces into one callback');
+    assert.equal(payloads.length, 1, 'a burst of changes coalesces into one callback');
+    const changes = payloads[0];
+    assert.ok(changes, 'file events explained by the batch reconcile exactly those files');
+    assert.deepEqual(
+      new Set(changes.map((change) => change.providerSessionId)),
+      new Set(['a', 'b', 'c']),
+    );
+    for (const change of changes) {
+      assert.equal(change.path, join(dir, `${change.providerSessionId}.jsonl`));
+    }
+  } finally {
+    watcher.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a settings sidecar change reports its session file', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'session-watcher-'));
+  const dir = join(root, 'encoded-cwd');
+  mkdirSync(dir);
+  writeFileSync(join(dir, 'a.jsonl'), '{}\n');
+  const payloads: (SessionFileChange[] | null)[] = [];
+  const watcher = startSessionFileWatcher({
+    root,
+    debounceMs: 50,
+    onExternalChange: (changes) => {
+      payloads.push(changes);
+    },
+  });
+  assert.ok(watcher);
+  try {
+    writeFileSync(join(dir, 'a.settings.json'), '{}\n');
+    await waitFor(() => payloads.length === 1);
+    const changes = payloads[0];
+    assert.ok(changes, 'a settings event next to its session file stays targeted');
+    assert.deepEqual(changes, [{ providerSessionId: 'a', path: join(dir, 'a.jsonl') }]);
   } finally {
     watcher.close();
     rmSync(root, { recursive: true, force: true });

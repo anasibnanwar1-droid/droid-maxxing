@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 const originalHome = process.env.HOME;
-const home = mkdtempSync(join(tmpdir(), 'droid-history-summary-memo-home-'));
+const home = mkdtempSync(join(tmpdir(), 'droid-history-session-scan-home-'));
 process.env.HOME = home;
 
 const { loadHistoricalSessions } = await import('./history.js');
@@ -37,13 +37,13 @@ function titles(): string[] {
     .sort();
 }
 
-// These tests pin the memo's freshness contract: every list re-stats every
-// file, so a change written between two lists must show up in the second one
-// even though unchanged files are served from the parse memo.
+// These tests pin the uncached scan's freshness contract: it backs the
+// session file cache reconcile, so a change written between two scans must
+// show up in the second one.
 
-test('a session file rewritten between lists serves its new summary', () => {
+test('a session file rewritten between scans serves its new summary', () => {
   seq += 1;
-  const id = `memo-rewrite-${seq}`;
+  const id = `scan-rewrite-${seq}`;
   writeSession(id, 'before the rewrite');
   assert.ok(titles().includes('before the rewrite'));
 
@@ -53,24 +53,24 @@ test('a session file rewritten between lists serves its new summary', () => {
   assert.ok(!after.includes('before the rewrite'));
 });
 
-test('a settings sidecar written between lists invalidates the memo', () => {
+test('a settings sidecar written between scans invalidates the summary', () => {
   seq += 1;
-  const id = `memo-settings-${seq}`;
+  const id = `scan-settings-${seq}`;
   writeSession(id, `settings session ${seq}`);
   const before = loadHistoricalSessions().find((row) => row.summary.appSessionId === id);
   assert.equal(before?.summary.modelId, undefined);
 
   writeFileSync(
     join(home, '.factory', 'sessions', `${id}.settings.json`),
-    JSON.stringify({ modelId: 'memo-test-model' }),
+    JSON.stringify({ modelId: 'scan-test-model' }),
   );
   const after = loadHistoricalSessions().find((row) => row.summary.appSessionId === id);
-  assert.equal(after?.summary.modelId, 'memo-test-model');
+  assert.equal(after?.summary.modelId, 'scan-test-model');
 });
 
-test('a session file created between lists appears, and a deleted one disappears', () => {
+test('a session file created between scans appears, and a deleted one disappears', () => {
   seq += 1;
-  const id = `memo-create-${seq}`;
+  const id = `scan-create-${seq}`;
   writeSession(id, `created late ${seq}`);
   assert.ok(titles().includes(`created late ${seq}`));
 
