@@ -105,9 +105,15 @@ export class FakeHistoryIndex implements SessionHistoryDependencies {
   fullReconcileCalls = 0;
   readonly targetedReconcileCalls: { providerSessionId: string; path: string }[][] = [];
   sessionFileCacheSize = 0;
+  // When set, the next full reconcile throws it once, so tests can exercise
+  // the boot gate's resilience to a failed reconcile.
+  failNextReconcile: Error | null = null;
 
   reconcileSessionFiles(): number {
     this.fullReconcileCalls += 1;
+    const failure = this.failNextReconcile;
+    this.failNextReconcile = null;
+    if (failure) throw failure;
     return 0;
   }
 

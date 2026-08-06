@@ -167,3 +167,33 @@ test('sessions.list commands queued during the boot reconcile emit only the late
     await ctx.dispose();
   }
 });
+
+test('a boot reconcile failure still serves the first list and never starves later ones', async () => {
+  const ctx = createSessionManagerTestContext();
+  try {
+    ctx.history.sessionFileCacheSize = 2;
+    ctx.history.failNextReconcile = new Error('sqlite busy');
+    await ctx.handle({ type: 'sessions.list' });
+    assert.equal(
+      ctx.events.filter((event) => event.type === 'sessions.list').length,
+      0,
+      'the list is held while the boot reconcile is pending',
+    );
+    await ctx.waitForIdle();
+    assert.equal(
+      ctx.events.filter((event) => event.type === 'sessions.list').length,
+      1,
+      'the first list is served even though the boot reconcile failed',
+    );
+
+    await ctx.handle({ type: 'sessions.list' });
+    assert.equal(
+      ctx.events.filter((event) => event.type === 'sessions.list').length,
+      2,
+      'lists after a failed boot reconcile are served immediately, not starved',
+    );
+    assert.equal(ctx.history.fullReconcileCalls, 1);
+  } finally {
+    await ctx.dispose();
+  }
+});
