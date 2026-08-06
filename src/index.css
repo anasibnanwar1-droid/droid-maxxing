@@ -191,6 +191,14 @@
     animation: dot-pulse 0.9s ease-in-out infinite;
   }
 
+  /* Infinite status indicators must respect reduced-motion preferences. */
+  @media (prefers-reduced-motion: reduce) {
+    .caret-blink,
+    .dot-pulse {
+      animation: none;
+    }
+  }
+
   /* DROIDEX brand pixel font (Silkscreen, loaded from Google Fonts in
      index.html). Falls back to the mono stack when offline. */
   .font-pixel {

@@ -26,7 +26,12 @@ export function dateMs(value?: string): number {
 
 export function safeStringify(value: unknown): string {
   try {
-    return JSON.stringify(value, null, 2);
+    // JSON.stringify returns undefined (not a string) for undefined, bare
+    // functions, and symbols; honoring the string contract here keeps a
+    // missing tool-result body from crashing the line parse and dropping the
+    // whole row's events.
+    const text: unknown = JSON.stringify(value, null, 2);
+    return typeof text === 'string' ? text : '';
   } catch {
     return String(value);
   }

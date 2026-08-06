@@ -235,6 +235,12 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
   // scrolled up to read, leave their position alone while the model responds.
   const stickRef = useRef(true);
   const [scrollSnapshots] = useState(() => new Map<string, { top: number; pinned: boolean }>());
+  // Scroll snapshots are owned by onScroll, which fires for every user scroll
+  // and every programmatic auto-scroll, so each conversation's position is
+  // already current when we switch away. A cleanup here would read scrollTop
+  // AFTER the keyed transcript swap (layout-effect cleanups run post-mutation),
+  // capturing the incoming conversation's position and corrupting the outgoing
+  // snapshot — so there is no cleanup here.
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el || !visibleConversationKey) return;
@@ -242,13 +248,6 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
     prependAnchor.current = null;
     stickRef.current = snapshot?.pinned ?? true;
     el.scrollTop = snapshot?.top ?? el.scrollHeight;
-
-    return () => {
-      scrollSnapshots.set(visibleConversationKey, {
-        top: el.scrollTop,
-        pinned: stickRef.current,
-      });
-    };
   }, [scrollSnapshots, visibleConversationKey]);
 
   const onScroll = () => {

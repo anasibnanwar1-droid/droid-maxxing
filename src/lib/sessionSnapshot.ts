@@ -9,7 +9,7 @@
 // payload degrades to no snapshot instead of breaking the store. The key is
 // versioned; bump it when the stored shape changes.
 
-import type { SessionSummary, TranscriptEvent } from '../types/bridge';
+import type { BridgeFeature, SessionSummary, TranscriptEvent } from '../types/bridge';
 
 const SESSION_SNAPSHOT_STORAGE_KEY = 'droid-session-snapshot-v1';
 export const MAX_SNAPSHOT_SESSIONS = 200;
@@ -44,6 +44,39 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
 
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string');
+}
+
+const FEATURE_STATUSES = new Set<string>(['pending', 'in_progress', 'completed', 'cancelled']);
+
+// A BridgeFeature carries the mission contract the sidebar and feature panel
+// render from; require the identity and contract fields and drop anything that
+// does not match the exact shape so a corrupt or injected entry cannot survive
+// hydration and render as a half-formed feature.
+function sanitizeFeature(value: unknown): BridgeFeature | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const feature = value as Partial<BridgeFeature>;
+  if (typeof feature.id !== 'string' || feature.id.length === 0) return null;
+  if (typeof feature.description !== 'string') return null;
+  if (typeof feature.status !== 'string' || !FEATURE_STATUSES.has(feature.status)) return null;
+  if (typeof feature.skillName !== 'string') return null;
+  if (!isStringArray(feature.preconditions)) return null;
+  if (!isStringArray(feature.expectedBehavior)) return null;
+  if (!isStringArray(feature.verificationSteps)) return null;
+  return {
+    id: feature.id,
+    description: feature.description,
+    status: feature.status,
+    skillName: feature.skillName,
+    preconditions: feature.preconditions,
+    expectedBehavior: feature.expectedBehavior,
+    verificationSteps: feature.verificationSteps,
+    fulfills: isStringArray(feature.fulfills) ? feature.fulfills : undefined,
+    milestone: typeof feature.milestone === 'string' ? feature.milestone : undefined,
+  };
+}
+
 // The sidebar rows and unread markers render from these fields; require the
 // identity/display ones and pass the rest through once they check out.
 function sanitizeSummary(value: unknown): SessionSummary | null {
@@ -57,7 +90,11 @@ function sanitizeSummary(value: unknown): SessionSummary | null {
   if (!isFiniteNumber(summary.createdAt) || !isFiniteNumber(summary.updatedAt)) return null;
   return {
     ...summary,
-    features: Array.isArray(summary.features) ? summary.features : [],
+    features: Array.isArray(summary.features)
+      ? summary.features
+          .map(sanitizeFeature)
+          .filter((feature): feature is BridgeFeature => feature !== null)
+      : [],
     tokensIn: isFiniteNumber(summary.tokensIn) ? summary.tokensIn : 0,
     tokensOut: isFiniteNumber(summary.tokensOut) ? summary.tokensOut : 0,
     contextTokens: isFiniteNumber(summary.contextTokens) ? summary.contextTokens : 0,
@@ -86,21 +123,35 @@ function sanitizeStoredTranscript(
   const byId: Partial<Record<string, SessionSummary>> = sessions;
   if (!byId[transcript.appSessionId]) return undefined;
   if (!Array.isArray(transcript.events)) return undefined;
-  const events = transcript.events
-    .map(sanitizeTranscriptEvent)
-    .filter((event): event is TranscriptEvent => event !== null)
-    .slice(-MAX_SNAPSHOT_TRANSCRIPT_EVENTS);
+  // Events must belong to the transcript's own session: a crafted payload
+  // that mixes in events from another session must not leak through.
+  const events = boundTranscriptEvents(
+    transcript.events
+      .map(sanitizeTranscriptEvent)
+      .filter((event): event is TranscriptEvent => event !== null)
+      .filter((event) => event.appSessionId === transcript.appSessionId),
+  );
   return events.length > 0 ? { appSessionId: transcript.appSessionId, events } : undefined;
 }
 
 // Keeps the newest events within both the count and serialized-size budgets,
 // dropping the oldest half whenever the payload is too large.
-function boundTranscriptEvents(events: TranscriptEvent[]): TranscriptEvent[] {
-  let kept = events.slice(-MAX_SNAPSHOT_TRANSCRIPT_EVENTS);
-  while (kept.length > 1 && JSON.stringify(kept).length > MAX_SNAPSHOT_TRANSCRIPT_BYTES) {
-    kept = kept.slice(Math.ceil(kept.length / 2));
+function fitByteBudget<T>(items: T[], maxBytes: number, keep: 'start' | 'end'): T[] {
+  let kept = items;
+  while (kept.length > 0 && JSON.stringify(kept).length > maxBytes) {
+    if (kept.length === 1) return [];
+    const midpoint = Math.ceil(kept.length / 2);
+    kept = keep === 'start' ? kept.slice(0, midpoint) : kept.slice(midpoint);
   }
   return kept;
+}
+
+function boundTranscriptEvents(events: TranscriptEvent[]): TranscriptEvent[] {
+  return fitByteBudget(
+    events.slice(-MAX_SNAPSHOT_TRANSCRIPT_EVENTS),
+    MAX_SNAPSHOT_TRANSCRIPT_BYTES,
+    'end',
+  );
 }
 
 export function loadSessionSnapshot(): SessionSnapshot | undefined {
@@ -111,16 +162,23 @@ export function loadSessionSnapshot(): SessionSnapshot | undefined {
     if (typeof parsed !== 'object' || parsed === null) return undefined;
     const stored = parsed as { sessions?: unknown; transcript?: unknown };
     if (!Array.isArray(stored.sessions)) return undefined;
-    const sessions: Record<string, SessionSummary> = {};
-    const byId: Partial<Record<string, SessionSummary>> = sessions;
-    const sessionOrder: string[] = [];
+    const seen = new Set<string>();
+    let list: SessionSummary[] = [];
     for (const value of stored.sessions.slice(0, MAX_SNAPSHOT_SESSIONS)) {
       const summary = sanitizeSummary(value);
-      if (!summary || byId[summary.appSessionId] !== undefined) continue;
-      sessions[summary.appSessionId] = summary;
-      sessionOrder.push(summary.appSessionId);
+      if (!summary || seen.has(summary.appSessionId)) continue;
+      seen.add(summary.appSessionId);
+      list.push(summary);
     }
-    if (sessionOrder.length === 0) return undefined;
+    // Bound the deserialized payload: a crafted or corrupt blob with a single
+    // oversized summary must not bypass the byte budget on hydration.
+    list = fitByteBudget(list, MAX_SNAPSHOT_SUMMARY_BYTES, 'start');
+    if (list.length === 0) return undefined;
+    const sessions: Record<string, SessionSummary> = {};
+    const sessionOrder = list.map((summary) => {
+      sessions[summary.appSessionId] = summary;
+      return summary.appSessionId;
+    });
     const snapshot: SessionSnapshot = { sessions, sessionOrder };
     const transcript = sanitizeStoredTranscript(stored.transcript, sessions);
     if (transcript) snapshot.transcript = transcript;
@@ -144,9 +202,7 @@ export function saveSessionSnapshot(
     }
     // sessionOrder is newest-first, so keeping the front of the list keeps
     // the most recent sessions when a pathological payload exceeds budget.
-    while (list.length > 1 && JSON.stringify(list).length > MAX_SNAPSHOT_SUMMARY_BYTES) {
-      list = list.slice(0, Math.ceil(list.length / 2));
-    }
+    list = fitByteBudget(list, MAX_SNAPSHOT_SUMMARY_BYTES, 'start');
     const payload: {
       sessions: SessionSummary[];
       transcript?: { appSessionId: string; events: TranscriptEvent[] };

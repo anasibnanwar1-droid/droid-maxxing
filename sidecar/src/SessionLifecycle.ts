@@ -92,7 +92,7 @@ export interface SessionLifecycleDependencies {
   emit: (event: ServerEvent) => void;
   emitError: (error: LifecycleError) => void;
   emitStatus: (appSessionId: string, text: string) => void;
-  emitSessionList: () => void;
+  emitSessionList: (closedProviderSessionId: string) => void;
 }
 export class SessionLifecycle {
   private readonly deferredCloses = new WeakMap<LiveSession, DeferredClose>();
@@ -437,6 +437,7 @@ export class SessionLifecycle {
 
   private async closeSessionResources(liveSession: LiveSession): Promise<void> {
     const d = this.dependencies;
+    const closedProviderSessionId = liveSession.session.sessionId;
     let firstError: unknown;
     const run = async (action: () => void | Promise<void>): Promise<void> => {
       try {
@@ -486,7 +487,7 @@ export class SessionLifecycle {
       });
     }
     await run(() => {
-      d.emitSessionList();
+      d.emitSessionList(closedProviderSessionId);
     });
     if (firstError !== undefined) throw errorFromUnknown(firstError);
   }

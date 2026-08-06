@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import {
   buildFeed,
   childSessionLineIsRunning,
@@ -15,6 +17,7 @@ import {
   MessageFeed,
   StreamingCaret,
   WebFetchBody,
+  appendedFeedItemKeys,
   type FeedItem,
 } from './chat';
 import { hasTodoPayload, parseTruncatedTail } from '../lib/tools';
@@ -1007,5 +1010,69 @@ test('StreamingCaret renders a plain span carrying the caret-blink CSS class', (
   assert.ok(
     html.includes('background:var(--droid-accent)'),
     'caret should keep the accent background',
+  );
+});
+
+// appendedFeedItemKeys decides which rows get the rise-in entrance animation.
+// It must track item identity (not list index) so paging older history — which
+// prepends already-past messages ahead of the visible ones — does not re-animate
+// existing rows or treat the prepend like a fresh append.
+test('appendedFeedItemKeys animates only genuinely appended tail items', () => {
+  const identity = 'm:primary';
+  const keys = (letters: string[]) => letters.map((key) => ({ key }));
+
+  // Genuinely appended items (new keys at the tail) animate.
+  const previous = { identity, keys: new Set(['a', 'b', 'c']) };
+  assert.deepEqual(
+    [...appendedFeedItemKeys(keys(['a', 'b', 'c', 'd', 'e']), previous, identity)],
+    ['e', 'd'],
+  );
+
+  // Paging older history prepends new keys ahead of the existing ones; nothing
+  // re-animates (neither the prepended items nor the already-visible rows).
+  assert.deepEqual(
+    [...appendedFeedItemKeys(keys(['x', 'y', 'a', 'b', 'c']), previous, identity)],
+    [],
+  );
+
+  // Re-rendering with the same keys (e.g. a token streaming into an existing
+  // message) animates nothing.
+  assert.deepEqual([...appendedFeedItemKeys(keys(['a', 'b', 'c']), previous, identity)], []);
+
+  // No previous render (first time a feed is shown) animates nothing.
+  assert.deepEqual([...appendedFeedItemKeys(keys(['a', 'b']), null, identity)], []);
+
+  // A different feed identity (switched sessions/child) animates nothing.
+  assert.deepEqual(
+    [
+      ...appendedFeedItemKeys(
+        keys(['a', 'b', 'd']),
+        { identity: 'other', keys: new Set(['a']) },
+        identity,
+      ),
+    ],
+    [],
+  );
+
+  // A newly appended item preceded by a fresh prepend animates only the tail.
+  assert.deepEqual(
+    [...appendedFeedItemKeys(keys(['x', 'a', 'b', 'c', 'd']), previous, identity)],
+    ['d'],
+  );
+});
+
+// The infinite status indicators (caret blink, typing dots) must honor
+// prefers-reduced-motion so the UI stays usable for motion-sensitive users.
+test('caret-blink and dot-pulse are neutralized under prefers-reduced-motion', () => {
+  const cssPath = fileURLToPath(new URL('../index.css', import.meta.url));
+  const css = readFileSync(cssPath, 'utf8');
+  const reducedMotionBlocks =
+    css.match(/@media\s*\(\s*prefers-reduced-motion\s*:\s*reduce\s*\)\s*\{[^}]*\}/g) ?? [];
+  const coversBoth = reducedMotionBlocks.some(
+    (block) => /\.caret-blink\b/.test(block) && /\.dot-pulse\b/.test(block),
+  );
+  assert.ok(
+    coversBoth,
+    'a prefers-reduced-motion block must disable both .caret-blink and .dot-pulse',
   );
 });

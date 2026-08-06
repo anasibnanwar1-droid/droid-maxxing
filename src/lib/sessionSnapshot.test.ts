@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import type { SessionSummary, TranscriptEvent } from '../types/bridge';
+import type { BridgeFeature, SessionSummary, TranscriptEvent } from '../types/bridge';
 import { withLocalStorageMap } from '../test/localStorage';
 import {
   createSnapshotScheduler,
@@ -13,6 +13,19 @@ import {
 } from './sessionSnapshot';
 
 const SNAPSHOT_KEY = 'droid-session-snapshot-v1';
+
+function feature(id: string, overrides: Partial<BridgeFeature> = {}): BridgeFeature {
+  return {
+    id,
+    description: `Feature ${id}`,
+    status: 'pending',
+    skillName: 'skill',
+    preconditions: [],
+    expectedBehavior: [],
+    verificationSteps: [],
+    ...overrides,
+  };
+}
 
 function summary(id: string, updatedAt = 1): SessionSummary {
   return {
@@ -273,4 +286,129 @@ test('storage failures are swallowed on both read and write', () => {
     if (previous) Object.defineProperty(globalThis, 'localStorage', previous);
     else delete (globalThis as { localStorage?: Storage }).localStorage;
   }
+});
+
+// ── Finding 1: malformed BridgeFeature entries must not survive hydration ─
+
+test('malformed feature entries are dropped on save+load, valid ones survive', () => {
+  const withFeatures: SessionSummary = {
+    ...summary('s1'),
+    features: [
+      feature('good'),
+      { ...feature('no-id'), id: 9 } as unknown as BridgeFeature,
+      { ...feature('no-desc'), description: undefined } as unknown as BridgeFeature,
+      { ...feature('bad-status'), status: 'unknown' } as unknown as BridgeFeature,
+      { ...feature('no-skill'), skillName: undefined } as unknown as BridgeFeature,
+      {
+        ...feature('bad-preconditions'),
+        preconditions: 'not-an-array',
+      } as unknown as BridgeFeature,
+      {
+        ...feature('bad-verification'),
+        verificationSteps: [1, 2],
+      } as unknown as BridgeFeature,
+      'not-an-object' as unknown as BridgeFeature,
+      null as unknown as BridgeFeature,
+    ],
+  };
+  const snapshot = saveAndLoad([withFeatures]);
+  const features = snapshot?.sessions.s1?.features ?? [];
+  assert.deepEqual(
+    features.map((f) => f.id),
+    ['good'],
+  );
+});
+
+test('optional feature fields are preserved or cleared on load', () => {
+  const withFeatures: SessionSummary = {
+    ...summary('s1'),
+    features: [
+      feature('f1', { fulfills: ['req-1'], milestone: 'M1' }),
+      feature('f2', { fulfills: 'bad' as unknown as string[], milestone: 42 as unknown as string }),
+    ],
+  };
+  const snapshot = saveAndLoad([withFeatures]);
+  const features = snapshot?.sessions.s1?.features ?? [];
+  assert.equal(features.length, 2);
+  assert.deepEqual(features[0]?.fulfills, ['req-1']);
+  assert.equal(features[0]?.milestone, 'M1');
+  assert.equal(features[1]?.fulfills, undefined);
+  assert.equal(features[1]?.milestone, undefined);
+});
+
+// ── Finding 2: transcript events must match transcript.appSessionId ────────
+
+test('transcript events from a different session are dropped on load', () => {
+  withLocalStorageMap(
+    {
+      [SNAPSHOT_KEY]: JSON.stringify({
+        sessions: [summary('s1')],
+        transcript: {
+          appSessionId: 's1',
+          events: [
+            event('belongs', 1),
+            { ...event('foreign'), appSessionId: 's2' },
+            { ...event('also-foreign'), appSessionId: 's3' },
+          ],
+        },
+      }),
+    },
+    () => {
+      const snapshot = loadSessionSnapshot();
+      assert.deepEqual(
+        snapshot?.transcript?.events.map((e) => e.id),
+        ['belongs'],
+      );
+    },
+  );
+});
+
+// ── Finding 3: one oversized transcript event must not bypass the byte cap ─
+
+test('a single oversized transcript event is dropped on save', () => {
+  const huge = event('huge', 1, 'x'.repeat(MAX_SNAPSHOT_TRANSCRIPT_BYTES + 1));
+  const snapshot = saveAndLoad([summary('s1')], { appSessionId: 's1', events: [huge] });
+  assert.equal(snapshot?.transcript, undefined);
+});
+
+test('a single oversized transcript event is dropped on load', () => {
+  withLocalStorageMap(
+    {
+      [SNAPSHOT_KEY]: JSON.stringify({
+        sessions: [summary('s1')],
+        transcript: {
+          appSessionId: 's1',
+          events: [{ ...event('huge', 1), text: 'x'.repeat(MAX_SNAPSHOT_TRANSCRIPT_BYTES + 1) }],
+        },
+      }),
+    },
+    () => {
+      const snapshot = loadSessionSnapshot();
+      assert.equal(snapshot?.transcript, undefined);
+    },
+  );
+});
+
+// ── Finding 4: one oversized session summary must not bypass the byte cap ──
+
+test('a single oversized session summary is dropped on save', () => {
+  const huge: SessionSummary = {
+    ...summary('s1'),
+    title: 'x'.repeat(MAX_SNAPSHOT_SUMMARY_BYTES + 1),
+  };
+  const snapshot = saveAndLoad([huge]);
+  assert.equal(snapshot, undefined);
+});
+
+test('a single oversized session summary is dropped on load', () => {
+  withLocalStorageMap(
+    {
+      [SNAPSHOT_KEY]: JSON.stringify({
+        sessions: [{ ...summary('s1'), title: 'x'.repeat(MAX_SNAPSHOT_SUMMARY_BYTES + 1) }],
+      }),
+    },
+    () => {
+      assert.equal(loadSessionSnapshot(), undefined);
+    },
+  );
 });

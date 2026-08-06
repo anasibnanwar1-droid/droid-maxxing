@@ -1702,7 +1702,11 @@ function baseReducer(state: AppState, action: Action): AppState {
         );
       }
       const order = [
-        ...new Set([...action.sessions.map((m) => m.appSessionId), ...state.sessionOrder]),
+        ...new Set([
+          ...action.sessions.map((m) => m.appSessionId),
+          ...state.sessionOrder,
+          ...Object.keys(state.sessions),
+        ]),
       ]
         .filter((id) => map[id])
         .sort((a, b) => map[b].updatedAt - map[a].updatedAt);

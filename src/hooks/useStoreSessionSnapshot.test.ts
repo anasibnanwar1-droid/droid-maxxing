@@ -66,6 +66,18 @@ test('a session updated before the first SESSION_LIST survives the prune', () =>
   assert.deepEqual(Object.keys(next.sessions).sort(), ['kept', 'live']);
 });
 
+test('a session updated before the first SESSION_LIST appears in the sidebar order', () => {
+  // Regression: SESSION_UPDATED adds the session to the sessions map but not
+  // to sessionOrder. When the first SESSION_LIST reconciles, the order must
+  // still include it so it renders in the sidebar.
+  const updated = reducer(hydratedState(), {
+    type: 'SESSION_UPDATED',
+    session: summary('live', 50),
+  });
+  const next = reducer(updated, { type: 'SESSION_LIST', sessions: [summary('kept', 3)] });
+  assert.deepEqual(next.sessionOrder, ['live', 'kept']);
+});
+
 test('a pruned active session clears the dangling activeAppSessionId', () => {
   const state: AppState = { ...hydratedState(), activeAppSessionId: 'stale' };
   const next = reducer(state, { type: 'SESSION_LIST', sessions: [summary('kept', 3)] });

@@ -8,13 +8,17 @@
  * reported files (or runs a full diff when events are unexplained), so this
  * module holds no session state and can never serve stale rows.
  */
-import { watch, type FSWatcher } from 'node:fs';
+import { mkdirSync, watch, type FSWatcher } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { errMsg } from './sessionHelpers.js';
 
 export interface SessionFileWatcher {
+  // Returns and forgets the last path observed for a live session. The close
+  // path uses this to reconcile one finalized file instead of walking the
+  // whole sessions tree.
+  consumeLiveSessionFile(providerSessionId: string): string | undefined;
   close(): void;
 }
 
@@ -77,6 +81,16 @@ export function startSessionFileWatcher(
 ): SessionFileWatcher | null {
   const root = options.root ?? join(homedir(), '.factory', 'sessions');
   const debounceMs = options.debounceMs ?? 1500;
+  // On a first run (no Droid CLI history yet) the sessions root may not
+  // exist, which makes watch() throw and live republish silently never
+  // starts. The app observes this directory, so ensure it exists; a path
+  // that cannot be created (a parent that is a regular file, a permission
+  // error) still falls through to watch() throwing and a null return.
+  try {
+    mkdirSync(root, { recursive: true });
+  } catch {
+    // Ignore; watch() below surfaces a genuinely unwatchable root as null.
+  }
   // FSEvents reports a change to the watched root itself under the root's own
   // name (or '.'), not as a path inside the tree.
   const rootName = root.split(/[\\/]/).pop() ?? '';
@@ -92,6 +106,7 @@ export function startSessionFileWatcher(
   // session keeps resetting the debounce timer, and an unbounded array would
   // grow for the whole stream.
   let pendingLiveFiles = new Set<string>();
+  const liveSessionFiles = new Map<string, string>();
   let pendingUnknown = new Set<string>();
   let pendingUnexplainable = false;
   let closed = false;
@@ -103,8 +118,12 @@ export function startSessionFileWatcher(
       if (closed) return;
       const target = sessionTargetFromFileName(filename);
       if (target) {
-        if (options.isLiveSession?.(target.id)) pendingLiveFiles.add(target.sessionFile);
-        else pendingPaths.set(target.id, target.sessionFile);
+        if (options.isLiveSession?.(target.id)) {
+          pendingLiveFiles.add(target.sessionFile);
+          liveSessionFiles.set(target.id, join(root, target.sessionFile));
+        } else {
+          pendingPaths.set(target.id, target.sessionFile);
+        }
       } else if (filename) {
         pendingUnknown.add(filename);
       } else {
@@ -159,10 +178,16 @@ export function startSessionFileWatcher(
   });
 
   return {
+    consumeLiveSessionFile(providerSessionId) {
+      const path = liveSessionFiles.get(providerSessionId);
+      liveSessionFiles.delete(providerSessionId);
+      return path;
+    },
     close() {
       closed = true;
       if (timer) clearTimeout(timer);
       timer = undefined;
+      liveSessionFiles.clear();
       watcher.close();
     },
   };

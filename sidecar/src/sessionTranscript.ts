@@ -6,9 +6,18 @@
 // parses a few hundred more lines per page instead of re-reading the whole
 // file, and the per-line parse memo makes repeat pages and reopens free.
 import { closeSync, openSync, readFileSync, readSync, statSync } from 'node:fs';
-import { dateMs, numberValue, objectValue, safeStringify, stringValue } from './values.js';
-import { designPromptDisplayFromText } from './browser/designPromptDisplay.js';
+import { dateMs, numberValue, objectValue, stringValue } from './values.js';
+import {
+  event,
+  parseSessionLineEvents,
+  type StoredMessageLine,
+  type StoredSessionStart,
+} from './sessionTranscriptParser.js';
 import type { SessionRole, TranscriptEvent } from './protocol.js';
+
+// Stored-row shapes are owned by the parser module but re-exported here so
+// the history path's import stays stable.
+export type { StoredMessageLine, StoredSessionStart } from './sessionTranscriptParser.js';
 
 // Oversized session files are tail-windowed to the newest bytes; the dropped
 // head is surfaced as a status event when paging reaches the top.
@@ -16,38 +25,12 @@ export const MAX_SESSION_BYTES = 5_000_000;
 // The session_start / leading compaction_state records live at the head of the
 // file; readers cap that head read instead of scanning the whole file.
 export const SESSION_START_BYTES = 256_000;
-const MAX_TEXT_CHARS = 12_000;
 // seq band per line: a line yields one event per content block, so (line,
 // event-in-line) maps to a unique, stable, monotonically increasing seq
 // within a segment. 256 far exceeds any real message's block count; a freak
 // line with more blocks clamps onto the last band slot (order within that
 // line is then kept by array order, not seq).
 const LINE_EVENT_STRIDE = 256;
-
-export interface StoredMessageLine {
-  type?: string;
-  id?: string;
-  timestamp?: string;
-  message?: {
-    role?: string;
-    content?: unknown[];
-    visibility?: unknown;
-  };
-}
-
-export interface StoredSessionStart {
-  type?: string;
-  id?: string;
-  cwd?: string;
-  title?: string;
-  sessionTitle?: string;
-  decompSessionType?: string;
-  decompMissionId?: string;
-  // Present when this session was spawned by another session's tool call
-  // (Factory Task tool children). Such sessions are not standalone conversations.
-  callingSessionId?: string;
-  callingToolUseId?: string;
-}
 
 interface CompactionState {
   removedCount?: number;
@@ -93,7 +76,7 @@ function readCompactionState(path: string): CompactionState | null {
   const size = statSync(path).size;
   const bytes = Math.min(size, SESSION_START_BYTES);
   const fd = openSync(path, 'r');
-  let rows: { type?: string; timestamp?: string; removedCount?: unknown }[];
+  let rows: unknown[];
   try {
     const buffer = Buffer.alloc(bytes);
     readSync(fd, buffer, 0, bytes, 0);
@@ -102,9 +85,17 @@ function readCompactionState(path: string): CompactionState | null {
     closeSync(fd);
   }
   for (const row of rows) {
-    if (row.type === 'session_start') continue;
-    if (row.type === 'compaction_state') {
-      return { removedCount: numberValue(row.removedCount), ts: dateMs(row.timestamp) || 0 };
+    // Tolerate syntactically valid non-object JSONL rows (null, numbers,
+    // booleans, arrays): they are noise, not a leading record, so a stray
+    // literal must not crash the head read by dereferencing null.
+    const obj = objectValue(row);
+    if (!obj) continue;
+    if (obj.type === 'session_start') continue;
+    if (obj.type === 'compaction_state') {
+      return {
+        removedCount: numberValue(obj.removedCount),
+        ts: dateMs(stringValue(obj.timestamp)) || 0,
+      };
     }
     return null;
   }
@@ -123,139 +114,6 @@ function parseJsonLines<T>(raw: string): T[] {
     }
   });
   return rows;
-}
-
-// The first defined, non-empty string: what the `a || b || ''` chains in the
-// original eager parser computed, kept exact (empty strings fall through).
-function nonEmpty(...values: (string | undefined)[]): string {
-  for (const value of values) if (value) return value;
-  return '';
-}
-
-// The fixed context every event parsed from one stored line shares.
-interface EventBase {
-  appSessionId: string;
-  sourceProviderSessionId: string;
-  role: SessionRole;
-  messageId: string;
-  ts: number;
-}
-
-function assistantBlockEvent(
-  base: EventBase,
-  index: number,
-  block: Record<string, unknown>,
-): TranscriptEvent | null {
-  const type = stringValue(block.type);
-  if (type === 'thinking') {
-    const text = trimText(nonEmpty(stringValue(block.thinking), stringValue(block.text)));
-    return text ? event(base, index, 'thinking', { text }) : null;
-  }
-  if (type === 'text') {
-    const text = trimText(nonEmpty(stringValue(block.text)));
-    return text ? event(base, index, 'text', { text }) : null;
-  }
-  if (type === 'tool_use') {
-    return event(base, index, 'tool_call', {
-      toolName: nonEmpty(stringValue(block.name), 'tool'),
-      toolArgs: block.input,
-      // Carry the tool_use id so persisted child-session links resolve exactly
-      // (duplicate-label spawns would otherwise fall back to label match).
-      toolUseId: stringValue(block.id),
-    });
-  }
-  return null;
-}
-
-function nonAssistantBlockEvent(
-  base: EventBase,
-  index: number,
-  block: Record<string, unknown>,
-  messageRole: string | undefined,
-): TranscriptEvent | null {
-  const type = stringValue(block.type);
-  if (type === 'tool_result') {
-    return event(base, index, 'tool_result', {
-      toolName: stringValue(block.name),
-      text: trimText(stringifyToolResult(block.content)),
-      isError: Boolean(block.is_error ?? block.isError),
-      // Carry the originating call's id so the renderer can correlate a
-      // result to its tool_call exactly (result blocks have no name and
-      // may not be adjacent to their call after replay/batching).
-      toolUseId: stringValue(block.tool_use_id ?? block.toolUseId) ?? undefined,
-    });
-  }
-  if (messageRole === 'user' && base.role === 'primary' && type === 'text') {
-    const rawText = trimText(nonEmpty(stringValue(block.text)));
-    const display = designPromptDisplayFromText(rawText);
-    const text = display?.text ?? rawText;
-    if (!text || isSystemText(text)) return null;
-    return event({ ...base, sourceProviderSessionId: 'user', role: 'primary' }, index, 'text', {
-      text,
-      author: 'user',
-      browserRefs: display?.browserRefs,
-    });
-  }
-  return null;
-}
-
-// Map one stored JSONL row to its transcript events. Each line converts
-// independently (no cross-line state), which is what makes backward,
-// parse-on-demand windowing safe.
-export function parseSessionLineEvents(
-  appSessionId: string,
-  providerSessionId: string,
-  role: SessionRole,
-  line: StoredMessageLine | StoredSessionStart,
-): TranscriptEvent[] {
-  // In-place daemon auto-compaction appends a compaction_state marker to the
-  // SAME session file, so a mid-file record marks a summarize-away boundary
-  // that must replay as a divider (leading records are handled by the
-  // segment's head read, which the reader dedupes against).
-  if (line.type === 'compaction_state') {
-    const raw = line as Record<string, unknown>;
-    const ts = dateMs(stringValue(raw.timestamp)) || 0;
-    return [
-      event(
-        {
-          appSessionId,
-          sourceProviderSessionId: providerSessionId,
-          role,
-          messageId: nonEmpty(line.id, `compaction-${String(ts)}`),
-          ts,
-        },
-        0,
-        'compaction',
-        { removedCount: numberValue(raw.removedCount) },
-      ),
-    ];
-  }
-  if (line.type !== 'message' || !('message' in line)) return [];
-  const message = line.message;
-  // Internal orchestration context is model-visible, not a user conversation turn.
-  if (message?.visibility === 'llm_only') return [];
-  const content = Array.isArray(message?.content) ? message.content : [];
-  const ts = dateMs(line.timestamp) || Date.now();
-  const base: EventBase = {
-    appSessionId,
-    sourceProviderSessionId: providerSessionId,
-    role,
-    messageId: nonEmpty(line.id, `${providerSessionId}-${String(ts)}`),
-    ts,
-  };
-  const messageRole = message?.role;
-
-  const events: TranscriptEvent[] = [];
-  content.forEach((item, index) => {
-    const block = objectValue(item);
-    if (!block) return;
-    const parsed =
-      messageRole === 'assistant'
-        ? assistantBlockEvent(base, index, block)
-        : nonAssistantBlockEvent(base, index, block, messageRole);
-    if (parsed) events.push(parsed);
-  });
-  return events;
 }
 
 // Full eager parse of one session file, including the oversized-trim status
@@ -483,48 +341,4 @@ function oversizedStatusEvent(
       text: `Loaded latest ${String(Math.round(MAX_SESSION_BYTES / 1_000_000))} MB of this oversized session for UI performance.`,
     },
   );
-}
-
-function event(
-  base: EventBase,
-  index: number,
-  kind: TranscriptEvent['kind'],
-  extra: Partial<TranscriptEvent>,
-): TranscriptEvent {
-  return {
-    id: `${base.sourceProviderSessionId}:${base.messageId}:${String(index)}:${kind}`,
-    appSessionId: base.appSessionId,
-    sourceSessionId:
-      base.role === 'primary' && base.sourceProviderSessionId !== 'user'
-        ? 'primary'
-        : base.sourceProviderSessionId,
-    role: base.role,
-    ts: base.ts,
-    kind,
-    ...extra,
-  };
-}
-
-function stringifyToolResult(value: unknown): string {
-  if (typeof value === 'string') return value;
-  if (Array.isArray(value)) {
-    return value
-      .map((item) => {
-        const block = objectValue(item);
-        return nonEmpty(stringValue(block?.text), safeStringify(item));
-      })
-      .filter(Boolean)
-      .join('\n');
-  }
-  return safeStringify(value);
-}
-
-function trimText(text: string): string {
-  if (text.length <= MAX_TEXT_CHARS) return text;
-  return `${text.slice(0, MAX_TEXT_CHARS)}\n\n[truncated ${String(text.length - MAX_TEXT_CHARS)} chars]`;
-}
-
-function isSystemText(text: string): boolean {
-  const trimmed = text.trimStart();
-  return trimmed.startsWith('<system-reminder>') || trimmed.startsWith('IMPORTANT:');
 }

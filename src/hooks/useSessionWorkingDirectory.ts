@@ -15,6 +15,31 @@ interface WorktreeSnapshot {
   cwd: string;
   revision: string;
   worktrees: GitWorktree[];
+  discoveredAt: number;
+}
+
+const EMPTY_DISCOVERY_RETRY_MS = 5_000;
+
+// A worktree discovery is only "settled" once it returned at least one
+// worktree. getGitWorktrees resolves to [] both for a genuine empty repo and
+// for a transient Git/IPC failure (sidecar IPC not booted yet, a crashed git
+// call), so empty results are retried after a short cooldown. This avoids
+// spawning Git on every tool result in a genuine non-repository while still
+// letting a transient first probe recover on a later revision or visibility
+// change.
+export function isWorktreeDiscoveryStable(
+  snapshot: WorktreeSnapshot | null,
+  sessionKey: string,
+  cwd: string,
+  revision: string,
+  now = Date.now(),
+): boolean {
+  if (!snapshot) return false;
+  if (snapshot.sessionKey !== sessionKey || snapshot.cwd !== cwd) return false;
+  if (snapshot.worktrees.length === 0) {
+    return now - snapshot.discoveredAt < EMPTY_DISCOVERY_RETRY_MS;
+  }
+  return snapshot.revision === revision;
 }
 
 export function useSessionWorkingDirectory(
@@ -38,6 +63,9 @@ export function useSessionWorkingDirectory(
     snapshot.cwd === discoveryCwd &&
     snapshot.revision === revision;
   const worktrees = hasSnapshot ? snapshot.worktrees : [];
+  // Empty discoveries block re-probing only during their cooldown; after it
+  // expires, a visibility or transcript revision change retries the probe.
+  const discoveryStable = isWorktreeDiscoveryStable(snapshot, sessionKey, discoveryCwd, revision);
 
   const inferredDirectory = useMemo(
     () => sessionWorkingDirectoryForSource(sessionCwd, transcript, worktrees, sourceSessionId),
@@ -56,7 +84,7 @@ export function useSessionWorkingDirectory(
   );
 
   useEffect(() => {
-    if (!visible || !sessionKey || !discoveryCwd || hasSnapshot) return;
+    if (!visible || !sessionKey || !discoveryCwd || discoveryStable) return;
     let cancelled = false;
     void getGitWorktrees(discoveryCwd).then((nextWorktrees) => {
       if (cancelled) return;
@@ -65,12 +93,13 @@ export function useSessionWorkingDirectory(
         cwd: discoveryCwd,
         revision,
         worktrees: nextWorktrees,
+        discoveredAt: Date.now(),
       });
     });
     return () => {
       cancelled = true;
     };
-  }, [discoveryCwd, hasSnapshot, revision, sessionKey, visible]);
+  }, [discoveryCwd, discoveryStable, revision, sessionKey, visible]);
 
   useEffect(() => {
     if (discoveryTarget.sessionKey !== sessionKey || discoveryTarget.cwd !== workingDirectory) {

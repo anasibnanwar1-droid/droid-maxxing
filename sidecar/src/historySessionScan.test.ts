@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -76,4 +76,25 @@ test('a session file created between scans appears, and a deleted one disappears
 
   unlinkSync(join(home, '.factory', 'sessions', `${id}.jsonl`));
   assert.ok(!titles().includes(`created late ${seq}`));
+});
+
+test('an unreadable subdirectory is skipped without aborting the scan', () => {
+  // chmod is ineffective for root (CI containers), where a 000 dir is still
+  // readable; skip there so the test stays deterministic everywhere else.
+  if (process.getuid?.() === 0) return;
+  seq += 1;
+  const good = `scan-resilient-${seq}`;
+  writeSession(good, `resilient ${seq}`);
+  const locked = join(home, '.factory', 'sessions', 'locked-dir');
+  mkdirSync(locked, { recursive: true });
+  chmodSync(locked, 0o000);
+  try {
+    // A parallel run removing or locking a sessions subtree must not abort
+    // the reconcile scan; the readable sibling session is still enumerated.
+    const found = titles();
+    assert.ok(found.includes(`resilient ${seq}`), 'the scan completes past the locked subtree');
+  } finally {
+    chmodSync(locked, 0o755);
+    rmSync(locked, { recursive: true, force: true });
+  }
 });

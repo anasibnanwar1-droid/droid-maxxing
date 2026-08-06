@@ -349,7 +349,7 @@ test('a file that breaks mid-reconcile is skipped without aborting the diff', ()
     ]);
     const cache = new SessionFileCache(
       db,
-      () => onDisk,
+      () => ({ files: onDisk, isComplete: true }),
       (providerSessionId, file) => {
         // The bad file vanished between the scan and the read.
         if (providerSessionId === 'bad-session') throw new Error('ENOENT');
@@ -362,6 +362,138 @@ test('a file that breaks mid-reconcile is skipped without aborting the diff', ()
       cache.summaries().map((summary) => summary.appSessionId),
       ['good-session'],
     );
+  } finally {
+    db.close();
+  }
+});
+
+test('an incomplete tree scan does not delete rows from unreadable subtrees', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    const stat = (path: string): SessionFileStat => ({
+      path,
+      birthtimeMs: 1,
+      mtimeMs: 1,
+      sizeBytes: 10,
+      settingsMtimeMs: null,
+    });
+    const onDisk = new Map<string, SessionFileStat>([
+      ['visible-session', stat('/sessions/visible.jsonl')],
+      ['temporarily-hidden-session', stat('/sessions/hidden/session.jsonl')],
+    ]);
+    let isComplete = true;
+    const cache = new SessionFileCache(
+      db,
+      () => ({ files: onDisk, isComplete }),
+      (providerSessionId, file) => patchFor(providerSessionId, file.path),
+      () => null,
+    );
+    assert.equal(cache.reconcile(), 2);
+
+    onDisk.delete('temporarily-hidden-session');
+    isComplete = false;
+    assert.equal(cache.reconcile(), 0, 'a partial scan only applies files it could observe');
+    assert.deepEqual(
+      new Set(cache.summaries().map((summary) => summary.appSessionId)),
+      new Set(['visible-session', 'temporarily-hidden-session']),
+      'an unreadable subtree does not look like an authoritative deletion',
+    );
+
+    isComplete = true;
+    assert.equal(cache.reconcile(), 1, 'a later complete scan removes the absent file');
+    assert.deepEqual(
+      cache.summaries().map((summary) => summary.appSessionId),
+      ['visible-session'],
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test('a SQLite write failure leaves the in-memory cache unchanged', () => {
+  // A failure-injecting database double: every prepared statement is created
+  // normally, but the upsert's run() throws, simulating a busy/closed handle
+  // mid-reconcile. The cache must mirror the database, so the row the write
+  // never stored must not appear in the in-memory cache or its summaries.
+  const throwingStatement = {
+    all: () => [] as unknown[],
+    run: () => {
+      throw new Error('sqlite busy');
+    },
+  };
+  const db = {
+    exec: () => {},
+    prepare: (sql: string) =>
+      sql.includes('PRAGMA')
+        ? {
+            all: () => [
+              { name: 'provider_session_id' },
+              { name: 'path' },
+              { name: 'birthtime_ms' },
+              { name: 'mtime_ms' },
+              { name: 'size_bytes' },
+              { name: 'settings_mtime_ms' },
+              { name: 'summary_json' },
+            ],
+            run: () => {},
+          }
+        : throwingStatement,
+  } as unknown as DatabaseSync;
+  const stat = (path: string): SessionFileStat => ({
+    path,
+    birthtimeMs: 1,
+    mtimeMs: 1,
+    sizeBytes: 10,
+    settingsMtimeMs: null,
+  });
+  const onDisk = new Map<string, SessionFileStat>([['fail-write', stat('/sessions/fail.jsonl')]]);
+  const cache = new SessionFileCache(
+    db,
+    () => ({ files: onDisk, isComplete: true }),
+    (providerSessionId) => patchFor(providerSessionId, '/sessions/fail.jsonl'),
+    () => null,
+  );
+  assert.equal(cache.reconcile(), 0, 'the write failed so nothing was counted as cached');
+  assert.equal(cache.size, 0, 'the in-memory cache holds nothing the database never stored');
+  assert.deepEqual(cache.summaries(), [], 'summaries stay empty');
+});
+
+test('a SQLite delete failure leaves the in-memory cache unchanged', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    const path = '/sessions/fail-delete.jsonl';
+    const file: SessionFileStat = {
+      path,
+      birthtimeMs: 1,
+      mtimeMs: 1,
+      sizeBytes: 10,
+      settingsMtimeMs: null,
+    };
+    const onDisk = new Map<string, SessionFileStat>([['fail-delete', file]]);
+    const cache = new SessionFileCache(
+      db,
+      () => ({ files: onDisk, isComplete: true }),
+      (providerSessionId) => patchFor(providerSessionId, path),
+      (candidate) => (candidate === path ? (onDisk.get('fail-delete') ?? null) : null),
+    );
+    assert.equal(cache.reconcile(), 1);
+    onDisk.clear();
+    db.exec(`
+      CREATE TRIGGER fail_session_file_delete
+      BEFORE DELETE ON session_file_cache
+      BEGIN
+        SELECT RAISE(ABORT, 'sqlite busy');
+      END
+    `);
+
+    assert.throws(() => cache.reconcile(), /sqlite busy/);
+    assert.equal(cache.size, 1, 'a failed full-reconcile delete keeps the cached row');
+    assert.throws(
+      () => cache.reconcilePaths([{ providerSessionId: 'fail-delete', path }]),
+      /sqlite busy/,
+    );
+    assert.equal(cache.size, 1, 'a failed targeted delete keeps the cached row');
+    assert.equal(cache.summaries()[0]?.appSessionId, 'fail-delete');
   } finally {
     db.close();
   }
@@ -421,12 +553,12 @@ test('a warm cache holds the first list until the boot reconcile settles', async
       );
 
       // The first list lands once the background reconcile settles, already
-      // reflecting the change made while the app was away.
-      let lists = events.filter(isSessionList);
-      for (let i = 0; i < 10 && lists.length === 0; i++) {
-        await new Promise((resolve) => setImmediate(resolve));
-        lists = events.filter(isSessionList);
-      }
+      // reflecting the change made while the app was away. The boot reconcile
+      // is two setImmediate hops (warm-up + reconcile) whose resolution
+      // schedules the emit as a microtask, so a single macrotask boundary
+      // drains all of them deterministically -- no polling or sleeps.
+      await new Promise((resolve) => setImmediate(resolve));
+      const lists = events.filter(isSessionList);
       assert.equal(lists.length, 1);
       assert.equal(
         lists[0]?.sessions.find((session) => session.appSessionId === 'warm-session')?.title,

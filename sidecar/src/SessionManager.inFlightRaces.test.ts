@@ -69,7 +69,8 @@ test('shutdown admission immediately suppresses a queued primary stream failure'
 
     assert.deepEqual(
       h.events.slice(eventsAtShutdownAdmission).map((event) => event.type),
-      ['session.closed', 'sessions.list'],
+      ['session.closed'],
+      'shutdown closes the session without publishing another sidebar list',
     );
   } finally {
     await h.dispose().catch(() => undefined);

@@ -27,7 +27,11 @@ import type {
 } from './protocol.js';
 import { mapFeature } from './normalize.js';
 import { normalizeCompactionTokenLimit } from './compaction.js';
-import { SessionFileCache, type SessionFileStat } from './sessionFileCache.js';
+import {
+  SessionFileCache,
+  type SessionFileScan,
+  type SessionFileStat,
+} from './sessionFileCache.js';
 import {
   SESSION_START_BYTES,
   parseFullSessionTranscript,
@@ -263,7 +267,7 @@ export class HistoryIndex {
       this.db = db;
       this.sessionFiles = new SessionFileCache(
         db,
-        scanSessionFiles,
+        scanSessionFileTree,
         summarizeSessionFile,
         statSessionFile,
       );
@@ -311,7 +315,16 @@ export class HistoryIndex {
   // new or changed files and dropping deleted ones. Returns the number of
   // cache entries written or removed.
   reconcileSessionFiles(): number {
-    return this.sessionFiles.reconcile();
+    const changed = this.sessionFiles.reconcile();
+    // A full reconcile is the only path that detects bulk/unexplained changes
+    // (a removed sessions subtree, foreign files). When it does, the lifetime
+    // session id -> file memo can hold ids whose files no longer exist, so a
+    // later transcript load would resolve a stale path. Drop the memo so the
+    // next lookup rebuilds it from disk; targeted watcher reconciles do not
+    // need this because sessionIndexFor self-heals on a miss and deleted
+    // sessions are never loaded.
+    if (changed > 0) invalidateSessionIndex();
+    return changed;
   }
 
   // Reconcile exactly the session files a watcher event reported, so a live
@@ -1500,15 +1513,27 @@ function shouldIncludeCwd(
   return workspaceCwds.has(cwd);
 }
 
-function scanSessionFiles(): Map<string, SessionFileStat> {
+function scanSessionFileTree(): SessionFileScan {
   const root = join(homedir(), '.factory', 'sessions');
   const files = new Map<string, SessionFileStat>();
-  if (!existsSync(root)) return files;
+  if (!existsSync(root)) return { files, isComplete: true };
 
   const settingsMtimes = new Map<string, number>();
+  let isComplete = true;
   const walk = (dir: string, depth: number) => {
     if (depth > 4) return;
-    for (const name of readdirSync(dir)) {
+    // A directory can be removed between the root check and this readdir
+    // (a parallel Droid CLI run compacting/deleting sessions). Skip a
+    // vanished subtree instead of letting the throw abort the whole scan,
+    // which would abort the cache reconcile it backs.
+    let names: string[];
+    try {
+      names = readdirSync(dir);
+    } catch {
+      isComplete = false;
+      return;
+    }
+    for (const name of names) {
       const path = join(dir, name);
       let stat;
       try {
@@ -1534,7 +1559,11 @@ function scanSessionFiles(): Map<string, SessionFileStat> {
   for (const [id, file] of files) {
     file.settingsMtimeMs = settingsMtimes.get(id) ?? null;
   }
-  return files;
+  return { files, isComplete };
+}
+
+function scanSessionFiles(): Map<string, SessionFileStat> {
+  return scanSessionFileTree().files;
 }
 
 // Stats one session file and its settings sidecar, or returns null when the

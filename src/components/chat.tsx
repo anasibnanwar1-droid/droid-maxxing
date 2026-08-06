@@ -2321,12 +2321,25 @@ export function childSessionLineIsRunning(activity?: ChildSessionActivity): bool
   return activity?.status === 'running';
 }
 
-function shouldAnimateFeedItem(
-  previous: { identity: string; itemCount: number } | null,
+// Only genuinely appended items (new keys appearing at the tail) animate in.
+// Paging older history prepends already-past messages at the top; those and
+// every previously-rendered item must stay still rather than re-animating as if
+// they were fresh activity. Walking from the tail collects the contiguous run of
+// new keys and stops at the first previously-seen item, so a prepend (new keys
+// ahead of the old ones) animates nothing.
+export function appendedFeedItemKeys(
+  items: readonly { key: string }[],
+  previous: { identity: string; keys: Set<string> } | null,
   identity: string,
-  index: number,
-): boolean {
-  return previous?.identity === identity && index >= previous.itemCount;
+): Set<string> {
+  const appended = new Set<string>();
+  if (previous?.identity !== identity) return appended;
+  for (let i = items.length - 1; i >= 0; i--) {
+    const key = items[i].key;
+    if (previous.keys.has(key)) break;
+    appended.add(key);
+  }
+  return appended;
 }
 
 /* ── The activity feed (list only; parent owns the scroll container) ── */
@@ -2397,14 +2410,18 @@ export function MessageFeed({
     [providedItems, events, pending, rich, changes, specContent],
   );
   const feedIdentity = `${events[0]?.appSessionId ?? ''}:${events[0]?.sourceSessionId ?? ''}`;
-  const renderedFeedRef = useRef<{ identity: string; itemCount: number } | null>(null);
+  const renderedFeedRef = useRef<{ identity: string; keys: Set<string> } | null>(null);
   const previousFeed = renderedFeedRef.current;
   useEffect(() => {
     renderedFeedRef.current = {
       identity: feedIdentity,
-      itemCount: items.length,
+      keys: new Set(items.map((item) => item.key)),
     };
-  }, [feedIdentity, items.length]);
+  }, [feedIdentity, items]);
+  // Track item identity (not list index) so prepended older-history items and
+  // every already-rendered item stay still; only genuinely appended tail items
+  // enter with the rise animation.
+  const animateKeys = appendedFeedItemKeys(items, previousFeed, feedIdentity);
 
   // The copy button appears only on a turn's final model response.
   const finalResponseKeys = useMemo(
@@ -2456,7 +2473,7 @@ export function MessageFeed({
       {showSpecCard && <InlineSpecCard content={specContent ?? ''} onOpenWiki={onOpenSpecWiki} />}
 
       {items.map((item, idx) => {
-        const isNewItem = shouldAnimateFeedItem(previousFeed, feedIdentity, idx);
+        const isNewItem = animateKeys.has(item.key);
         return (
           <motion.div
             key={item.key}

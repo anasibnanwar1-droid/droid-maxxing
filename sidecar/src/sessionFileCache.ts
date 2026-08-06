@@ -22,6 +22,13 @@ export interface SessionFileStat {
   settingsMtimeMs: number | null;
 }
 
+export interface SessionFileScan {
+  files: Map<string, SessionFileStat>;
+  // False when any subtree vanished or became unreadable during the walk.
+  // Upserts are still authoritative, but absences cannot prove deletion.
+  isComplete: boolean;
+}
+
 interface CachedSessionFile extends SessionFileStat {
   providerSessionId: string;
   // Null marks a file that was scanned and classified as worker/validator/
@@ -77,7 +84,7 @@ export class SessionFileCache {
 
   constructor(
     private readonly db: DatabaseSync,
-    private readonly scanFiles: () => Map<string, SessionFileStat>,
+    private readonly scanFiles: () => SessionFileScan,
     private readonly summarizeFile: (
       providerSessionId: string,
       file: SessionFileStat,
@@ -131,15 +138,20 @@ export class SessionFileCache {
   // one bad file cannot abort the whole diff. Returns the number of cache
   // entries written or removed.
   reconcile(): number {
-    const onDisk = this.scanFiles();
+    const { files: onDisk, isComplete } = this.scanFiles();
     let changed = 0;
     const upsert = this.db.prepare(UPSERT_SESSION_FILE);
     const remove = this.db.prepare(REMOVE_SESSION_FILE);
-    for (const id of [...this.files.keys()]) {
-      if (!onDisk.has(id)) {
-        this.files.delete(id);
-        remove.run(id);
-        changed += 1;
+    // A partial scan cannot distinguish a deleted file from a temporarily
+    // unreadable subtree. Preserve unmatched rows until a complete scan can
+    // authoritatively remove them.
+    if (isComplete) {
+      for (const id of [...this.files.keys()]) {
+        if (!onDisk.has(id)) {
+          remove.run(id);
+          this.files.delete(id);
+          changed += 1;
+        }
       }
     }
     for (const [id, file] of onDisk) {
@@ -147,7 +159,9 @@ export class SessionFileCache {
       if (cached && matchesFreshnessKey(cached, file)) continue;
       try {
         const summary = this.summarizeFile(id, file);
-        this.files.set(id, { providerSessionId: id, ...file, summary });
+        // Persist before mutating the in-memory cache so a SQLite write
+        // failure cannot leave the cache holding a row the database never
+        // got: the cache must mirror the database across the process life.
         upsert.run(
           id,
           file.path,
@@ -157,6 +171,7 @@ export class SessionFileCache {
           file.settingsMtimeMs,
           summary === null ? null : JSON.stringify(summary),
         );
+        this.files.set(id, { providerSessionId: id, ...file, summary });
         changed += 1;
       } catch {
         // The file was deleted or rotated between the scan and the read;
@@ -179,8 +194,9 @@ export class SessionFileCache {
     for (const { providerSessionId, path } of changes) {
       const file = this.statFile(path);
       if (!file) {
-        if (this.files.delete(providerSessionId)) {
+        if (this.files.has(providerSessionId)) {
           remove.run(providerSessionId);
+          this.files.delete(providerSessionId);
           changed += 1;
         }
         continue;
@@ -189,7 +205,7 @@ export class SessionFileCache {
       if (cached && matchesFreshnessKey(cached, file)) continue;
       try {
         const summary = this.summarizeFile(providerSessionId, file);
-        this.files.set(providerSessionId, { providerSessionId, ...file, summary });
+        // Persist before mutating the in-memory cache (see reconcile()).
         upsert.run(
           providerSessionId,
           file.path,
@@ -199,6 +215,7 @@ export class SessionFileCache {
           file.settingsMtimeMs,
           summary === null ? null : JSON.stringify(summary),
         );
+        this.files.set(providerSessionId, { providerSessionId, ...file, summary });
         changed += 1;
       } catch {
         // The file was deleted or rotated between the stat and the read;

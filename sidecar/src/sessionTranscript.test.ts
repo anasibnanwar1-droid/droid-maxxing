@@ -205,15 +205,16 @@ test('a leading compaction_state without a timestamp still dedupes to one divide
   assert.equal(dividers[0].removedCount, 7);
 });
 
-test('a leading compaction_state without a timestamp still dedupes to one divider', () => {
-  // Regression: ts=0 compaction events must feed the head-dedupe set — the
-  // old eager parser matched `e.ts === comp.ts`, where 0 === 0 holds, but a
-  // truthiness guard on the reader's set-add would emit the divider twice.
-  const noTimestamp = JSON.stringify({ type: 'compaction_state', id: 'comp-0', removedCount: 7 });
-  const path = writeSession([noTimestamp, assistant('after')]);
+test('a non-object JSONL literal in the head does not crash the reader', () => {
+  // Regression: readCompactionState dereferenced row.type on every parsed
+  // row, so a syntactically valid `null` (or number/boolean/array) literal
+  // between session_start and compaction_state threw and aborted reader
+  // construction. Non-object rows are noise and must be skipped.
+  const path = writeSession(['null', '42', compactionState(9), assistant('after')]);
+  assert.doesNotThrow(() => reader(path));
   const dividers = collectAll(path, 100).filter((e) => e.kind === 'compaction');
   assert.equal(dividers.length, 1);
-  assert.equal(dividers[0].removedCount, 7);
+  assert.equal(dividers[0].removedCount, 9);
 });
 
 test('an oversized file serves the tail first and the trim status + divider only at the top', () => {

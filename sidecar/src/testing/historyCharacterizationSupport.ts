@@ -4,11 +4,13 @@ import path from 'node:path';
 import type * as Protocol from '../protocol.js';
 import type { SessionManagerDependencies } from '../SessionManager.js';
 import {
+  applyCachedSummary,
   loadHistoricalSessions,
   type HistoricalSession,
   type HistoricalSummaryFilter,
   type PersistedChildSession,
 } from '../history.js';
+import { filterSessionListSummaries } from '../sessionListFilter.js';
 import type { RecordedCall } from './fakeFactoryRuntime.js';
 
 type SessionHistoryDependencies = SessionManagerDependencies['history'];
@@ -87,10 +89,23 @@ export class FakeHistoryIndex implements SessionHistoryDependencies {
   }
 
   // SessionManager tests pin a temp HOME and write provider session files into
-  // it, so the fake delegates to the real disk scan exactly like the
-  // production wiring does.
+  // it, so the fake delegates to the real disk scan for the on-disk rows. But
+  // unlike production, the fake persists app-session patches only in memory
+  // (summariesByAppId), never to the sqlite the real scan reads. Filtering
+  // inside loadHistoricalSessions would therefore use the on-disk cwd, not the
+  // patched cwd a test seeded, so a session moved between workspaces by a
+  // patch could be filtered out before the patch is applied. To stay faithful
+  // to production (which applies its patches before filtering), the fake loads
+  // every row, overlays its own patches, then filters.
   listHistoricalSessions(options: HistoricalSummaryFilter = {}): HistoricalSession[] {
-    return loadHistoricalSessions(options);
+    const rows = loadHistoricalSessions();
+    if (!options.workspaceCwds && options.includePlainChats === undefined) return rows;
+    const { patches } = this.summaryPatchesAndHidden();
+    const summaries = rows.map((row) => applyCachedSummary(row.summary, patches));
+    return filterSessionListSummaries(summaries, options).map((summary) => ({
+      summary,
+      progress: [],
+    }));
   }
 
   // The fake has no sqlite cache: it reports an empty cache so boot takes the

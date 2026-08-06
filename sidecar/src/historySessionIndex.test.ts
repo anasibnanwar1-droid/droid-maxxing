@@ -9,6 +9,7 @@ const home = mkdtempSync(join(tmpdir(), 'droid-history-index-home-'));
 process.env.HOME = home;
 
 const {
+  HistoryIndex,
   invalidateSessionIndex,
   loadSessionHistory,
   loadSessionPage,
@@ -127,4 +128,27 @@ test('loadSessionTranscriptWindow serves repeat loads through the memoized index
   const repeat = loadSessionTranscriptWindow(id, chain);
   assert.equal(repeat.events.length, 1);
   assert.equal(repeat.events[0]?.id, first.events[0]?.id);
+});
+
+test('reconcileSessionFiles invalidates the index after a session file is removed', () => {
+  invalidateSessionIndex();
+  const id = nextId('memo-removed');
+  writeSession(id, 'about to be removed');
+  const index = new HistoryIndex();
+  try {
+    // Populate the file cache so a later deletion is detected as a change...
+    index.reconcileSessionFiles();
+    // ...then build the lifetime session index memo with the file present.
+    assert.deepEqual(resolveSessionChain(id, id), [id]);
+
+    // Remove the file and reconcile: the cache detects the deletion and the
+    // memo must drop the now-stale id -> path so a transcript load resolves
+    // nothing instead of following a path that no longer exists.
+    rmSync(join(home, '.factory', 'sessions', `${id}.jsonl`));
+    assert.equal(index.reconcileSessionFiles(), 1, 'the deleted file is reconciled away');
+    const window = loadSessionTranscriptWindow(id, [id]);
+    assert.equal(window.events.length, 0, 'a removed session resolves no transcript');
+  } finally {
+    index.close();
+  }
 });

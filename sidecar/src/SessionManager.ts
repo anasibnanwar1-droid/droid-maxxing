@@ -377,8 +377,22 @@ export class SessionManager {
       emitStatus: (appSessionId, text) => {
         this.timeline.appendStatus(appSessionId, text);
       },
-      emitSessionList: () => {
-        this.emitSessionList();
+      emitSessionList: (closedProviderSessionId) => {
+        if (this.shutdownPromise) return;
+        // Live writes are excluded from historical reconciliation, but the
+        // watcher retains their paths. Reconcile exactly the finalized file
+        // after unregister; if a very short session closed before its first
+        // watch event, fall back to the authoritative tree diff.
+        const sessionFile =
+          this.sessionFileWatcher?.consumeLiveSessionFile(closedProviderSessionId);
+        if (sessionFile) {
+          this.history.reconcileSessionFilePaths([
+            { providerSessionId: closedProviderSessionId, path: sessionFile },
+          ]);
+        } else {
+          this.history.reconcileSessionFiles();
+        }
+        this.emitSessionList(this.lastSessionListOptions);
       },
     });
   }
@@ -954,12 +968,27 @@ export class SessionManager {
     this.sessionsBootstrapDone = true;
     setImmediate(() => {
       if (this.shutdownPromise) return;
-      warmSessionIndex();
+      // warmSessionIndex walks ~/.factory/sessions, whose entries can vanish
+      // mid-walk (a parallel Droid CLI run). The walk is best-effort
+      // prefetch, so a failure must degrade to a lazy rebuild on first use
+      // instead of becoming an uncaught exception in this detached callback.
+      try {
+        warmSessionIndex();
+      } catch (error) {
+        console.error(`Session index warm-up failed: ${errMsg(error)}`);
+      }
     });
     this.sessionFileWatcher = this.startWatcher({
       isLiveSession: (id) => this.registry.getLive(id) !== undefined,
       onExternalChange: (changes) => {
-        if (this.shutdownPromise || !this.lastSessionListOptions) return;
+        // The watcher starts before the one-time warm-cache boot reconcile
+        // runs. An event in that window must not emit a list served from a
+        // partially-reconciled cache: the boot full reconcile scans the whole
+        // tree and its own emit is authoritative, so a change seen here is
+        // already covered by it. After boot, the cache is fresh and events
+        // reconcile and republish normally.
+        if (this.shutdownPromise || !this.lastSessionListOptions || this.sessionsBootReconcile)
+          return;
         try {
           // A targeted change list reconciles exactly the reported files;
           // null means the watcher saw unexplained events and only a full

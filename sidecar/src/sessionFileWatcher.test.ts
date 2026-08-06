@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -36,9 +36,10 @@ test('external session file changes fire once with the changed files after write
   const dir = join(root, 'encoded-cwd');
   mkdirSync(dir);
   const payloads: (SessionFileChange[] | null)[] = [];
+  const debounceMs = 50;
   const watcher = startSessionFileWatcher({
     root,
-    debounceMs: 50,
+    debounceMs,
     onExternalChange: (changes) => {
       payloads.push(changes);
     },
@@ -49,7 +50,10 @@ test('external session file changes fire once with the changed files after write
     writeFileSync(join(dir, 'b.jsonl'), '{}\n');
     writeFileSync(join(dir, 'c.jsonl'), '{}\n');
     await waitFor(() => payloads.length === 1);
-    await delay(200);
+    // Wait past the debounce window to confirm no straggler callback splits
+    // the burst; the margin is tied to the configured window, not a magic
+    // number.
+    await delay(debounceMs * 4);
     assert.equal(payloads.length, 1, 'a burst of changes coalesces into one callback');
     const changes = payloads[0];
     assert.ok(changes, 'file events explained by the batch reconcile exactly those files');
@@ -97,9 +101,10 @@ test('writes from live in-app sessions do not fire', async () => {
   const dir = join(root, 'encoded-cwd');
   mkdirSync(dir);
   let calls = 0;
+  const debounceMs = 50;
   const watcher = startSessionFileWatcher({
     root,
-    debounceMs: 50,
+    debounceMs,
     isLiveSession: (id) => id === 'live-1',
     onExternalChange: () => {
       calls += 1;
@@ -108,8 +113,18 @@ test('writes from live in-app sessions do not fire', async () => {
   assert.ok(watcher);
   try {
     writeFileSync(join(dir, 'live-1.jsonl'), '{}\n');
-    await delay(400);
+    await delay(debounceMs * 8);
     assert.equal(calls, 0, 'live session writes are pushed by the registry instead');
+    assert.equal(
+      watcher.consumeLiveSessionFile('live-1'),
+      join(dir, 'live-1.jsonl'),
+      'the watcher retains a live file path for targeted close reconciliation',
+    );
+    assert.equal(
+      watcher.consumeLiveSessionFile('live-1'),
+      undefined,
+      'consuming a live file path forgets it',
+    );
     writeFileSync(join(dir, 'external-1.jsonl'), '{}\n');
     await waitFor(() => calls === 1);
   } finally {
@@ -123,9 +138,10 @@ test('close stops further callbacks', async () => {
   const dir = join(root, 'encoded-cwd');
   mkdirSync(dir);
   let calls = 0;
+  const debounceMs = 50;
   const watcher = startSessionFileWatcher({
     root,
-    debounceMs: 50,
+    debounceMs,
     onExternalChange: () => {
       calls += 1;
     },
@@ -136,7 +152,7 @@ test('close stops further callbacks', async () => {
     await waitFor(() => calls === 1);
     watcher.close();
     writeFileSync(join(dir, 'b.jsonl'), '{}\n');
-    await delay(300);
+    await delay(debounceMs * 6);
     assert.equal(calls, 1);
   } finally {
     watcher.close();
@@ -145,9 +161,35 @@ test('close stops further callbacks', async () => {
 });
 
 test('returns null when the sessions root cannot be watched', () => {
+  // A path whose parent is a regular file cannot be created or watched, so
+  // the watcher gives up and returns null. A merely-missing root is now
+  // created so live republish starts on a first run with no history yet.
+  const blocker = join(tmpdir(), 'session-watcher-blocker');
+  writeFileSync(blocker, '');
+  try {
+    const watcher = startSessionFileWatcher({
+      root: join(blocker, 'sessions'),
+      onExternalChange: () => {},
+    });
+    assert.equal(watcher, null);
+  } finally {
+    rmSync(blocker, { force: true });
+  }
+});
+
+test('a missing sessions root is created so the watcher starts on first run', () => {
+  const root = join(tmpdir(), 'session-watcher-first-run-', String(Date.now()), 'sessions');
   const watcher = startSessionFileWatcher({
-    root: join(tmpdir(), 'droidex-definitely-missing-sessions-root'),
+    root,
+    debounceMs: 50,
     onExternalChange: () => {},
   });
-  assert.equal(watcher, null);
+  try {
+    assert.ok(watcher, 'the watcher starts even when the root did not exist');
+    // The root is created so external writes (a first Droid CLI run) are seen.
+    assert.ok(existsSync(root), 'the missing sessions root is created');
+  } finally {
+    watcher?.close();
+    rmSync(root, { recursive: true, force: true });
+  }
 });
