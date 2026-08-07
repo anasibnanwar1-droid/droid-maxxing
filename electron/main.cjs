@@ -67,6 +67,12 @@ let hiddenNativeBrowserWindow = null;
 // Selected app-icon appearance. 'system' tracks the OS light/dark setting via
 // nativeTheme; 'light'/'dark' pin a specific artwork.
 let appIconMode = 'system';
+// Session to open after a finish-notification click. macOS often focuses the
+// app before (or without) delivering the Notification `click` payload cleanly,
+// so we queue the target and re-deliver on focus until the renderer acks.
+/** @type {{ appSessionId: string, expiresAt: number } | null } */
+let pendingNotificationOpen = null;
+const PENDING_NOTIFICATION_OPEN_MS = 30_000;
 let attachedBrowserSessionId = null;
 const nativeBrowsers = new Map();
 // Keep hidden browser sessions warm by default so authenticated pages and
@@ -99,6 +105,9 @@ app.whenReady().then(async () => {
   });
   registerIpc();
   createMainWindow();
+  // Pin the DROIDEX mark on the dock/taskbar up front so OS notifications
+  // inherit it instead of the bare Electron atom in dev builds.
+  applyAppIcon();
   // Repaint the icon when the OS appearance flips while 'system' is selected.
   nativeTheme.on('updated', () => {
     if (appIconMode === 'system') applyAppIcon();
@@ -120,6 +129,8 @@ app.on('before-quit', () => {
 
 app.on('activate', () => {
   if (!mainWindow) createMainWindow();
+  else focusMainWindow();
+  deliverPendingNotificationOpen();
 });
 
 app.on('child-process-gone', (_event, details) => {
@@ -162,6 +173,18 @@ function createMainWindow() {
   if (devStartUrl) mainWindow.loadURL(devStartUrl);
   else mainWindow.loadFile(rendererFile);
 
+  // Re-deliver a queued notification open once the window is actually frontmost
+  // and the renderer can receive IPC (critical when coming back from Safari).
+  mainWindow.on('focus', () => {
+    deliverPendingNotificationOpen();
+  });
+  mainWindow.on('show', () => {
+    deliverPendingNotificationOpen();
+  });
+  mainWindow.webContents.on('did-finish-load', () => {
+    deliverPendingNotificationOpen();
+  });
+
   mainWindow.on('closed', () => {
     closeAllNativeBrowsers();
     terminalManager.closeAll();
@@ -193,8 +216,64 @@ function registerIpc() {
   ipcMain.handle('discard-image', (_event, { path: target }) =>
     attachments.discard(attachmentsDir, target),
   );
-  ipcMain.handle('notify', (_event, { title, body }) => {
-    new Notification({ title, body }).show();
+  // OS finish/status banners. silent=false plays the system notification sound.
+  // Foreground suppress is owned by the renderer; click opens the finished
+  // session via the pending-open queue.
+  ipcMain.handle('notify', (event, payload = {}) => {
+    assertMainRenderer(event);
+    const title =
+      typeof payload.title === 'string' && payload.title.trim()
+        ? payload.title.trim().slice(0, 120)
+        : 'DROIDEX';
+    const body = typeof payload.body === 'string' ? payload.body.trim().slice(0, 280) : '';
+    const silent = payload.silent === true;
+    const appSessionId =
+      typeof payload.appSessionId === 'string' && payload.appSessionId.trim()
+        ? payload.appSessionId.trim().slice(0, 200)
+        : null;
+    if (typeof Notification.isSupported === 'function' && !Notification.isSupported()) {
+      console.warn('[notify] Notification API not supported on this platform');
+      return { shown: false, reason: 'unsupported' };
+    }
+    try {
+      // Dock icon is applied on launch / icon settings; reuse that path for the banner.
+      const iconPath = path.join(__dirname, 'assets', resolveAppIconFile(appIconMode));
+      const note = new Notification({
+        title,
+        body,
+        silent,
+        ...(fs.existsSync(iconPath) ? { icon: iconPath } : {}),
+      });
+      const activate = () => {
+        // Queue first so focus/show handlers can re-send if this IPC is dropped.
+        queueNotificationSessionOpen(appSessionId);
+      };
+      note.on('click', activate);
+      note.on('action', activate);
+      note.show();
+      return { shown: true };
+    } catch (err) {
+      console.warn('[notify] failed to show notification', err);
+      return { shown: false, reason: 'error' };
+    }
+  });
+  // Renderer acks after applying SET_ACTIVE_SESSION so we stop re-delivering.
+  ipcMain.handle('notification-activate-ack', (event, payload = {}) => {
+    assertMainRenderer(event);
+    const appSessionId =
+      typeof payload.appSessionId === 'string' ? payload.appSessionId.trim() : '';
+    if (
+      pendingNotificationOpen &&
+      (!appSessionId || pendingNotificationOpen.appSessionId === appSessionId)
+    ) {
+      pendingNotificationOpen = null;
+    }
+    return { ok: true };
+  });
+  // Pull path: renderer asks on focus/visibility in case the push event was lost.
+  ipcMain.handle('notification-take-pending', (event) => {
+    assertMainRenderer(event);
+    return takePendingNotificationOpen();
   });
   ipcMain.handle('get-api-key', getApiKey);
   ipcMain.handle('set-api-key', (_event, { key }) => setApiKey(key));
@@ -462,11 +541,60 @@ function resolveAppIconFile(mode) {
 
 function applyAppIcon() {
   const iconPath = path.join(__dirname, 'assets', resolveAppIconFile(appIconMode));
-  if (process.platform === 'darwin') {
+  if (!fs.existsSync(iconPath)) return;
+  if (process.platform === 'darwin' && app.dock) {
     app.dock.setIcon(iconPath);
-  } else if (mainWindow) {
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.setIcon(iconPath);
   }
+}
+
+function focusMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createMainWindow();
+  }
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+  if (process.platform === 'darwin' && app.dock) app.dock.bounce('informational');
+}
+
+function queueNotificationSessionOpen(appSessionId) {
+  if (!appSessionId) {
+    focusMainWindow();
+    return;
+  }
+  pendingNotificationOpen = {
+    appSessionId,
+    expiresAt: Date.now() + PENDING_NOTIFICATION_OPEN_MS,
+  };
+  focusMainWindow();
+  // Immediate attempt; focus/show/did-finish-load will retry until ack.
+  deliverPendingNotificationOpen();
+}
+
+function pendingNotificationPayload() {
+  if (!pendingNotificationOpen) return null;
+  if (Date.now() > pendingNotificationOpen.expiresAt) {
+    pendingNotificationOpen = null;
+    return null;
+  }
+  return { appSessionId: pendingNotificationOpen.appSessionId };
+}
+
+function deliverPendingNotificationOpen() {
+  const payload = pendingNotificationPayload();
+  if (!payload || !isWindowUsable(mainWindow)) return;
+  mainWindow.webContents.send('notification-activate', payload);
+}
+
+/** Return and clear the pending open (renderer pull on focus). */
+function takePendingNotificationOpen() {
+  const payload = pendingNotificationPayload();
+  pendingNotificationOpen = null;
+  return payload;
 }
 
 function setAppIcon(mode) {

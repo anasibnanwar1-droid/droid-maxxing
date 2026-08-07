@@ -39,6 +39,13 @@ import { workspaceName } from '../lib/workspaces';
 import { toast } from '../lib/toast';
 import { applyTheme, paletteForMode, UI_FONTS, PRESET_THEMES } from '../lib/theme';
 import { DiagnosticsSettings } from './DiagnosticsSettings';
+import { NotificationsSettings } from './NotificationsSettings';
+import {
+  bestTabForQuery,
+  searchSettings,
+  tabMatchesQuery,
+  type SettingsSearchHit,
+} from '../lib/settingsSearch';
 
 const PRESET_ACCENTS = [
   '#ee6018',
@@ -64,6 +71,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
       { label: 'Setup & updates' },
       { label: 'Profile' },
       { label: 'Appearance' },
+      { label: 'Notifications' },
       { label: 'Configuration' },
       { label: 'Personalization' },
       { label: 'Keyboard shortcuts' },
@@ -1452,6 +1460,60 @@ function PlaceholderSection({ title }: { title: string }) {
   );
 }
 
+/** Soft jump list above the active section while a search is active. */
+function SettingsSearchResults({
+  hits,
+  activeTab,
+  onOpen,
+}: {
+  hits: SettingsSearchHit[];
+  activeTab: string;
+  onOpen: (hit: SettingsSearchHit) => void;
+}) {
+  return (
+    <div className="mx-auto mb-8 max-w-2xl">
+      <div className="mb-2.5 px-0.5 text-[11px] text-droid-text-muted">
+        {hits.length === 1 ? '1 match' : `${String(hits.length)} matches`}
+      </div>
+      <div className="flex flex-col gap-1">
+        {hits.map((hit) => {
+          const onActiveTab = hit.tab === activeTab;
+          return (
+            <button
+              key={`${hit.tab}::${hit.label}`}
+              type="button"
+              onClick={() => {
+                onOpen(hit);
+              }}
+              className={`group flex w-full items-center justify-between gap-3 rounded-2xl px-3.5 py-2.5 text-left transition-colors ${
+                onActiveTab
+                  ? 'bg-droid-active/70 text-droid-text'
+                  : 'text-droid-text-secondary hover:bg-droid-elevated/45 hover:text-droid-text'
+              }`}
+            >
+              <div className="min-w-0">
+                <div className="truncate text-[13px] font-medium tracking-tight text-droid-text">
+                  {hit.label}
+                </div>
+                <div className="mt-0.5 truncate text-[11px] text-droid-text-muted">{hit.tab}</div>
+              </div>
+              <span
+                className={`shrink-0 text-[11px] transition-opacity ${
+                  onActiveTab
+                    ? 'text-droid-text-muted'
+                    : 'text-droid-text-muted/0 group-hover:text-droid-text-muted'
+                }`}
+              >
+                {onActiveTab ? 'Here' : 'Open'}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /* ── main full-page settings ── */
 export default function SettingsPanel() {
   const { state, dispatch } = useStore();
@@ -1468,10 +1530,18 @@ export default function SettingsPanel() {
     };
   }, [dispatch]);
 
+  // Content-aware search: typing "play sound" jumps to Notifications so the
+  // matching controls are on screen (nav filter alone only matched tab titles).
+  useEffect(() => {
+    const next = bestTabForQuery(query);
+    if (next) setActive(next);
+  }, [query]);
+
   const close = () => {
     dispatch({ type: 'TOGGLE_SETTINGS' });
   };
-  const q = query.trim().toLowerCase();
+  const q = query.trim();
+  const hits = q ? searchSettings(q) : [];
 
   let content: React.ReactNode;
   switch (active) {
@@ -1490,12 +1560,19 @@ export default function SettingsPanel() {
     case 'Configuration':
       content = <ConfigurationSection />;
       break;
+    case 'Notifications':
+      content = <NotificationsSettings highlightQuery={q} />;
+      break;
     case 'Privacy & diagnostics':
       content = <DiagnosticsSettings />;
       break;
     default:
       content = <PlaceholderSection title={active} />;
   }
+
+  const openHit = (hit: SettingsSearchHit) => {
+    setActive(hit.tab);
+  };
 
   return (
     <AnimatePresence>
@@ -1517,52 +1594,76 @@ export default function SettingsPanel() {
             >
               <ChevronLeft className="w-4 h-4" /> Back to app
             </button>
-            <div className="px-3 pb-2">
-              <div className="flex items-center gap-2 px-2.5 h-8 rounded-md bg-droid-elevated border border-droid-border">
-                <Search className="w-3.5 h-3.5 text-droid-text-muted" />
+            <div className="px-3 pb-3">
+              <div className="flex h-9 items-center gap-2 rounded-2xl bg-droid-elevated/70 px-3 ring-1 ring-inset ring-droid-border/70 transition-[box-shadow,background-color] focus-within:bg-droid-elevated focus-within:ring-droid-border-hover">
+                <Search className="h-3.5 w-3.5 shrink-0 text-droid-text-muted" />
                 <input
                   value={query}
                   onChange={(e) => {
                     setQuery(e.target.value);
                   }}
-                  placeholder="Search settings..."
-                  className="bg-transparent text-[12px] text-droid-text placeholder:text-droid-text-muted focus:outline-none w-full"
+                  placeholder="Search settings…"
+                  className="w-full bg-transparent text-[12.5px] text-droid-text placeholder:text-droid-text-muted/80 focus:outline-none"
                 />
+                {q ? (
+                  <button
+                    type="button"
+                    aria-label="Clear search"
+                    onClick={() => {
+                      setQuery('');
+                    }}
+                    className="rounded-full p-0.5 text-droid-text-muted transition-colors hover:text-droid-text"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                ) : null}
               </div>
             </div>
-            <nav className="flex-1 overflow-y-auto px-3 py-2 space-y-4">
+            <nav className="flex-1 space-y-4 overflow-y-auto px-2.5 pb-3">
               {NAV.map(({ group, items }) => {
-                const filtered = items.filter((it) => !q || it.label.toLowerCase().includes(q));
+                const filtered = items.filter((it) => tabMatchesQuery(it.label, q));
                 if (filtered.length === 0) return null;
                 return (
                   <div key={group}>
-                    <div className="text-[10px] font-medium text-droid-text-muted uppercase tracking-wider px-2 mb-1">
+                    <div className="mb-1 px-2.5 text-[10px] font-medium uppercase tracking-wider text-droid-text-muted/80">
                       {group}
                     </div>
-                    {filtered.map(({ label }) => (
-                      <button
-                        key={label}
-                        onClick={() => {
-                          setActive(label);
-                        }}
-                        className={`flex items-center w-full px-2 h-8 rounded-md text-[12px] transition-colors ${
-                          active === label
-                            ? 'bg-droid-active text-droid-text'
-                            : 'text-droid-text-secondary hover:text-droid-text hover:bg-droid-elevated/50'
-                        }`}
-                      >
-                        <span className="truncate">{label}</span>
-                      </button>
-                    ))}
+                    <div className="flex flex-col gap-0.5">
+                      {filtered.map(({ label }) => (
+                        <button
+                          key={label}
+                          onClick={() => {
+                            setActive(label);
+                          }}
+                          className={`flex h-8 w-full items-center rounded-xl px-2.5 text-left text-[12.5px] transition-colors ${
+                            active === label
+                              ? 'bg-droid-active text-droid-text'
+                              : 'text-droid-text-secondary hover:bg-droid-elevated/40 hover:text-droid-text'
+                          }`}
+                        >
+                          <span className="truncate">{label}</span>
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 );
               })}
+              {q && hits.length === 0 && (
+                <div className="px-2.5 py-4 text-[12px] leading-relaxed text-droid-text-muted">
+                  No matching settings.
+                </div>
+              )}
             </nav>
           </aside>
 
           {/* Content */}
           <div className="flex-1 overflow-y-auto">
-            <div className="px-10 py-8">{content}</div>
+            <div className="px-10 py-8">
+              {q && hits.length > 0 && (
+                <SettingsSearchResults hits={hits} activeTab={active} onOpen={openHit} />
+              )}
+              {content}
+            </div>
           </div>
         </motion.div>
       )}

@@ -123,7 +123,7 @@ export interface FeedbackReportRequest {
   description: string;
   attachments?: FeedbackAttachments;
   attachmentData?: {
-    sessionLog?: Array<{ category: string; message: string; level?: string; timestamp: number }>;
+    sessionLog?: { category: string; message: string; level?: string; timestamp: number }[];
     appState?: Record<string, unknown>;
   };
 }
@@ -134,13 +134,23 @@ export interface FeedbackReportReceipt {
   eventId: string;
 }
 
+export interface NotifyOptions {
+  /** When true, the OS notification plays without sound. */
+  silent?: boolean;
+  /** Session to open when the user clicks the notification. */
+  appSessionId?: string;
+}
+
 interface DroidControlApi {
   bridgeInfo: () => Promise<BridgeInfo>;
   pickDirectory: () => Promise<string | null>;
   pickFiles: () => Promise<string[]>;
   saveImage: (dataUrl: string) => Promise<string>;
   discardImage: (path: string) => Promise<void>;
-  notify: (title: string, body: string) => Promise<void>;
+  notify: (title: string, body: string, options?: NotifyOptions) => Promise<void>;
+  onNotificationActivate: (handler: (payload: { appSessionId: string }) => void) => () => void;
+  takePendingNotificationSession: () => Promise<{ appSessionId: string } | null>;
+  ackNotificationActivate: (appSessionId: string) => Promise<{ ok: boolean }>;
   getApiKey: () => Promise<string | null>;
   setApiKey: (key: string) => Promise<void>;
   clearApiKey: () => Promise<void>;
@@ -255,20 +265,32 @@ declare global {
   }
 }
 
-export const isDesktop = () => typeof window !== 'undefined' && Boolean(window.droidControl);
+function desktopApi(): DroidControlApi | undefined {
+  return typeof window !== 'undefined' ? window.droidControl : undefined;
+}
+
+export const isDesktop = () => Boolean(desktopApi());
+
+function requireDesktopApi(message: string): DroidControlApi {
+  const api = desktopApi();
+  if (!api) throw new Error(message);
+  return api;
+}
 
 export async function getBridgeInfo(): Promise<BridgeInfo> {
-  if (!isDesktop()) return { port: 8765, token: '' };
-  return window.droidControl!.bridgeInfo();
+  const api = desktopApi();
+  if (!api) return { port: 8765, token: '' };
+  return api.bridgeInfo();
 }
 
 export async function pickDirectory(): Promise<string | null> {
-  if (!isDesktop()) return null;
-  return window.droidControl!.pickDirectory();
+  const api = desktopApi();
+  if (!api) return null;
+  return api.pickDirectory();
 }
 
 export async function pickFiles(): Promise<string[]> {
-  const api = isDesktop() ? window.droidControl : undefined;
+  const api = desktopApi();
   if (!api) return [];
   try {
     return await api.pickFiles();
@@ -280,13 +302,11 @@ export async function pickFiles(): Promise<string[]> {
 // Persists an image data URL into the temp attachments dir; the returned path
 // is what the prompt @-mentions. Only the desktop app can write to disk.
 export async function saveImage(dataUrl: string): Promise<string> {
-  const api = window.droidControl;
-  if (!api) throw new Error('Image attachments need the desktop app.');
-  return api.saveImage(dataUrl);
+  return requireDesktopApi('Image attachments need the desktop app.').saveImage(dataUrl);
 }
 
 export async function discardImage(path: string): Promise<void> {
-  const api = window.droidControl;
+  const api = desktopApi();
   if (!api) return;
   try {
     await api.discardImage(path);
@@ -295,29 +315,70 @@ export async function discardImage(path: string): Promise<void> {
   }
 }
 
-export async function notify(title: string, body: string): Promise<void> {
-  if (!isDesktop()) return;
-  await window.droidControl!.notify(title, body);
+export async function notify(
+  title: string,
+  body: string,
+  options: NotifyOptions = {},
+): Promise<void> {
+  const api = desktopApi();
+  if (!api) return;
+  await api.notify(title, body, options);
+}
+
+/** Subscribe to notification clicks that should open a specific chat. */
+export function onNotificationActivate(
+  handler: (payload: { appSessionId: string }) => void,
+): () => void {
+  const api = desktopApi();
+  if (!api) return () => undefined;
+  return api.onNotificationActivate(handler);
+}
+
+/** Pull a pending open-session request queued by a notification click. */
+export async function takePendingNotificationSession(): Promise<{
+  appSessionId: string;
+} | null> {
+  const api = desktopApi();
+  if (!api) return null;
+  const pending = await api.takePendingNotificationSession();
+  if (!pending || typeof pending.appSessionId !== 'string' || !pending.appSessionId.trim()) {
+    return null;
+  }
+  return { appSessionId: pending.appSessionId.trim() };
+}
+
+export async function ackNotificationActivate(appSessionId: string): Promise<void> {
+  const api = desktopApi();
+  if (!api) return;
+  try {
+    await api.ackNotificationActivate(appSessionId);
+  } catch {
+    /* ignore */
+  }
 }
 
 export async function getApiKey(): Promise<string | null> {
-  if (!isDesktop()) return null;
-  return window.droidControl!.getApiKey();
+  const api = desktopApi();
+  if (!api) return null;
+  return api.getApiKey();
 }
 
 export async function setApiKey(key: string): Promise<void> {
-  if (!isDesktop()) return;
-  await window.droidControl!.setApiKey(key);
+  const api = desktopApi();
+  if (!api) return;
+  await api.setApiKey(key);
 }
 
 export async function clearApiKey(): Promise<void> {
-  if (!isDesktop()) return;
-  await window.droidControl!.clearApiKey();
+  const api = desktopApi();
+  if (!api) return;
+  await api.clearApiKey();
 }
 
 export async function setAppIcon(mode: AppIconMode): Promise<void> {
-  if (!isDesktop()) return;
-  await window.droidControl!.setAppIcon(mode);
+  const api = desktopApi();
+  if (!api) return;
+  await api.setAppIcon(mode);
 }
 
 export async function createTerminal(options: {
@@ -326,95 +387,111 @@ export async function createTerminal(options: {
   cols: number;
   rows: number;
 }): Promise<TerminalSessionInfo> {
-  if (!isDesktop()) throw new Error('Terminal is only available in the desktop app.');
-  return window.droidControl!.terminalCreate(options);
+  return requireDesktopApi('Terminal is only available in the desktop app.').terminalCreate(
+    options,
+  );
 }
 
 export async function writeTerminal(id: string, data: string): Promise<void> {
-  if (!isDesktop()) return;
-  await window.droidControl!.terminalWrite(id, data);
+  const api = desktopApi();
+  if (!api) return;
+  await api.terminalWrite(id, data);
 }
 
 export async function resizeTerminal(id: string, cols: number, rows: number): Promise<void> {
-  if (!isDesktop()) return;
-  await window.droidControl!.terminalResize(id, cols, rows);
+  const api = desktopApi();
+  if (!api) return;
+  await api.terminalResize(id, cols, rows);
 }
 
 export async function killTerminal(id: string): Promise<void> {
-  if (!isDesktop()) return;
-  await window.droidControl!.terminalKill(id);
+  const api = desktopApi();
+  if (!api) return;
+  await api.terminalKill(id);
 }
 
 export async function listTerminals(appSessionId: string): Promise<TerminalSessionInfo[]> {
-  if (!isDesktop()) return [];
-  return window.droidControl!.terminalList(appSessionId);
+  const api = desktopApi();
+  if (!api) return [];
+  return api.terminalList(appSessionId);
 }
 
 export async function subscribeTerminal(id: string): Promise<void> {
-  if (!isDesktop()) return;
-  await window.droidControl!.terminalSubscribe(id);
+  const api = desktopApi();
+  if (!api) return;
+  await api.terminalSubscribe(id);
 }
 
 export async function unsubscribeTerminal(id: string): Promise<void> {
-  if (!isDesktop()) return;
-  await window.droidControl!.terminalUnsubscribe(id);
+  const api = desktopApi();
+  if (!api) return;
+  await api.terminalUnsubscribe(id);
 }
 
 export function onTerminalEvent(handler: (event: TerminalEvent) => void): () => void {
-  if (!isDesktop()) return () => {};
-  return window.droidControl!.onTerminalEvent(handler);
+  const api = desktopApi();
+  if (!api) return () => undefined;
+  return api.onTerminalEvent(handler);
 }
 
 export async function authorizeFilesRoot(root: string): Promise<string> {
-  if (!isDesktop()) throw new Error('Files are only available in the desktop app.');
-  return window.droidControl!.filesAuthorizeRoot(root);
+  return requireDesktopApi('Files are only available in the desktop app.').filesAuthorizeRoot(root);
 }
 
 export async function listDirectory(accessToken: string, relative = ''): Promise<FilesListing> {
-  if (!isDesktop()) throw new Error('Files are only available in the desktop app.');
-  return window.droidControl!.filesList(accessToken, relative);
+  return requireDesktopApi('Files are only available in the desktop app.').filesList(
+    accessToken,
+    relative,
+  );
 }
 
 export async function readFilePreview(
   accessToken: string,
   relative: string,
 ): Promise<FilePreviewPayload> {
-  if (!isDesktop()) throw new Error('Files are only available in the desktop app.');
-  return window.droidControl!.filesPreview(accessToken, relative);
+  return requireDesktopApi('Files are only available in the desktop app.').filesPreview(
+    accessToken,
+    relative,
+  );
 }
 
 export async function openFileDefault(accessToken: string, relative: string): Promise<void> {
-  if (!isDesktop()) return;
-  await window.droidControl!.filesOpen(accessToken, relative);
+  const api = desktopApi();
+  if (!api) return;
+  await api.filesOpen(accessToken, relative);
 }
 
 export async function revealFile(accessToken: string, relative: string): Promise<void> {
-  if (!isDesktop()) return;
-  await window.droidControl!.filesReveal(accessToken, relative);
+  const api = desktopApi();
+  if (!api) return;
+  await api.filesReveal(accessToken, relative);
 }
 
 export async function listFiles(dir: string): Promise<string[]> {
-  if (!isDesktop()) return [];
+  const api = desktopApi();
+  if (!api) return [];
   try {
-    return await window.droidControl!.listFiles(dir);
+    return await api.listFiles(dir);
   } catch {
     return [];
   }
 }
 
 export async function readFile(path: string): Promise<string | null> {
-  if (!isDesktop()) return null;
+  const api = desktopApi();
+  if (!api) return null;
   try {
-    return await window.droidControl!.readFile(path);
+    return await api.readFile(path);
   } catch {
     return null;
   }
 }
 
 export async function getRepoStatus(dir: string): Promise<RepoStatus | null> {
-  if (!isDesktop()) return null;
+  const api = desktopApi();
+  if (!api) return null;
   try {
-    return await window.droidControl!.repoStatus(dir);
+    return await api.repoStatus(dir);
   } catch {
     return null;
   }
@@ -425,14 +502,16 @@ export async function openProject(
   editor: EditorId,
   target: EditorTarget,
 ): Promise<void> {
-  if (!isDesktop()) return;
-  await window.droidControl!.openProject(dir, editor, target);
+  const api = desktopApi();
+  if (!api) return;
+  await api.openProject(dir, editor, target);
 }
 
 export async function listEditors(): Promise<EditorId[]> {
-  if (!isDesktop()) return [];
+  const api = desktopApi();
+  if (!api) return [];
   try {
-    return await window.droidControl!.listEditors();
+    return await api.listEditors();
   } catch {
     return [];
   }
