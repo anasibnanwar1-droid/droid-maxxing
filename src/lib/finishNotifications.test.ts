@@ -148,17 +148,20 @@ test('collectFinishedSessions only emits working→idle edges', () => {
     phase: 'running',
     streaming: true,
   });
+  // streaming=false is authoritative even when phase stays in-flight (#88).
   const done = session({ appSessionId: 'done', phase: 'running', streaming: false });
+  const stickyPlan = session({
+    appSessionId: 'mission',
+    phase: 'planning',
+    streaming: false,
+  });
   const idle = session({ appSessionId: 'idle', phase: 'completed', streaming: false });
 
   const first = collectFinishedSessions({
-    sessions: { live, done, idle },
-    previouslyWorking: new Set(['live', 'done']),
+    sessions: { live, done, stickyPlan, idle },
+    previouslyWorking: new Set(['live', 'done', 'mission']),
   });
-  assert.deepEqual(
-    first.finished.map((s) => s.appSessionId),
-    ['done'],
-  );
+  assert.deepEqual(first.finished.map((s) => s.appSessionId).sort(), ['done', 'mission']);
   assert.deepEqual([...first.stillWorking], ['live']);
 
   const cold = collectFinishedSessions({
