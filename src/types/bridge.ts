@@ -291,6 +291,22 @@ export interface SessionHistoryEntry {
   messageCount: number;
 }
 
+// One transcript line that matched a sessions.search query, shaped for the
+// sidebar's result row: a snippet centered on the match plus enough context
+// (author, timestamp) to recognize the conversation moment.
+export interface SessionSearchMatch {
+  snippet: string;
+  author: 'user' | 'assistant';
+  ts: number;
+}
+
+// A session whose transcript matched the query. Title matching itself happens
+// over the local session list; the sidecar only reports content hits.
+export interface SessionSearchResult {
+  appSessionId: string;
+  matches: SessionSearchMatch[];
+}
+
 export interface BrowserViewport {
   width: number;
   height: number;
@@ -567,6 +583,7 @@ export type ClientCommand =
       limitPerWorkspace?: number;
     }
   | { type: 'session.loadHistory'; appSessionId: string; cursor?: string }
+  | { type: 'sessions.search'; requestId: string; query: string }
   | {
       type: 'child.open';
       parentAppSessionId: string;
@@ -789,6 +806,12 @@ export type ServerEvent =
       hasMore?: boolean;
     }
   | { type: 'session.history.error'; appSessionId: string; message: string }
+  | {
+      type: 'sessions.searchResults';
+      requestId: string;
+      query: string;
+      results: SessionSearchResult[];
+    }
   | { type: 'history.list'; sessions: SessionHistoryEntry[] }
   | { type: 'browser.updated'; state: BrowserState }
   | { type: 'browser.native.request'; request: BrowserNativeRequest }

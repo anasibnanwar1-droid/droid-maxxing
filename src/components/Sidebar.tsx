@@ -6,10 +6,13 @@ import { pickDirectory } from '../lib/desktop';
 import { dismissSidebarCard, loadSidebarCardSeen } from '../lib/sidebarCards';
 import { SIDEBAR_WELCOME_CARD_ID, SidebarWelcomeCard } from './SidebarWelcomeCard';
 import { BrandMark } from './BrandMark';
+import SidebarSearch from './SidebarSearch';
 import {
+  Bell,
   Folder,
   FolderPlus,
   Plus,
+  Search,
   Settings,
   ChevronRight,
   Download,
@@ -21,7 +24,7 @@ import {
   resolveNewChatCwd,
   SIDEBAR_VISIBLE_SESSION_LIMIT,
 } from '../lib/workspaces';
-import { sessionIsLive } from '../lib/sessions';
+import { sessionIsLive, sessionIsUnread } from '../lib/sessions';
 import { useAppUpdate } from '../lib/appUpdate';
 import { formatRelativeTime } from '../lib/time';
 import type { SessionSummary } from '../types/bridge';
@@ -161,6 +164,10 @@ export default function Sidebar() {
   const { state, dispatch } = useStore();
   const activeSession = state.activeAppSessionId ? state.sessions[state.activeAppSessionId] : null;
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // Sidebar-local chrome state: the search palette and the unread-only filter
+  // (Codex-style bell toggle) belong to the sidebar, not the root store.
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [unreadOnly, setUnreadOnly] = useState(false);
   // Per-section count of rows to show; grows by SIDEBAR_VISIBLE_SESSION_LIMIT on
   // each "Show more" so long lists page in (5 + 5 + 5...) rather than loading all.
   const [shownCount, setShownCount] = useState<Map<string, number>>(new Map());
@@ -204,11 +211,23 @@ export default function Sidebar() {
     });
   };
 
-  // A session reads as unread when the model has newer activity than the last
-  // time the user opened it. The active session is always considered read.
-  const isUnread = (m: SessionSummary) =>
-    m.appSessionId !== state.activeAppSessionId &&
-    m.updatedAt > (state.sessionLastSeen[m.appSessionId] ?? m.updatedAt);
+  // A session reads as unread when the model has newer finished activity than
+  // the last time the user opened it — never while a turn is in flight.
+  const activeId = state.activeAppSessionId;
+  const lastSeen = state.sessionLastSeen;
+  const isUnread = useCallback(
+    (m: SessionSummary) => sessionIsUnread(m, activeId, lastSeen[m.appSessionId]),
+    [activeId, lastSeen],
+  );
+
+  const unreadCount = useMemo(
+    () =>
+      state.sessionOrder
+        .map((id) => state.sessions[id])
+        .filter(Boolean)
+        .filter(isUnread).length,
+    [state.sessionOrder, state.sessions, isUnread],
+  );
 
   const startChat = (cwd: string) => {
     dispatch({ type: 'START_CHAT', cwd });
@@ -240,24 +259,34 @@ export default function Sidebar() {
 
   // The sidecar publishes top-level sessions only; children live in the right panel.
   const chatSessions = useMemo<SessionSummary[]>(() => {
-    return state.sessionOrder
+    const rows = state.sessionOrder
       .map((id) => state.sessions[id])
       .filter(Boolean)
-      .filter((m) => !m.cwd)
-      .sort((a, b) => b.updatedAt - a.updatedAt);
-  }, [state.sessionOrder, state.sessions]);
+      .filter((m) => !m.cwd);
+    const visible = unreadOnly ? rows.filter(isUnread) : rows;
+    return visible.sort((a, b) => b.updatedAt - a.updatedAt);
+  }, [state.sessionOrder, state.sessions, unreadOnly, isUnread]);
 
   const workspaces = useMemo(() => {
     const sessions = state.sessionOrder.map((id) => state.sessions[id]).filter(Boolean);
-    return buildWorkspaceSections(state.workspaceCwds, sessions);
-  }, [state.sessionOrder, state.sessions, state.workspaceCwds]);
+    const sections = buildWorkspaceSections(state.workspaceCwds, sessions);
+    // In unread-only mode, drop read sessions and workspaces left empty.
+    if (!unreadOnly) return sections;
+    return sections
+      .map((ws) => ({ ...ws, sessions: ws.sessions.filter(isUnread) }))
+      .filter((ws) => ws.sessions.length > 0);
+  }, [state.sessionOrder, state.sessions, state.workspaceCwds, unreadOnly, isUnread]);
 
   const handleSelectSession = useCallback(
     (appSessionId: string) => {
       dispatch({ type: 'SET_ACTIVE_SESSION', id: appSessionId });
       dispatch({ type: 'SELECT_CHILD', selection: null });
+      // Opening a session from the unread-only view drops the filter: the
+      // opened session is no longer unread, so keeping it would make the row
+      // vanish from under the user.
+      if (unreadOnly) setUnreadOnly(false);
     },
-    [dispatch],
+    [dispatch, unreadOnly],
   );
 
   const renderRow = (m: SessionSummary) => (
@@ -334,9 +363,41 @@ export default function Sidebar() {
       {/* Empty titlebar strip so traffic lights never collide with chrome. */}
       <div data-electron-drag-region className="h-9 shrink-0" />
 
-      {/* Static DROIDEX wordmark under the titlebar inset. */}
-      <div className="px-3 pb-1 pt-0.5">
+      {/* Brand row: wordmark left; Codex-style ghost icon actions right
+          (session search palette + unread-only filter). No button chrome —
+          hover state only. */}
+      <div className="px-3 pb-1 pt-0.5 flex items-center justify-between">
         <BrandMark size={13} className="text-droid-text" />
+        <div className="flex items-center gap-0.5">
+          <button
+            onClick={() => {
+              setSearchOpen(true);
+            }}
+            title="Search sessions and messages"
+            aria-label="Search sessions and messages"
+            className="rounded-md p-1.5 text-droid-text-muted transition-colors hover:bg-droid-elevated hover:text-droid-text"
+          >
+            <Search className="w-4 h-4" strokeWidth={1.75} />
+          </button>
+          <button
+            onClick={() => {
+              setUnreadOnly((v) => !v);
+            }}
+            title={unreadOnly ? 'Show all sessions' : 'Show unread only'}
+            aria-label={unreadOnly ? 'Show all sessions' : 'Show unread only'}
+            aria-pressed={unreadOnly}
+            className={`relative rounded-md p-1.5 transition-colors hover:bg-droid-elevated ${
+              unreadOnly ? 'text-droid-accent' : 'text-droid-text-muted hover:text-droid-text'
+            }`}
+          >
+            <Bell className="w-4 h-4" strokeWidth={1.75} />
+            {unreadCount > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 flex h-3 min-w-3 items-center justify-center rounded-full bg-droid-accent px-0.5 text-[8px] font-semibold tabular-nums text-droid-bg">
+                {unreadCount > 9 ? '9+' : unreadCount}
+              </span>
+            )}
+          </button>
+        </div>
       </div>
 
       <div className="px-2 pb-1.5">
@@ -350,8 +411,15 @@ export default function Sidebar() {
       </div>
 
       <div className="flex-1 overflow-y-auto px-2 pb-2 space-y-3">
+        {unreadOnly && unreadCount === 0 && (
+          <div className="px-3 pt-2 pb-1 text-[12px] text-droid-text-muted">
+            No unread sessions.
+          </div>
+        )}
         {/* Workspaces — folder-scoped, where sessions run (main area) */}
         {(() => {
+          // Unread-only mode hides sections that have no unread rows left.
+          if (unreadOnly && workspaces.length === 0) return null;
           const open = !collapsed.has('__workspaces__');
           return (
             <div>
@@ -435,6 +503,7 @@ export default function Sidebar() {
 
         {/* Chats — plain, folder-less conversations */}
         {(() => {
+          if (unreadOnly && chatSessions.length === 0) return null;
           const open = !collapsed.has('__chats__');
           return (
             <div>
@@ -493,6 +562,16 @@ export default function Sidebar() {
           <UpdateButton />
         </div>
       </div>
+
+      <AnimatePresence>
+        {searchOpen && (
+          <SidebarSearch
+            onClose={() => {
+              setSearchOpen(false);
+            }}
+          />
+        )}
+      </AnimatePresence>
     </aside>
   );
 }
