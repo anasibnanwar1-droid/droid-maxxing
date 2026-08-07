@@ -158,6 +158,20 @@ export function sessionWorkingDirectoryForSource(
   return sessionWorkingDirectory(sessionCwd, scopedTranscript, registeredWorktrees);
 }
 
+export function worktreeDiscoveryRevision(
+  transcript: readonly TranscriptEvent[],
+  sourceSessionId?: string,
+): string {
+  for (let index = transcript.length - 1; index >= 0; index--) {
+    const event = transcript[index];
+    if (event.kind !== 'tool_result') continue;
+    if (sourceSessionId ? event.sourceSessionId === sourceSessionId : event.role === 'primary') {
+      return event.id;
+    }
+  }
+  return '';
+}
+
 export function workingDirectoryDuringDiscovery(
   sessionCwd: string,
   discoveryCwd: string,

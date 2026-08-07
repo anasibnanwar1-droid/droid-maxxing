@@ -1,4 +1,12 @@
-import { createContext, useContext, useMemo, useReducer, ReactNode, useEffect } from 'react';
+import {
+  createContext,
+  useContext,
+  useMemo,
+  useReducer,
+  useState,
+  ReactNode,
+  useEffect,
+} from 'react';
 import { bridge } from '../lib/bridge';
 import { normalizeAppIconMode, type AppIconMode } from '../lib/appIcon';
 import { updateCompactionSettings } from '../lib/commands';
@@ -48,6 +56,7 @@ import {
   saveSessionNotes,
   type SessionNotesMap,
 } from '../lib/sessionNotes';
+import { createSnapshotScheduler, loadSessionSnapshot } from '../lib/sessionSnapshot';
 import { toast } from '../lib/toast';
 import { DIFF_SCOPES, type DiffScope } from '../types/vcs';
 import {
@@ -146,6 +155,13 @@ export interface AppState {
   // Sessions domain
   sessions: Record<string, SessionSummary>;
   sessionOrder: string[];
+  // Ids vouched for by the last authoritative listing: the boot snapshot
+  // before the first SESSION_LIST, then the sessions of the most recent
+  // SESSION_LIST. A SESSION_LIST prunes confirmed rows it no longer reports,
+  // so a session deleted outside the app disappears on the next list push.
+  // Rows added locally this run (SESSION_CREATED/SESSION_UPDATED) are not in
+  // the set and survive lists that do not mention them yet.
+  listConfirmedSessionIds: string[] | null;
   activeAppSessionId: string | null;
   // appSessionId -> last time the user viewed it. A session reads as "unread" when
   // its updatedAt (latest model activity) is newer than this. Internal only:
@@ -868,14 +884,18 @@ function applySessionOverride(
 }
 
 const persistedUiState = loadPersistedUiState();
+const sessionSnapshot = loadSessionSnapshot();
 
 export const initialState: AppState = {
   connection: 'idle',
-  sessions: {},
-  sessionOrder: [],
+  sessions: sessionSnapshot?.sessions ?? {},
+  sessionOrder: sessionSnapshot?.sessionOrder ?? [],
+  listConfirmedSessionIds: sessionSnapshot?.sessionOrder ?? null,
   activeAppSessionId: persistedUiState.activeAppSessionId ?? null,
   sessionLastSeen: loadSessionLastSeen(),
-  transcripts: {},
+  transcripts: sessionSnapshot?.transcript
+    ? { [sessionSnapshot.transcript.appSessionId]: sessionSnapshot.transcript.events }
+    : {},
   progress: {},
   childSessions: {},
   historyLoaded: {},
@@ -1663,7 +1683,18 @@ function baseReducer(state: AppState, action: Action): AppState {
     }
 
     case 'SESSION_LIST': {
-      const map: Record<string, SessionSummary> = { ...state.sessions };
+      const incoming = new Set(action.sessions.map((m) => m.appSessionId));
+      // Every list is a fresh scan of what exists, so it is authoritative for
+      // the rows the previous listing confirmed: drop confirmed rows it no
+      // longer reports (deleted outside the app, or pruned from a hydrated
+      // snapshot). Rows added locally this run are not confirmed yet and
+      // survive.
+      const confirmed = state.listConfirmedSessionIds;
+      const map: Record<string, SessionSummary> = {};
+      for (const [id, summary] of Object.entries(state.sessions)) {
+        if (confirmed?.includes(id) && !incoming.has(id)) continue;
+        map[id] = summary;
+      }
       for (const m of action.sessions) {
         map[m.appSessionId] = applySessionOverride(
           m,
@@ -1671,7 +1702,11 @@ function baseReducer(state: AppState, action: Action): AppState {
         );
       }
       const order = [
-        ...new Set([...action.sessions.map((m) => m.appSessionId), ...state.sessionOrder]),
+        ...new Set([
+          ...action.sessions.map((m) => m.appSessionId),
+          ...state.sessionOrder,
+          ...Object.keys(state.sessions),
+        ]),
       ]
         .filter((id) => map[id])
         .sort((a, b) => map[b].updatedAt - map[a].updatedAt);
@@ -1684,15 +1719,21 @@ function baseReducer(state: AppState, action: Action): AppState {
           seededLastSeen[m.appSessionId] = m.updatedAt;
         }
       }
+      // If the active session was pruned above (a hydrated snapshot row the
+      // sidecar no longer reports), clear the dangling id so the UI does not
+      // point at a session that no longer exists.
+      const mapById: Partial<Record<string, SessionSummary>> = map;
+      const activeAppSessionId =
+        state.activeAppSessionId !== null && mapById[state.activeAppSessionId] !== undefined
+          ? state.activeAppSessionId
+          : null;
       return {
         ...state,
         sessions: map,
         sessionOrder: order,
         sessionLastSeen: seededLastSeen,
-        activeAppSessionId:
-          state.activeAppSessionId && map[state.activeAppSessionId]
-            ? state.activeAppSessionId
-            : state.activeAppSessionId,
+        listConfirmedSessionIds: action.sessions.map((m) => m.appSessionId),
+        activeAppSessionId,
       };
     }
 
@@ -2815,6 +2856,40 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     updateCompactionSettings(compactionSettingsSnapshot(state));
   }, [state.compactionSettingsRev]);
+
+  // Persist the reload snapshot only when the session list or the active
+  // transcript actually changed (references are immutable), debounced so
+  // streaming bursts coalesce into one write. The scheduler owns its timer,
+  // so an unrelated state change can never cancel a pending write, and the
+  // effect depends on the derived active transcript so background sessions'
+  // transcript updates do not retrigger it.
+  const [snapshotScheduler] = useState(() => createSnapshotScheduler(400));
+  const activeTranscriptEvents = state.activeAppSessionId
+    ? state.transcripts[state.activeAppSessionId]
+    : undefined;
+  useEffect(() => {
+    const activeId = state.activeAppSessionId;
+    snapshotScheduler.push({
+      sessions: state.sessions,
+      sessionOrder: state.sessionOrder,
+      activeTranscript:
+        activeId !== null && activeTranscriptEvents !== undefined
+          ? { appSessionId: activeId, events: activeTranscriptEvents }
+          : undefined,
+    });
+  }, [
+    snapshotScheduler,
+    state.sessions,
+    state.sessionOrder,
+    state.activeAppSessionId,
+    activeTranscriptEvents,
+  ]);
+  useEffect(
+    () => () => {
+      snapshotScheduler.cancel();
+    },
+    [snapshotScheduler],
+  );
 
   useEffect(() => {
     const unsub = bridge.subscribe((ev) => {

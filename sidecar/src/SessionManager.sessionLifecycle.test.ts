@@ -671,7 +671,7 @@ test('Summary patches preserve existing provider transcripts', { concurrency: fa
       h.events.filter((event) => event.type === 'session.updated').at(-1)?.session.autonomy,
       'high',
     );
-    assert.equal(h.history.summaryPatches().get('provider-1')?.autonomy, 'high');
+    assert.equal(h.history.summaryPatchesAndHidden().patches.get('provider-1')?.autonomy, 'high');
     assert.equal(readFileSync(file, 'utf8'), transcript);
   } finally {
     await h.dispose();
@@ -725,7 +725,7 @@ test(
         { ...seeded, providerSessionId: 'provider-current', updatedAt: 19 },
       ]);
 
-      const patches = h.history.summaryPatches();
+      const { patches } = h.history.summaryPatchesAndHidden();
       const patch = patches.get('app-history');
       assert.deepEqual(patch, {
         appSessionId: 'app-history',
@@ -763,7 +763,7 @@ test(
       assert.equal(patches.get('provider-current'), patch);
       assert.equal(patches.has('provider-old'), false);
       assert.deepEqual(
-        h.history.hiddenProviderSessionIds(),
+        h.history.summaryPatchesAndHidden().hiddenProviderSessionIds,
         new Set(['provider-older', 'provider-oldest']),
       );
     } finally {

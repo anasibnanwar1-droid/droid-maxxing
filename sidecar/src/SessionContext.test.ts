@@ -180,8 +180,9 @@ test('plausible exact primary usage wins while child usage changes totals only',
   assert.equal(live.summary.tokensIn, 20);
   assert.equal(live.summary.tokensOut, 5);
   assert.equal(live.summary.contextTokens, 800);
-  assert.equal(h.history.summaryPatches().get('app-1')?.tokensIn, 20);
-  assert.equal(h.history.summaryPatches().get('app-1')?.contextTokens, 800);
+  const patches = h.history.summaryPatchesAndHidden().patches;
+  assert.equal(patches.get('app-1')?.tokensIn, 20);
+  assert.equal(patches.get('app-1')?.contextTokens, 800);
 
   session.nextContextStats = {
     used: 100,

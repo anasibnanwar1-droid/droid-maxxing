@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { hasSetupBlocker, shouldShowOnboarding } from './useOnboarding';
+import { hasSetupBlocker, scheduleEnvDetect, shouldShowOnboarding } from './useOnboarding';
 import type { EnvironmentReport } from '../types/bridge';
 
 function env(partial: Partial<EnvironmentReport>): EnvironmentReport {
@@ -44,4 +44,55 @@ test('no blocker when signed in or api key configured', () => {
     false,
   );
   assert.equal(hasSetupBlocker(null), false);
+});
+
+test('scheduleEnvDetect runs immediately when not deferred', () => {
+  let calls = 0;
+  const cancel = scheduleEnvDetect(
+    false,
+    () => {
+      calls += 1;
+    },
+    () => {
+      throw new Error('idle scheduler must not be used when not deferring');
+    },
+  );
+  assert.equal(calls, 1);
+  cancel();
+  assert.equal(calls, 1);
+});
+
+test('scheduleEnvDetect defers until the idle callback fires', () => {
+  let calls = 0;
+  let pending: (() => void) | undefined;
+  scheduleEnvDetect(
+    true,
+    () => {
+      calls += 1;
+    },
+    (callback) => {
+      pending = callback;
+      return () => {};
+    },
+  );
+  assert.equal(calls, 0, 'no probe before idle');
+  pending?.();
+  assert.equal(calls, 1);
+});
+
+test('cancelling a deferred scheduleEnvDetect prevents the probe', () => {
+  let calls = 0;
+  let cancelled = false;
+  const cancel = scheduleEnvDetect(
+    true,
+    () => {
+      calls += 1;
+    },
+    () => () => {
+      cancelled = true;
+    },
+  );
+  cancel();
+  assert.equal(cancelled, true);
+  assert.equal(calls, 0);
 });

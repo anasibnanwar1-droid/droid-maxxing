@@ -49,6 +49,7 @@ import {
   type ChildSessionTarget,
 } from '../lib/childSessions';
 import { openExternal } from '../lib/onboarding';
+import { useDocumentVisible } from '../hooks/useDocumentVisible';
 
 // Open a link in the OS default browser rather than inside the Electron window.
 function openLink(e: React.MouseEvent, url: string) {
@@ -66,26 +67,25 @@ function httpHref(url: string): string | undefined {
 const ACCENT = 'var(--droid-accent)';
 const EASE = [0.16, 1, 0.3, 1] as const;
 
-/* ── Live elapsed-time hook: ticks once per second while `active`. ── */
+/* ── Live elapsed-time hook: ticks while active and visible. ── */
 function useElapsed(startTs: number | undefined, active: boolean): number {
+  const visible = useDocumentVisible();
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    if (!active) return;
+    if (!active || !visible) return;
     setNow(Date.now());
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [active]);
+  }, [active, visible]);
   return startTs != null ? Math.max(0, now - startTs) : 0;
 }
 
 /* ── Streaming caret (text being written) ── */
 export function StreamingCaret() {
   return (
-    <motion.span
-      className="inline-block w-[2px] h-[1.05em] -mb-[0.15em] ml-0.5 rounded-sm align-baseline"
+    <span
+      className="caret-blink inline-block w-[2px] h-[1.05em] -mb-[0.15em] ml-0.5 rounded-sm align-baseline"
       style={{ background: ACCENT }}
-      animate={{ opacity: [1, 0.15, 1] }}
-      transition={{ duration: 1, repeat: Infinity, ease: 'easeInOut' }}
     />
   );
 }
@@ -2321,6 +2321,27 @@ export function childSessionLineIsRunning(activity?: ChildSessionActivity): bool
   return activity?.status === 'running';
 }
 
+// Only genuinely appended items (new keys appearing at the tail) animate in.
+// Paging older history prepends already-past messages at the top; those and
+// every previously-rendered item must stay still rather than re-animating as if
+// they were fresh activity. Walking from the tail collects the contiguous run of
+// new keys and stops at the first previously-seen item, so a prepend (new keys
+// ahead of the old ones) animates nothing.
+export function appendedFeedItemKeys(
+  items: readonly { key: string }[],
+  previous: { identity: string; keys: Set<string> } | null,
+  identity: string,
+): Set<string> {
+  const appended = new Set<string>();
+  if (previous?.identity !== identity) return appended;
+  for (let i = items.length - 1; i >= 0; i--) {
+    const key = items[i].key;
+    if (previous.keys.has(key)) break;
+    appended.add(key);
+  }
+  return appended;
+}
+
 /* ── The activity feed (list only; parent owns the scroll container) ── */
 export function MessageFeed({
   events,
@@ -2388,6 +2409,19 @@ export function MessageFeed({
     () => providedItems ?? groupTurns(buildFeed(events, rich), pending, specContent, changes),
     [providedItems, events, pending, rich, changes, specContent],
   );
+  const feedIdentity = `${events[0]?.appSessionId ?? ''}:${events[0]?.sourceSessionId ?? ''}`;
+  const renderedFeedRef = useRef<{ identity: string; keys: Set<string> } | null>(null);
+  const previousFeed = renderedFeedRef.current;
+  useEffect(() => {
+    renderedFeedRef.current = {
+      identity: feedIdentity,
+      keys: new Set(items.map((item) => item.key)),
+    };
+  }, [feedIdentity, items]);
+  // Track item identity (not list index) so prepended older-history items and
+  // every already-rendered item stay still; only genuinely appended tail items
+  // enter with the rise animation.
+  const animateKeys = appendedFeedItemKeys(items, previousFeed, feedIdentity);
 
   // The copy button appears only on a turn's final model response.
   const finalResponseKeys = useMemo(
@@ -2438,29 +2472,32 @@ export function MessageFeed({
     <div className="space-y-4">
       {showSpecCard && <InlineSpecCard content={specContent ?? ''} onOpenWiki={onOpenSpecWiki} />}
 
-      {items.map((item, idx) => (
-        <motion.div
-          key={item.key}
-          {...(promptKeys.has(item.key) ? { 'data-anchor-id': item.key } : {})}
-          initial={{ opacity: 0, y: 4 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.2, ease: EASE }}
-        >
-          <FeedItemView
-            item={item}
-            live={pending && idx === lastIdx}
-            compacting={compacting && idx === lastIdx}
-            cwd={cwd}
-            onOpenDiff={stableOnOpenDiff}
-            onOpenReviewFile={stableOnOpenReviewFile}
-            onOpenChildSession={stableOnOpenChildSession}
-            childSessionActivity={stableChildSessionActivity}
-            liveTiming={rich}
-            specContent={specContent}
-            isFinalResponse={finalResponseKeys.has(item.key)}
-          />
-        </motion.div>
-      ))}
+      {items.map((item, idx) => {
+        const isNewItem = animateKeys.has(item.key);
+        return (
+          <motion.div
+            key={item.key}
+            {...(promptKeys.has(item.key) ? { 'data-anchor-id': item.key } : {})}
+            initial={isNewItem ? { opacity: 0, y: 4 } : false}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.2, ease: EASE }}
+          >
+            <FeedItemView
+              item={item}
+              live={pending && idx === lastIdx}
+              compacting={compacting && idx === lastIdx}
+              cwd={cwd}
+              onOpenDiff={stableOnOpenDiff}
+              onOpenReviewFile={stableOnOpenReviewFile}
+              onOpenChildSession={stableOnOpenChildSession}
+              childSessionActivity={stableChildSessionActivity}
+              liveTiming={rich}
+              specContent={specContent}
+              isFinalResponse={finalResponseKeys.has(item.key)}
+            />
+          </motion.div>
+        );
+      })}
 
       {showWorking && <WorkingIndicator label={workingLabel} startTs={workingStart} />}
     </div>

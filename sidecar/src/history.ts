@@ -11,7 +11,7 @@ import {
 import { DatabaseSync } from 'node:sqlite';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
-import { numberValue, stringValue } from './values.js';
+import { dateMs, numberValue, objectValue, stringValue } from './values.js';
 import type {
   SessionRole,
   Autonomy,
@@ -26,8 +26,21 @@ import type {
   TranscriptEvent,
 } from './protocol.js';
 import { mapFeature } from './normalize.js';
-import { designPromptDisplayFromText } from './browser/designPromptDisplay.js';
 import { normalizeCompactionTokenLimit } from './compaction.js';
+import {
+  SessionFileCache,
+  type SessionFileScan,
+  type SessionFileStat,
+} from './sessionFileCache.js';
+import {
+  SESSION_START_BYTES,
+  parseFullSessionTranscript,
+  readSessionRawWindow,
+  SessionTranscriptReader,
+  type StoredMessageLine,
+  type StoredSessionStart,
+  type TranscriptWindowCursor,
+} from './sessionTranscript.js';
 
 interface StoredMissionState {
   missionId?: string;
@@ -42,30 +55,6 @@ interface StoredMissionState {
 
 interface StoredFeatureFile {
   features?: unknown[];
-}
-
-interface StoredMessageLine {
-  type?: string;
-  id?: string;
-  timestamp?: string;
-  message?: {
-    role?: string;
-    content?: unknown[];
-  };
-}
-
-interface StoredSessionStart {
-  type?: string;
-  id?: string;
-  cwd?: string;
-  title?: string;
-  sessionTitle?: string;
-  decompSessionType?: string;
-  decompMissionId?: string;
-  // Present when this session was spawned by another session's tool call
-  // (Factory Task tool children). Such sessions are not standalone conversations.
-  callingSessionId?: string;
-  callingToolUseId?: string;
 }
 
 interface StoredModelSettings {
@@ -96,6 +85,11 @@ export interface HistoricalSummaryFilter {
   workspaceCwds?: string[];
   includePlainChats?: boolean;
   limitPerWorkspace?: number;
+}
+
+interface SummaryPatchesAndHidden {
+  patches: Map<string, Partial<SessionSummary>>;
+  hiddenProviderSessionIds: Set<string>;
 }
 
 export interface HydratedSessionHistory {
@@ -147,18 +141,17 @@ const STATE_TO_PHASE: Record<string, SessionPhase> = {
   awaiting_input: 'running',
 };
 
-const MAX_TEXT_CHARS = 12_000;
 // Safety cap for worker transcript events on the initial page (the orchestrator
 // scrollback is paged via the cursor, so only workers need bounding here).
 // How many orchestrator scrollback events to load per page (initial open and
 // each lazy older-page fetch). Bounds work for very long, multi-compaction chats.
 const DEFAULT_HISTORY_WINDOW = 400;
 // Per-segment span used to derive a global monotonic `seq` from a chain index +
-// in-segment position. Must exceed any single segment's windowed item count;
-// oversized files are tail-windowed at SESSION_*_BYTES, far below this.
-const SEQ_SEGMENT_STRIDE = 1_000_000;
-const MAX_SESSION_BYTES = 5_000_000;
-const SESSION_START_BYTES = 256_000;
+// in-segment position. Must exceed any single segment's seq band: a segment is
+// tail-windowed at MAX_SESSION_BYTES, and the reader assigns each line a
+// LINE_EVENT_STRIDE band, so the ceiling is (1<<27)/256 = 524,288 lines — far
+// above the ~50K lines a 5MB window of real message lines can hold.
+const SEQ_SEGMENT_STRIDE = 1 << 27;
 const HISTORY_SCHEMA_VERSION = 1;
 export const SESSION_INDEX_FILENAME = 'session-index.sqlite';
 const HISTORY_SCHEMA_RECOVERY =
@@ -202,46 +195,17 @@ export function loadHistoricalSessions(options: HistoricalSummaryFilter = {}): H
     ? new Set(options.workspaceCwds.filter(Boolean))
     : null;
   if (workspaceCwds && workspaceCwds.size === 0 && !options.includePlainChats) return [];
-  for (const [providerSessionId, path] of buildSessionIndex()) {
-    const start = readSessionStart(path);
-    const classification = classifyStoredSession(start);
-    if (!classification) continue;
-    const stat = statSync(path);
-    const title = start.sessionTitle || start.title || `Session ${providerSessionId.slice(0, 8)}`;
-    const settings = readSessionModelSettings(start, path);
-    const summary = applyCachedSummary(
-      {
-        appSessionId: providerSessionId,
-        providerSessionId,
-        missionId: classification.missionId,
-        sessionPurpose: classification.sessionPurpose,
-        interactionMode: classification.interactionMode,
-        role: classification.role,
-        title,
-        goal: title,
-        cwd: start.cwd ?? '',
-        workspaceKind: start.cwd ? 'folder' : 'none',
-        ...settings,
-        autonomy: settings.autonomy ?? 'low',
-        phase: 'paused',
-        streaming: false,
-        queuedSends: 0,
-        features: [],
-        tokensIn: 0,
-        tokensOut: 0,
-        contextTokens: 0,
-        createdAt: stat.birthtimeMs,
-        updatedAt: stat.mtimeMs,
-      },
-      cached,
-    );
+  for (const [providerSessionId, file] of scanSessionFiles()) {
+    const summary = summarizeSessionFile(providerSessionId, file);
+    if (!summary) continue;
+    const patched = applyCachedSummary(summary, cached);
     if (
       (workspaceCwds || options.includePlainChats) &&
-      !shouldIncludeCwd(summary.cwd ?? '', workspaceCwds, options.includePlainChats)
+      !shouldIncludeCwd(patched.cwd ?? '', workspaceCwds, options.includePlainChats)
     )
       continue;
     rows.push({
-      summary,
+      summary: patched,
       progress: [],
     });
   }
@@ -276,10 +240,10 @@ export function loadSessionPage(
   cursor?: string,
   limit = 200,
 ): HistoryPage {
-  const path = buildSessionIndex().get(providerSessionId);
+  const path = sessionIndexFor(providerSessionId).get(providerSessionId);
   if (!path) throw new Error(`Session history not found for ${providerSessionId}`);
   const role = roleFromSessionStart(readSessionStart(path));
-  const all = parseSessionTranscript(appSessionId, providerSessionId, path, role);
+  const all = parseFullSessionTranscript(appSessionId, providerSessionId, path, role);
   const safeLimit = Math.max(1, Math.min(limit, 500));
   const end = cursor ? Math.max(0, Number(cursor) || 0) : all.length;
   const start = Math.max(0, end - safeLimit);
@@ -291,6 +255,7 @@ export function loadSessionPage(
 
 export class HistoryIndex {
   private db: DatabaseSync;
+  private readonly sessionFiles: SessionFileCache;
 
   constructor() {
     const dir = join(homedir(), '.factory', 'droidex');
@@ -300,10 +265,71 @@ export class HistoryIndex {
       HistoryIndex.initializeOrValidateHistorySchema(db);
       db.exec('PRAGMA journal_mode = WAL');
       this.db = db;
+      this.sessionFiles = new SessionFileCache(
+        db,
+        scanSessionFileTree,
+        summarizeSessionFile,
+        statSessionFile,
+      );
     } catch (error) {
       db.close();
       throw error;
     }
+  }
+
+  get sessionFileCacheSize(): number {
+    return this.sessionFiles.size;
+  }
+
+  // Serves the historical session list from the session file cache instead of
+  // walking and re-reading every session file on each request. Rows are as of
+  // the last reconcileSessionFiles() run, which happens once per boot and on
+  // every sessions-dir watcher event; the app_sessions patch overlay is
+  // always fresh.
+  listHistoricalSessions(options: HistoricalSummaryFilter = {}): HistoricalSession[] {
+    const workspaceCwds = options.workspaceCwds
+      ? new Set(options.workspaceCwds.filter(Boolean))
+      : null;
+    if (workspaceCwds?.size === 0 && !options.includePlainChats) return [];
+    const patches = this.summaryPatches();
+    const rows: HistoricalSession[] = [];
+    for (const cached of this.sessionFiles.summaries()) {
+      const summary = applyCachedSummary({ ...cached }, patches);
+      if (
+        (workspaceCwds || options.includePlainChats) &&
+        // Cached rows are validated to hold a string cwd at load/reconcile.
+        !shouldIncludeCwd(summary.cwd, workspaceCwds, options.includePlainChats)
+      )
+        continue;
+      rows.push({ summary, progress: [] });
+    }
+    return limitHistoricalRows(
+      rows.sort((a, b) => b.summary.updatedAt - a.summary.updatedAt),
+      workspaceCwds,
+      options.limitPerWorkspace,
+      options.includePlainChats,
+    );
+  }
+
+  // Diff-cached session files against the files on disk, re-summarizing only
+  // new or changed files and dropping deleted ones. Returns the number of
+  // cache entries written or removed.
+  reconcileSessionFiles(): number {
+    const changed = this.sessionFiles.reconcile();
+    // The lifetime session id -> file memo must follow cache reconciliation:
+    // otherwise history.list can miss new files, and transcript lookup can
+    // follow stale paths after deletion.
+    if (changed > 0) invalidateSessionIndex();
+    return changed;
+  }
+
+  // Reconcile exactly the session files a watcher event reported, so a live
+  // external change costs a stat (and at most one re-parse) per changed file
+  // instead of a walk of the whole sessions tree.
+  reconcileSessionFilePaths(changes: { providerSessionId: string; path: string }[]): number {
+    const changed = this.sessionFiles.reconcilePaths(changes);
+    if (changed > 0) invalidateSessionIndex();
+    return changed;
   }
 
   private static initializeOrValidateHistorySchema(db: DatabaseSync): void {
@@ -513,25 +539,18 @@ export class HistoryIndex {
     }
   }
 
-  summaryPatches(): Map<string, Partial<SessionSummary>> {
+  summaryPatchesAndHidden(): SummaryPatchesAndHidden {
+    const rows = this.db.prepare('SELECT * FROM app_sessions').all() as Record<string, unknown>[];
+    const patches = summaryPatchesFromRows(rows);
+    applyStoredCompactionGenerations(this.db, patches);
+    return { patches, hiddenProviderSessionIds: hiddenProviderSessionIdsFromRows(rows) };
+  }
+
+  private summaryPatches(): Map<string, Partial<SessionSummary>> {
     const rows = this.db.prepare('SELECT * FROM app_sessions').all() as Record<string, unknown>[];
     const patches = summaryPatchesFromRows(rows);
     applyStoredCompactionGenerations(this.db, patches);
     return patches;
-  }
-
-  hiddenProviderSessionIds(): Set<string> {
-    const rows = this.db
-      .prepare('SELECT app_session_id, compacted_from_provider_session_ids FROM app_sessions')
-      .all() as Record<string, unknown>[];
-    const hidden = new Set<string>();
-    for (const row of rows) {
-      const appSessionId = stringValue(row.app_session_id);
-      for (const providerSessionId of jsonStringArray(row.compacted_from_provider_session_ids)) {
-        if (providerSessionId && providerSessionId !== appSessionId) hidden.add(providerSessionId);
-      }
-    }
-    return hidden;
   }
 
   recordEvent(event: TranscriptEvent): void {
@@ -969,6 +988,17 @@ function summaryPatchesFromRows(
   return patches;
 }
 
+function hiddenProviderSessionIdsFromRows(rows: Record<string, unknown>[]): Set<string> {
+  const hidden = new Set<string>();
+  for (const row of rows) {
+    const appSessionId = stringValue(row.app_session_id);
+    for (const providerSessionId of jsonStringArray(row.compacted_from_provider_session_ids)) {
+      if (providerSessionId && providerSessionId !== appSessionId) hidden.add(providerSessionId);
+    }
+  }
+  return hidden;
+}
+
 export function applyCachedSummary(
   summary: SessionSummary,
   cached: Map<string, Partial<SessionSummary>>,
@@ -1008,13 +1038,12 @@ export function hydrateHistoricalSession(
     storedProgress,
     readStoredChildSessions(summary.appSessionId),
   );
-  const sessionIndex = buildSessionIndex();
 
   // The orchestrator backing session is rekeyed on every compaction, so the
   // full conversation is spread across a CHAIN of session files. Resolve that
   // chain (oldest -> newest) from the persisted app-session row; replaying only
   // the latest segment is what made compacted chats lose their scrollback.
-  const chain = orchestratorChain(summary, sessionIndex);
+  const chain = orchestratorChain(summary);
   const window = loadSessionTranscriptWindow(summary.appSessionId, chain, opts);
 
   // Older pages only extend the orchestrator scrollback upward; workers and
@@ -1030,13 +1059,14 @@ export function hydrateHistoricalSession(
 // ids) for a mission. The persisted app-session row keeps the authoritative
 // chain (previous backing ids + current); fall back to the summary when it is
 // already hydrated with one. Filtered to ids that still have a session file.
-function orchestratorChain(summary: SessionSummary, sessionIndex: Map<string, string>): string[] {
+function orchestratorChain(summary: SessionSummary): string[] {
   const patches = readStoredSummaryPatches();
   const patch =
     patches.get(summary.appSessionId) ??
     patches.get(summary.providerSessionId ?? summary.appSessionId);
   const currentSession =
     patch?.providerSessionId ?? summary.providerSessionId ?? summary.appSessionId;
+  const sessionIndex = sessionIndexFor(currentSession);
   const compactedFrom =
     patch?.compactedFromProviderSessionIds ?? summary.compactedFromProviderSessionIds ?? [];
   return dedupeStrings([summary.appSessionId, ...compactedFrom, currentSession]).filter((id) =>
@@ -1051,10 +1081,10 @@ function orchestratorChain(summary: SessionSummary, sessionIndex: Map<string, st
 // straight from the persisted app-session row (keyed by either id) and filters
 // to ids that still have a session file on disk.
 export function resolveSessionChain(appSessionId: string, providerSessionId: string): string[] {
-  const sessionIndex = buildSessionIndex();
   const patches = readStoredSummaryPatches();
   const patch = patches.get(appSessionId) ?? patches.get(providerSessionId);
   const currentSession = patch?.providerSessionId ?? providerSessionId;
+  const sessionIndex = sessionIndexFor(currentSession);
   const compactedFrom = patch?.compactedFromProviderSessionIds ?? [];
   return dedupeStrings([appSessionId, ...compactedFrom, currentSession]).filter((id) =>
     sessionIndex.has(id),
@@ -1072,81 +1102,80 @@ function dedupeStrings(values: Array<string | undefined>): string[] {
   return out;
 }
 
-interface CompactionState {
-  removedCount?: number;
-  ts: number;
-}
+// Parsed-segment readers, LRU-bounded: repeat pages and session reopens hit a
+// warm reader instead of re-reading and re-parsing the file. Freshness is
+// validated by stat (mtime + size) on every window, so a live-appended or
+// compacted file is re-read exactly once per change.
+const MAX_TRANSCRIPT_READERS = 12;
+const transcriptReaders = new Map<
+  string,
+  { mtimeMs: number; sizeBytes: number; appSessionId: string; reader: SessionTranscriptReader }
+>();
 
-// Read the leading compaction_state record a compacted session begins with.
-// It marks the boundary where earlier turns were summarized away; we surface it
-// as a subtle "context compacted" divider rather than replaying the summary.
-// Reads from the HEAD of the file (compaction_state is a leading record); the
-// transcript reader tail-windows oversized files and would miss it.
-function readCompactionState(path: string): CompactionState | null {
-  const size = statSync(path).size;
-  const bytes = Math.min(size, SESSION_START_BYTES);
-  const fd = openSync(path, 'r');
-  let rows: Array<{ type?: string; timestamp?: string; removedCount?: unknown }>;
-  try {
-    const buffer = Buffer.alloc(bytes);
-    readSync(fd, buffer, 0, bytes, 0);
-    rows = parseJsonLines(buffer.toString('utf8'));
-  } finally {
-    closeSync(fd);
-  }
-  for (const row of rows) {
-    if (row.type === 'session_start') continue;
-    if (row.type === 'compaction_state') {
-      return { removedCount: numberValue(row.removedCount), ts: dateMs(row.timestamp) || 0 };
-    }
-    return null;
-  }
-  return null;
-}
-
-function compactionDividerEvent(
-  appSessionId: string,
-  providerSessionId: string,
-  comp: CompactionState,
-): TranscriptEvent {
-  return {
-    id: `${providerSessionId}:compaction`,
-    appSessionId,
-    sourceSessionId: 'primary',
-    role: 'primary',
-    ts: comp.ts,
-    kind: 'compaction',
-    removedCount: comp.removedCount,
-  };
-}
-
-// The chronological items for one chain segment: a leading compaction divider
-// (when the file actually starts with a compaction_state) followed by that
-// file's messages. The divider is detected by reading the record itself rather
-// than the segment's position, so an in-place-compacted single segment - or the
-// oldest reachable segment once earlier files have been pruned - still surfaces
-// it instead of silently dropping the boundary.
-function segmentItems(
+function transcriptReaderFor(
   appSessionId: string,
   providerSessionId: string,
   path: string,
-): TranscriptEvent[] {
-  const items: TranscriptEvent[] = [];
-  const parsed = parseSessionTranscript(appSessionId, providerSessionId, path, 'primary');
-  // The head read backstops oversized files whose leading compaction_state was
-  // tail-windowed away; when the parse already replayed that same record as a
-  // divider, adding the head copy would duplicate it.
-  const comp = readCompactionState(path);
-  if (comp && !parsed.some((e) => e.kind === 'compaction' && e.ts === comp.ts))
-    items.push(compactionDividerEvent(appSessionId, providerSessionId, comp));
-  items.push(...parsed);
-  return items;
+): SessionTranscriptReader {
+  const stat = statSync(path);
+  const cached = transcriptReaders.get(path);
+  if (
+    cached &&
+    cached.mtimeMs === stat.mtimeMs &&
+    cached.sizeBytes === stat.size &&
+    cached.appSessionId === appSessionId
+  ) {
+    transcriptReaders.delete(path);
+    transcriptReaders.set(path, cached);
+    return cached.reader;
+  }
+  const reader = new SessionTranscriptReader(appSessionId, providerSessionId, path, 'primary');
+  transcriptReaders.delete(path);
+  transcriptReaders.set(path, {
+    mtimeMs: stat.mtimeMs,
+    sizeBytes: stat.size,
+    appSessionId,
+    reader,
+  });
+  if (transcriptReaders.size > MAX_TRANSCRIPT_READERS) {
+    const oldest = transcriptReaders.keys().next().value;
+    if (oldest) transcriptReaders.delete(oldest);
+  }
+  return reader;
+}
+
+export function invalidateSessionTranscripts(): void {
+  transcriptReaders.clear();
+}
+
+// Transcript window cursors: "v2:<chainIdx>:<line>:<skip>" addresses a
+// line/event position inside one segment; "v2:<chainIdx>:end" starts at a
+// segment's tail. Pre-v2 cursors addressed item indexes that no longer exist;
+// only their "<chainIdx>:end" form still maps, anything else ends paging
+// cleanly (empty page, no cursor) instead of serving a wrong page.
+function parseTranscriptCursor(
+  cursor: string,
+): { ci: number; from?: TranscriptWindowCursor } | null {
+  const parts = cursor.split(':');
+  if (parts[0] === 'v2') {
+    const ci = Number(parts[1]);
+    if (!Number.isInteger(ci) || ci < 0) return null;
+    if (parts[2] === 'end' && parts.length === 3) return { ci };
+    const line = Number(parts[2]);
+    const skip = Number(parts[3]);
+    if (parts.length !== 4 || !Number.isInteger(line) || !Number.isInteger(skip)) return null;
+    if (line < -1 || skip < 0) return null;
+    return { ci, from: { line, skip } };
+  }
+  const ci = Number(parts[0]);
+  if (parts.length === 2 && parts[1] === 'end' && Number.isInteger(ci) && ci >= 0) return { ci };
+  return null;
 }
 
 // Window the primary transcript backward across the compaction chain.
-// Reads files newest -> oldest only as far as needed to fill `limit`, so a
-// months-long, heavily-compacted chat opens fast and pages older history in on
-// demand. The cursor is "<chainIdx>:<itemEnd>" ('end' = the file's tail).
+// Segments are read newest -> oldest only as far as needed to fill `limit`,
+// and each segment parses its lines lazily from the tail, so a months-long,
+// heavily-compacted chat opens fast and pages older history in on demand.
 export function loadSessionTranscriptWindow(
   appSessionId: string,
   chainProviderSessionIds: string[],
@@ -1157,42 +1186,36 @@ export function loadSessionTranscriptWindow(
   const chain = chainProviderSessionIds.filter((id) => sessionIndex.has(id));
   if (chain.length === 0) return { events: [] };
 
-  let startIdx: number;
-  let end: number;
+  let startIdx = chain.length - 1;
+  let from: TranscriptWindowCursor | undefined;
   if (opts.cursor) {
-    const [ciStr, endStr] = opts.cursor.split(':');
-    startIdx = Number(ciStr);
-    end = endStr === 'end' ? Infinity : Number(endStr);
-    if (!Number.isInteger(startIdx) || startIdx < 0 || startIdx >= chain.length)
-      return { events: [] };
-  } else {
-    startIdx = chain.length - 1;
-    end = Infinity;
+    const parsed = parseTranscriptCursor(opts.cursor);
+    if (!parsed || parsed.ci >= chain.length) return { events: [] };
+    startIdx = parsed.ci;
+    from = parsed.from;
   }
 
   const picked: TranscriptEvent[] = [];
   let olderCursor: string | undefined;
   for (let ci = startIdx; ci >= 0; ci--) {
-    const path = sessionIndex.get(chain[ci])!;
-    const items = segmentItems(appSessionId, chain[ci], path);
-    let start = ci === startIdx ? Math.min(end, items.length) : items.length;
-    while (start > 0 && picked.length < limit) {
-      start--;
-      // Chain-derived monotonic order: older segments (lower ci) and earlier
-      // positions sort first, independent of wall-clock ts. SEQ_SEGMENT_STRIDE
-      // exceeds any single segment's windowed item count, so the global order
-      // is preserved across pages without re-reading older segments.
-      picked.push({ ...items[start], seq: ci * SEQ_SEGMENT_STRIDE + start });
-    }
-    if (picked.length >= limit) {
-      if (start > 0) olderCursor = `${ci}:${start}`;
-      else if (ci > 0) olderCursor = `${ci - 1}:end`;
+    const reader = transcriptReaderFor(appSessionId, chain[ci], sessionIndex.get(chain[ci])!);
+    // Chain-derived monotonic order: older segments (lower ci) and earlier
+    // in-segment positions sort first, independent of wall-clock ts.
+    const window = reader.windowBackward(
+      limit - picked.length,
+      ci * SEQ_SEGMENT_STRIDE,
+      ci === startIdx ? from : undefined,
+    );
+    picked.unshift(...window.events);
+    if (window.older) {
+      olderCursor = `v2:${ci}:${window.older.line}:${window.older.skip}`;
       break;
     }
-    end = Infinity;
+    if (picked.length >= limit) {
+      if (ci > 0) olderCursor = `v2:${ci - 1}:end`;
+      break;
+    }
   }
-
-  picked.reverse();
   return { events: picked, olderCursor };
 }
 
@@ -1429,152 +1452,6 @@ function mapStoredFeature(feature: unknown): BridgeFeature {
   }
 }
 
-function parseSessionTranscript(
-  appSessionId: string,
-  providerSessionId: string,
-  path: string,
-  role: SessionRole,
-): TranscriptEvent[] {
-  const events: TranscriptEvent[] = [];
-  const sessionLines = readSessionJsonLines<StoredMessageLine | StoredSessionStart>(path);
-  if (sessionLines.trimmed) {
-    events.push(
-      event(
-        appSessionId,
-        providerSessionId,
-        role,
-        'history-window',
-        0,
-        statSync(path).mtimeMs,
-        'status',
-        {
-          text: `Loaded latest ${Math.round(MAX_SESSION_BYTES / 1_000_000)} MB of this oversized session for UI performance.`,
-        },
-      ),
-    );
-  }
-  for (const line of sessionLines.rows) {
-    // In-place daemon auto-compaction appends a compaction_state marker to the
-    // SAME session file, so a mid-file record marks a summarize-away boundary
-    // that must replay as a divider (leading records are handled by the
-    // segment's head read, which segmentItems dedupes against).
-    if (line.type === 'compaction_state') {
-      const raw = line as Record<string, unknown>;
-      const ts = dateMs(stringValue(raw.timestamp)) || 0;
-      events.push(
-        event(
-          appSessionId,
-          providerSessionId,
-          role,
-          line.id || `compaction-${ts}`,
-          0,
-          ts,
-          'compaction',
-          {
-            removedCount: numberValue(raw.removedCount),
-          },
-        ),
-      );
-      continue;
-    }
-    if (line.type !== 'message' || !('message' in line)) continue;
-    const message = line.message;
-    const content = Array.isArray(message?.content) ? message.content : [];
-    const ts = dateMs(line.timestamp) || Date.now();
-    const messageId = line.id || `${providerSessionId}-${ts}`;
-    const messageRole = message?.role;
-
-    content.forEach((item, index) => {
-      const block = objectValue(item);
-      if (!block) return;
-      const type = stringValue(block.type);
-      if (messageRole === 'assistant') {
-        if (type === 'thinking') {
-          const text = trimText(stringValue(block.thinking) || stringValue(block.text) || '');
-          if (text)
-            events.push(
-              event(appSessionId, providerSessionId, role, messageId, index, ts, 'thinking', {
-                text,
-              }),
-            );
-        } else if (type === 'text') {
-          const text = trimText(stringValue(block.text) || '');
-          if (text)
-            events.push(
-              event(appSessionId, providerSessionId, role, messageId, index, ts, 'text', {
-                text,
-              }),
-            );
-        } else if (type === 'tool_use') {
-          events.push(
-            event(appSessionId, providerSessionId, role, messageId, index, ts, 'tool_call', {
-              toolName: stringValue(block.name) || 'tool',
-              toolArgs: block.input,
-              // Carry the tool_use id so persisted child-session links resolve exactly
-              // (duplicate-label spawns would otherwise fall back to label match).
-              toolUseId: stringValue(block.id),
-            }),
-          );
-        }
-        return;
-      }
-
-      if (type === 'tool_result') {
-        const contentText = stringifyToolResult(block.content);
-        events.push(
-          event(appSessionId, providerSessionId, role, messageId, index, ts, 'tool_result', {
-            toolName: stringValue(block.name),
-            text: trimText(contentText),
-            isError: Boolean(block.is_error ?? block.isError),
-            // Carry the originating call's id so the renderer can correlate a
-            // result to its tool_call exactly (result blocks have no name and
-            // may not be adjacent to their call after replay/batching).
-            toolUseId: stringValue(block.tool_use_id ?? block.toolUseId) || undefined,
-          }),
-        );
-      } else if (messageRole === 'user' && role === 'primary' && type === 'text') {
-        const rawText = trimText(stringValue(block.text) || '');
-        const display = designPromptDisplayFromText(rawText);
-        const text = display?.text ?? rawText;
-        if (text && !isSystemText(text)) {
-          events.push(
-            event(appSessionId, 'user', 'primary', messageId, index, ts, 'text', {
-              text,
-              author: 'user',
-              browserRefs: display?.browserRefs,
-            }),
-          );
-        }
-      }
-    });
-  }
-  return events;
-}
-
-function event(
-  appSessionId: string,
-  sourceProviderSessionId: string,
-  role: SessionRole,
-  messageId: string,
-  index: number,
-  ts: number,
-  kind: TranscriptEvent['kind'],
-  extra: Partial<TranscriptEvent>,
-): TranscriptEvent {
-  return {
-    id: `${sourceProviderSessionId}:${messageId}:${index}:${kind}`,
-    appSessionId,
-    sourceSessionId:
-      role === 'primary' && sourceProviderSessionId !== 'user'
-        ? 'primary'
-        : sourceProviderSessionId,
-    role,
-    ts,
-    kind,
-    ...extra,
-  };
-}
-
 function missionDirs(): string[] {
   const root = join(homedir(), '.factory', 'missions');
   if (!existsSync(root)) return [];
@@ -1634,14 +1511,27 @@ function shouldIncludeCwd(
   return workspaceCwds.has(cwd);
 }
 
-function buildSessionIndex(): Map<string, string> {
+function scanSessionFileTree(): SessionFileScan {
   const root = join(homedir(), '.factory', 'sessions');
-  const index = new Map<string, string>();
-  if (!existsSync(root)) return index;
+  const files = new Map<string, SessionFileStat>();
+  if (!existsSync(root)) return { files, isComplete: true };
 
+  const settingsMtimes = new Map<string, number>();
+  let isComplete = true;
   const walk = (dir: string, depth: number) => {
     if (depth > 4) return;
-    for (const name of readdirSync(dir)) {
+    // A directory can be removed between the root check and this readdir
+    // (a parallel Droid CLI run compacting/deleting sessions). Skip a
+    // vanished subtree instead of letting the throw abort the whole scan,
+    // which would abort the cache reconcile it backs.
+    let names: string[];
+    try {
+      names = readdirSync(dir);
+    } catch {
+      isComplete = false;
+      return;
+    }
+    for (const name of names) {
       const path = join(dir, name);
       let stat;
       try {
@@ -1650,11 +1540,125 @@ function buildSessionIndex(): Map<string, string> {
         continue;
       }
       if (stat.isDirectory()) walk(path, depth + 1);
-      else if (name.endsWith('.jsonl')) index.set(name.slice(0, -'.jsonl'.length), path);
+      else if (name.endsWith('.jsonl')) {
+        files.set(name.slice(0, -'.jsonl'.length), {
+          path,
+          birthtimeMs: stat.birthtimeMs,
+          mtimeMs: stat.mtimeMs,
+          sizeBytes: stat.size,
+          settingsMtimeMs: null,
+        });
+      } else if (name.endsWith('.settings.json')) {
+        settingsMtimes.set(name.slice(0, -'.settings.json'.length), stat.mtimeMs);
+      }
     }
   };
   walk(root, 0);
+  for (const [id, file] of files) {
+    file.settingsMtimeMs = settingsMtimes.get(id) ?? null;
+  }
+  return { files, isComplete };
+}
+
+function scanSessionFiles(): Map<string, SessionFileStat> {
+  return scanSessionFileTree().files;
+}
+
+// Stats one session file and its settings sidecar, or returns null when the
+// file is gone (deleted between a watcher event and the reconcile).
+function statSessionFile(path: string): SessionFileStat | null {
+  try {
+    const stat = statSync(path);
+    let settingsMtimeMs: number | null = null;
+    try {
+      settingsMtimeMs = statSync(path.replace(/\.jsonl$/, '.settings.json')).mtimeMs;
+    } catch {
+      settingsMtimeMs = null;
+    }
+    return {
+      path,
+      birthtimeMs: stat.birthtimeMs,
+      mtimeMs: stat.mtimeMs,
+      sizeBytes: stat.size,
+      settingsMtimeMs,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// The session id -> file index backs every history page and transcript window
+// load, and several of those run per session restore. Walking ~/.factory/
+// sessions on each call made every restore and page pay the full directory
+// scan (~50ms warm, much more cold, with thousands of session files), so the
+// index is memoized for the sidecar's lifetime. The sidecar never moves or
+// deletes session files, and sessionIndexFor rebuilds the memo once when a
+// lookup misses, so a file created by a session started or compacted after
+// the memo was built still resolves on first access.
+let sessionIndexMemo: Map<string, string> | null = null;
+
+export function invalidateSessionIndex(): void {
+  sessionIndexMemo = null;
+}
+
+// Builds the memoized session index ahead of the first history lookup, so the
+// first session restore after boot does not pay the ~/.factory/sessions walk.
+export function warmSessionIndex(): void {
+  buildSessionIndex();
+}
+
+function buildSessionIndex(): Map<string, string> {
+  if (sessionIndexMemo) return sessionIndexMemo;
+  const index = new Map<string, string>();
+  for (const [providerSessionId, file] of scanSessionFiles()) {
+    index.set(providerSessionId, file.path);
+  }
+  sessionIndexMemo = index;
   return index;
+}
+
+function sessionIndexFor(requiredId: string): Map<string, string> {
+  const index = buildSessionIndex();
+  if (index.has(requiredId)) return index;
+  invalidateSessionIndex();
+  return buildSessionIndex();
+}
+
+// Builds the base summary for one on-disk session file, or null when the file
+// is a worker/validator/Task-child session that never appears as top-level
+// history. The app_sessions patch overlay is applied by the caller.
+function summarizeSessionFile(
+  providerSessionId: string,
+  file: SessionFileStat,
+): SessionSummary | null {
+  const start = readSessionStart(file.path);
+  const classification = classifyStoredSession(start);
+  if (!classification) return null;
+  const title = start.sessionTitle || start.title || `Session ${providerSessionId.slice(0, 8)}`;
+  const settings = readSessionModelSettings(start, file.path);
+  return {
+    appSessionId: providerSessionId,
+    providerSessionId,
+    missionId: classification.missionId,
+    sessionPurpose: classification.sessionPurpose,
+    interactionMode: classification.interactionMode,
+    role: classification.role,
+    title,
+    goal: title,
+    cwd: start.cwd ?? '',
+    workspaceKind: start.cwd ? 'folder' : 'none',
+    ...settings,
+    autonomy: settings.autonomy ?? 'low',
+    phase: 'paused',
+    streaming: false,
+    queuedSends: 0,
+    features: [],
+    tokensIn: 0,
+    tokensOut: 0,
+    contextTokens: 0,
+    createdAt: file.birthtimeMs,
+    updatedAt: file.mtimeMs,
+  };
 }
 
 function readJson<T>(path: string): T {
@@ -1663,25 +1667,6 @@ function readJson<T>(path: string): T {
 
 function readJsonLines<T>(path: string): T[] {
   return parseJsonLines(readFileSync(path, 'utf8'));
-}
-
-function readSessionJsonLines<T>(path: string): { rows: T[]; trimmed: boolean } {
-  const size = statSync(path).size;
-  if (size <= MAX_SESSION_BYTES) return { rows: readJsonLines<T>(path), trimmed: false };
-
-  const fd = openSync(path, 'r');
-  try {
-    const buffer = Buffer.alloc(MAX_SESSION_BYTES);
-    readSync(fd, buffer, 0, MAX_SESSION_BYTES, size - MAX_SESSION_BYTES);
-    const raw = buffer.toString('utf8');
-    const firstNewline = raw.indexOf('\n');
-    return {
-      rows: parseJsonLines<T>(firstNewline >= 0 ? raw.slice(firstNewline + 1) : raw),
-      trimmed: true,
-    };
-  } finally {
-    closeSync(fd);
-  }
 }
 
 function readSessionStart(path: string): StoredSessionStart {
@@ -1802,9 +1787,9 @@ function readAdjacentSessionSettings(sessionPath: string): Record<string, unknow
 }
 
 function countSessionMessages(path: string): number {
-  return readSessionJsonLines<StoredMessageLine>(path).rows.filter(
-    (line) => line.type === 'message',
-  ).length;
+  const window = readSessionRawWindow(path, statSync(path).size);
+  return parseJsonLines<StoredMessageLine>(window.text).filter((line) => line.type === 'message')
+    .length;
 }
 
 function parseJsonLines<T>(raw: string): T[] {
@@ -1819,30 +1804,6 @@ function parseJsonLines<T>(raw: string): T[] {
     }
   });
   return rows;
-}
-
-function stringifyToolResult(value: unknown): string {
-  if (typeof value === 'string') return value;
-  if (Array.isArray(value)) {
-    return value
-      .map((item) => {
-        const block = objectValue(item);
-        return stringValue(block?.text) || safeStringify(item);
-      })
-      .filter(Boolean)
-      .join('\n');
-  }
-  return safeStringify(value);
-}
-
-function trimText(text: string): string {
-  if (text.length <= MAX_TEXT_CHARS) return text;
-  return `${text.slice(0, MAX_TEXT_CHARS)}\n\n[truncated ${text.length - MAX_TEXT_CHARS} chars]`;
-}
-
-function isSystemText(text: string): boolean {
-  const trimmed = text.trimStart();
-  return trimmed.startsWith('<system-reminder>') || trimmed.startsWith('IMPORTANT:');
 }
 
 function titleFromProgressType(type?: string): string | undefined {
@@ -1930,26 +1891,6 @@ function jsonStringArray(value: unknown): string[] {
   }
 }
 
-function objectValue(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function dateMs(value?: string): number {
-  if (!value) return 0;
-  const ms = +new Date(value);
-  return Number.isFinite(ms) ? ms : 0;
-}
-
 function lastPathSegment(path: string): string {
   return path.split('/').filter(Boolean).pop() ?? '';
-}
-
-function safeStringify(value: unknown): string {
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
 }

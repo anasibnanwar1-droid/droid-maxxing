@@ -8,7 +8,6 @@ import {
   listFactoryDefaults,
   listSessions,
   loadSessionHistory,
-  resumeSession,
   sendNativeBrowserResult,
   openChild,
   newChildOpenRequestId,
@@ -30,6 +29,7 @@ import { ReviewPanel } from './components/environment/ReviewPanel';
 import EditorOpenMenu from './components/EditorOpenMenu';
 import Toaster from './components/Toaster';
 import { useRepoStatus } from './hooks/useRepoStatus';
+import { useDocumentVisible } from './hooks/useDocumentVisible';
 import CommandPalette from './components/CommandPalette';
 import SettingsPanel from './components/SettingsPanel';
 import { applyTheme, paletteForMode } from './lib/theme';
@@ -91,6 +91,7 @@ export default function App() {
   const activeSession = state.activeAppSessionId ? state.sessions[state.activeAppSessionId] : null;
   const workingDirectory = useSessionWorkingDirectory(activeSession);
   const repoStatus = useRepoStatus(workingDirectory);
+  const documentVisible = useDocumentVisible();
   // Mission Control is active only for a session explicitly created for it,
   // not merely because the compose preview is open.
   const isMissionControlView = activeSession?.sessionPurpose === 'mission-control';
@@ -173,6 +174,13 @@ export default function App() {
   }, [state.theme]);
 
   useEffect(() => {
+    const root = document.documentElement;
+    if (documentVisible) root.removeAttribute('data-window-hidden');
+    else root.setAttribute('data-window-hidden', 'true');
+    return () => root.removeAttribute('data-window-hidden');
+  }, [documentVisible]);
+
+  useEffect(() => {
     if (embedded) return;
     void setAppIcon(state.theme.appIconMode).catch((error: unknown) => {
       console.error('Failed to update app icon', error);
@@ -190,8 +198,10 @@ export default function App() {
   useEffect(() => {
     if (embedded) return;
     void (async () => {
-      await bridge.start();
-      const key = await getApiKey();
+      // Bridge info and the saved API key are independent IPCs; fetch them
+      // together so the connect command reaches the sidecar one round-trip
+      // sooner. Queued commands flush in order once the socket opens.
+      const [, key] = await Promise.all([bridge.start(), getApiKey()]);
       connect(key ?? '');
       listFactoryDefaults();
     })();
@@ -286,15 +296,6 @@ export default function App() {
     dispatch({ type: 'SESSION_RESTORE_START', appSessionId: activeSession.appSessionId });
     loadSessionHistory(activeSession.appSessionId);
   }, [activeSession, embedded, state.historyLoaded, dispatch]);
-
-  useEffect(() => {
-    if (embedded || !activeSession) return;
-    if (!['paused', 'completed', 'failed'].includes(activeSession.phase)) return;
-    // Warm a historical provider session as soon as the user opens it. The
-    // history request above is sent first, so external compaction markers are
-    // restored before resume publishes its fresh live context snapshot.
-    resumeSession(activeSession.appSessionId);
-  }, [activeSession?.appSessionId, activeSession?.phase, embedded]);
 
   useEffect(() => {
     if (embedded || !activeSession) return;

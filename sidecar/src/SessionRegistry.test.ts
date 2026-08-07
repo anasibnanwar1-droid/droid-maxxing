@@ -17,6 +17,7 @@ class FakeHistory {
   readonly persisted: SessionSummary[] = [];
   readonly hiddenProviderIds = new Set<string>();
   readonly trace: string[] = [];
+  summaryReadCount = 0;
   nextSyncError?: Error;
   private readonly patches = new Map<string, Partial<SessionSummary>>();
 
@@ -33,12 +34,15 @@ class FakeHistory {
     }
   }
 
-  summaryPatches(): Map<string, Partial<SessionSummary>> {
-    return new Map(this.patches);
-  }
-
-  hiddenProviderSessionIds(): Set<string> {
-    return new Set(this.hiddenProviderIds);
+  summaryPatchesAndHidden(): {
+    patches: Map<string, Partial<SessionSummary>>;
+    hiddenProviderSessionIds: Set<string>;
+  } {
+    this.summaryReadCount += 1;
+    return {
+      patches: new Map(this.patches),
+      hiddenProviderSessionIds: new Set(this.hiddenProviderIds),
+    };
   }
 
   clearPatches(): void {
@@ -232,6 +236,30 @@ test('updateSummary persists canonical state before one publication and protects
   assert.deepEqual(published, [updated]);
   assert.equal(registry.getLive('changed-app'), undefined);
   assert.equal(registry.getLive('provider-old'), session);
+});
+
+test('updateSummary with touchActivity false keeps the activity timestamp', () => {
+  const { history, published, registry } = createHarness({ now: () => 42 });
+  const session = live(summary('stable-app', { updatedAt: 7, tokensIn: 1 }));
+  registry.register(session);
+  history.persisted.length = 0;
+  history.trace.length = 0;
+
+  const updated = registry.updateSummary(
+    'stable-app',
+    { tokensIn: 500, contextTokens: 128, updatedAt: 999 },
+    { touchActivity: false },
+  );
+
+  // Telemetry must not move updatedAt: the renderer derives sidebar ordering
+  // and the unread marker from it, so passive refreshes would otherwise mark
+  // a viewed session as unread again.
+  assert.equal(updated?.tokensIn, 500);
+  assert.equal(updated?.contextTokens, 128);
+  assert.equal(updated?.updatedAt, 7);
+  assert.deepEqual(history.trace, ['persist', 'publish']);
+  assert.deepEqual(history.persisted, [updated]);
+  assert.deepEqual(published, [updated]);
 });
 
 test('failed summary persistence leaves live state unchanged and unpublished', () => {
@@ -552,4 +580,12 @@ test('snapshot permits sequential unregister without skipping sessions', () => {
   assert.equal(registry.getLive('provider-first'), undefined);
   assert.equal(registry.getLive('provider-second-old'), undefined);
   assert.equal(registry.unregister('missing'), undefined);
+});
+
+test('listSummaries reads patches and hidden ids through a single history call', () => {
+  const { history, registry } = createHarness({ ordinary: [summary('ordinary')] });
+
+  registry.listSummaries();
+
+  assert.equal(history.summaryReadCount, 1);
 });

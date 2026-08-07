@@ -121,24 +121,28 @@ export class SessionContext {
     }
 
     try {
-      this.dependencies.registry.updateSummary(stableAppSessionId, {
-        tokensIn: nextSummary.tokensIn,
-        tokensOut: nextSummary.tokensOut,
-        ...(currentContextTokens !== undefined
-          ? {
-              contextTokens: nextSummary.contextTokens,
-              contextAccuracy: nextSummary.contextAccuracy,
-              contextUpdatedAt: nextSummary.contextUpdatedAt,
-              maxContextTokens: nextSummary.maxContextTokens,
-            }
-          : {}),
-      });
+      this.dependencies.registry.updateSummary(
+        stableAppSessionId,
+        {
+          tokensIn: nextSummary.tokensIn,
+          tokensOut: nextSummary.tokensOut,
+          ...(currentContextTokens !== undefined
+            ? {
+                contextTokens: nextSummary.contextTokens,
+                contextAccuracy: nextSummary.contextAccuracy,
+                contextUpdatedAt: nextSummary.contextUpdatedAt,
+                maxContextTokens: nextSummary.maxContextTokens,
+              }
+            : {}),
+        },
+        { touchActivity: false },
+      );
     } catch {
       // Usage telemetry must not fail the active provider turn.
       liveSession.summary = nextSummary;
       this.dependencies.emit({
         type: 'session.updated',
-        session: { ...nextSummary, updatedAt: Date.now() },
+        session: { ...nextSummary },
       });
     }
   }
@@ -236,7 +240,9 @@ export class SessionContext {
       autoCompactions: generation,
     } as const;
     try {
-      this.dependencies.registry.updateSummary(target.appSessionId, patch);
+      this.dependencies.registry.updateSummary(target.appSessionId, patch, {
+        touchActivity: false,
+      });
     } catch (error) {
       // Runtime telemetry must advance even when its historical snapshot cannot
       // be persisted. A retry with the same compactionId reuses this generation
@@ -244,7 +250,7 @@ export class SessionContext {
       liveSession.summary = { ...liveSession.summary, ...patch };
       this.dependencies.emit({
         type: 'session.updated',
-        session: { ...liveSession.summary, updatedAt: Date.now() },
+        session: { ...liveSession.summary },
       });
       throw error;
     }
@@ -376,7 +382,10 @@ export class SessionContext {
     };
     if (options.persist === false)
       liveSession.summary = { ...liveSession.summary, ...contextPatch };
-    else this.dependencies.registry.updateSummary(target.appSessionId, contextPatch);
+    else
+      this.dependencies.registry.updateSummary(target.appSessionId, contextPatch, {
+        touchActivity: false,
+      });
   }
 
   private emitEstimate(sourceSessionId: string, summary: SessionSummary): void {

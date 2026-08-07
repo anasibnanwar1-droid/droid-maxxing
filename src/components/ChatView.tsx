@@ -144,6 +144,9 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
   const selectedChildSessionId =
     visibleTarget.kind === 'child' ? visibleTarget.childSessionId : undefined;
   const viewingChildSession = Boolean(selectedChildSessionId);
+  const visibleConversationKey = activeSession
+    ? `${activeSession.appSessionId}:${selectedChildSessionId ?? 'primary'}`
+    : null;
 
   const childSessions = activeSession
     ? orderedChildSessions(Object.values(state.childSessions[activeSession.appSessionId] ?? {}))
@@ -231,10 +234,32 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
   // Only auto-scroll when the user is already pinned to the bottom; if they've
   // scrolled up to read, leave their position alone while the model responds.
   const stickRef = useRef(true);
+  const [scrollSnapshots] = useState(() => new Map<string, { top: number; pinned: boolean }>());
+  // Scroll snapshots are owned by onScroll, which fires for every user scroll
+  // and every programmatic auto-scroll, so each conversation's position is
+  // already current when we switch away. A cleanup here would read scrollTop
+  // AFTER the keyed transcript swap (layout-effect cleanups run post-mutation),
+  // capturing the incoming conversation's position and corrupting the outgoing
+  // snapshot — so there is no cleanup here.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !visibleConversationKey) return;
+    const snapshot = scrollSnapshots.get(visibleConversationKey);
+    prependAnchor.current = null;
+    stickRef.current = snapshot?.pinned ?? true;
+    el.scrollTop = snapshot?.top ?? el.scrollHeight;
+  }, [scrollSnapshots, visibleConversationKey]);
+
   const onScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
     stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    if (visibleConversationKey) {
+      scrollSnapshots.set(visibleConversationKey, {
+        top: el.scrollTop,
+        pinned: stickRef.current,
+      });
+    }
     if (
       !viewingChildSession &&
       historyAppSessionId &&
@@ -264,7 +289,7 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
     if (scrollRef.current && stickRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [transcript.length, tailLen]);
+  }, [visibleConversationKey, transcript.length, tailLen]);
 
   const primaryLive = useSessionLive(activeSession?.appSessionId ?? null);
   const live = visibleTarget.kind === 'child' ? visibleTarget.canInterrupt : primaryLive;

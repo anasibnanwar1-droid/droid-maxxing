@@ -283,9 +283,13 @@ export class SessionCompaction {
     if (!this.isRetuneCurrent(target, epoch, revision)) return;
     const armed = await this.arm(target, limit);
     if (!this.isRetuneCurrent(target, epoch, revision)) return;
-    this.dependencies.registry.updateSummary(target.appSessionId, {
-      compactionTokenLimit: armed ? limit : undefined,
-    });
+    this.dependencies.registry.updateSummary(
+      target.appSessionId,
+      {
+        compactionTokenLimit: armed ? limit : undefined,
+      },
+      { touchActivity: false },
+    );
   }
 
   private async retuneChild(target: ChildCompactionTarget, revision?: number): Promise<void> {

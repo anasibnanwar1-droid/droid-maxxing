@@ -26,6 +26,40 @@ export interface OnboardingController {
   patch: (p: Partial<OnboardingState>) => Promise<void>;
 }
 
+// Env detection spawns CLI and package-manager probes on the sidecar, so for
+// returning users it is deferred past first paint instead of competing with
+// the session list and history traffic that paints the app. The onboarding
+// wizard needs the report immediately, so first run skips the deferral.
+// Returns a cancel function for unmount or coalescing a later schedule.
+export function scheduleEnvDetect(
+  defer: boolean,
+  detect: () => void = detectEnv,
+  scheduleIdle: (callback: () => void) => () => void = scheduleOnIdle,
+): () => void {
+  if (!defer) {
+    detect();
+    return () => undefined;
+  }
+  return scheduleIdle(detect);
+}
+
+function scheduleOnIdle(callback: () => void): () => void {
+  const idleWindow: {
+    requestIdleCallback?: (cb: () => void, options?: { timeout: number }) => number;
+    cancelIdleCallback?: (handle: number) => void;
+  } = window;
+  if (typeof idleWindow.requestIdleCallback === 'function') {
+    const handle = idleWindow.requestIdleCallback(callback, { timeout: 1500 });
+    return () => {
+      idleWindow.cancelIdleCallback?.(handle);
+    };
+  }
+  const handle = setTimeout(callback, 300);
+  return () => {
+    clearTimeout(handle);
+  };
+}
+
 export function useOnboarding(): OnboardingController {
   const [ready, setReady] = useState(false);
   const [onboarding, setOnboardingState] = useState<OnboardingState | null>(null);
@@ -37,20 +71,39 @@ export function useOnboarding(): OnboardingController {
     null,
   );
   const reDetectedForKey = useRef(false);
+  const deferEnvDetect = useRef(false);
+  const onboardingReady = useRef(false);
+  const cancelScheduledEnvDetect = useRef<(() => void) | null>(null);
+  // Coalesces env detects: a later schedule cancels a pending deferred one,
+  // so boot runs at most one probe pass even when connect's runtime.updated
+  // lands while a deferred detect is still waiting for idle.
+  const scheduleDetect = useCallback((defer: boolean) => {
+    cancelScheduledEnvDetect.current?.();
+    cancelScheduledEnvDetect.current = scheduleEnvDetect(defer);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
-    void getOnboarding().then((state) => {
-      if (!cancelled) {
+    void getOnboarding()
+      .then((state) => {
+        if (cancelled) return;
         setOnboardingState(state);
         setReady(true);
-      }
-    });
-    detectEnv();
+        onboardingReady.current = true;
+        deferEnvDetect.current = state.completed;
+        scheduleDetect(state.completed);
+      })
+      .catch(() => {
+        // A failed onboarding read must not skip env detection entirely;
+        // ready stays false (the app stays gated) exactly as before.
+        if (!cancelled) scheduleDetect(false);
+      });
     return () => {
       cancelled = true;
+      cancelScheduledEnvDetect.current?.();
+      cancelScheduledEnvDetect.current = null;
     };
-  }, []);
+  }, [scheduleDetect]);
 
   useEffect(() => {
     const unsub = bridge.subscribe((ev) => {
@@ -60,9 +113,12 @@ export function useOnboarding(): OnboardingController {
           // App restores a saved API key via connect() after the initial
           // detect; connect only emits runtime.updated, so re-detect once to
           // refresh auth state instead of leaving the user shown as signed out.
-          if (ev.status.apiKeyConfigured && !reDetectedForKey.current) {
+          // Gated on onboarding readiness so a runtime.updated that lands
+          // before getOnboarding resolves cannot fire an immediate probe that
+          // the mount effect then duplicates with a deferred one.
+          if (ev.status.apiKeyConfigured && !reDetectedForKey.current && onboardingReady.current) {
             reDetectedForKey.current = true;
-            detectEnv();
+            scheduleDetect(deferEnvDetect.current);
           }
           break;
         case 'env.report':
@@ -81,7 +137,7 @@ export function useOnboarding(): OnboardingController {
     return () => {
       unsub();
     };
-  }, []);
+  }, [scheduleDetect]);
 
   const refreshEnv = useCallback(() => {
     detectEnv();
