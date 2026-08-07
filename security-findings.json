@@ -1,6 +1,6 @@
 {
   "scan_id": "scan-2026-08-07-repository-lifecycle",
-  "scan_date": "2026-08-07T11:40:53Z",
+  "scan_date": "2026-08-07T12:14:59Z",
   "scan_type": "working",
   "commit_range": "HEAD..working-tree",
   "pr_number": null,
@@ -8,24 +8,29 @@
   "findings": [],
   "reviewed_candidates": [
     {
-      "id": "branch-name-command-injection",
+      "id": "settings-triggered-unmerged-branch-deletion",
       "disposition": "mitigated",
-      "reason": "The branch name comes from Git's registered-worktree metadata rather than renderer input and is passed to execFile as an array argument after --, so it cannot become an option or shell fragment."
+      "reason": "Settings opts into cleanup only after historical chats are re-anchored. The Electron boundary still derives the branch from registered worktree metadata and uses non-forcing git branch -d with an argument array and --, so unmerged branches are retained and branch names cannot inject options or commands."
     },
     {
-      "id": "forced-unmerged-branch-deletion",
+      "id": "worktree-path-prefix-confusion",
       "disposition": "mitigated",
-      "reason": "Branch cleanup always uses git branch -d. The renderer cannot request -D or otherwise bypass Git's merged-branch check, and a refusal leaves the branch intact while reporting that only the worktree was removed."
+      "reason": "Linked-chat display and in-use checks reuse isWorktreeInUse, which normalizes paths and requires an exact match or path-separator boundary. The regression test excludes similarly prefixed sibling paths."
     },
     {
-      "id": "arbitrary-worktree-removal",
+      "id": "status-string-xss",
       "disposition": "mitigated",
-      "reason": "The existing canonical path and registered linked-worktree checks still run before removal, and the main worktree remains explicitly non-removable."
+      "reason": "Repository paths, branch names, chat titles, and pull-request state are rendered as ordinary React text nodes. The change introduces no raw HTML, URL navigation, or executable interpolation."
+    },
+    {
+      "id": "settings-enumeration-resource-use",
+      "disposition": "accepted",
+      "reason": "Opening or explicitly refreshing Settings enumerates only locally configured workspaces and registered worktrees. Requests are generation-guarded so stale results cannot overwrite newer state, and no new background poller or externally reachable endpoint is introduced."
     },
     {
       "id": "git-ipc-sender-authorization",
       "disposition": "pre-existing",
-      "reason": "Git IPC handlers still lack assertMainRenderer, as documented in the threat model. The new option adds only Git's non-forcing merged-branch deletion after an already-authorized worktree removal."
+      "reason": "Git IPC handlers still lack assertMainRenderer, as documented in the threat model. This Settings slice uses the existing Git IPC surface and does not weaken its repository, worktree, branch, or command-argument validation."
     }
   ],
   "summary": {
@@ -44,7 +49,7 @@
       "DoS": 0,
       "ElevationOfPrivilege": 0
     },
-    "files_analyzed": 2
+    "files_analyzed": 7
   },
   "thresholds": {
     "block_merge": ["CRITICAL"],

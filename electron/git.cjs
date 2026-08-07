@@ -439,13 +439,22 @@ async function branches(dir) {
 }
 
 async function branchesOf(root) {
-  const current = await tryRun(root, ['rev-parse', '--abbrev-ref', 'HEAD']);
   const sep = '\u0001';
-  const localOut = await tryRun(root, [
-    'for-each-ref',
-    `--format=%(refname:short)${sep}%(upstream:short)${sep}%(upstream:track)${sep}%(HEAD)${sep}%(committerdate:unix)${sep}%(contents:subject)`,
-    'refs/heads',
+  const [current, localOut, remoteOut, mergedOut] = await Promise.all([
+    tryRun(root, ['rev-parse', '--abbrev-ref', 'HEAD']),
+    tryRun(root, [
+      'for-each-ref',
+      `--format=%(refname:short)${sep}%(upstream:short)${sep}%(upstream:track)${sep}%(HEAD)${sep}%(committerdate:unix)${sep}%(contents:subject)`,
+      'refs/heads',
+    ]),
+    tryRun(root, ['for-each-ref', '--format=%(refname:short)', 'refs/remotes']),
+    tryRun(root, ['for-each-ref', '--merged=HEAD', '--format=%(refname:short)', 'refs/heads']),
   ]);
+  const merged = new Set(
+    String(mergedOut || '')
+      .split('\n')
+      .filter(Boolean),
+  );
   const local = String(localOut || '')
     .split('\n')
     .filter(Boolean)
@@ -458,13 +467,9 @@ async function branchesOf(root) {
         current: headMark === '*',
         committerDate: Number.parseInt(date, 10) || 0,
         subject: subject || '',
+        merged: merged.has(name),
       };
     });
-  const remoteOut = await tryRun(root, [
-    'for-each-ref',
-    '--format=%(refname:short)',
-    'refs/remotes',
-  ]);
   const remote = String(remoteOut || '')
     .split('\n')
     // Drop the remote HEAD pointer: refs/remotes/origin/HEAD shortens to either

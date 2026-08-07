@@ -7,6 +7,7 @@ const path = require('node:path');
 
 const {
   adoptTurnBaseline,
+  branches,
   createWorktree,
   diffFiles,
   fileDiff,
@@ -210,6 +211,11 @@ test('worktree removal deletes only a branch Git confirms is merged', async () =
   assert.equal(unmerged.ok, true);
   await write(unmerged.path, 'feature.txt', 'feature\n');
   await commitAll(unmerged.path, 'feature');
+  assert.equal(
+    (await branches(unmergedRoot)).local.find((branch) => branch.name === 'unmerged-feature')
+      ?.merged,
+    false,
+  );
 
   const kept = await removeWorktree(unmergedRoot, {
     path: unmerged.path,
@@ -235,6 +241,10 @@ test('worktree removal deletes only a branch Git confirms is merged', async () =
   await write(merged.path, 'feature.txt', 'feature\n');
   await commitAll(merged.path, 'feature');
   await git(mergedRoot, ['merge', '--ff-only', 'merged-feature']);
+  assert.equal(
+    (await branches(mergedRoot)).local.find((branch) => branch.name === 'merged-feature')?.merged,
+    true,
+  );
 
   const deleted = await removeWorktree(mergedRoot, {
     path: merged.path,

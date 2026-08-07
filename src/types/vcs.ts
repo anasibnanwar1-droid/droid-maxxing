@@ -76,6 +76,7 @@ export interface GitBranch {
   ahead: number;
   behind: number;
   current: boolean;
+  merged?: boolean;
   committerDate: number;
   subject: string;
 }
@@ -113,6 +114,7 @@ export interface GitActionResult {
   environment?: GitEnvironment;
   path?: string;
   branch?: string;
+  branchDeleted?: boolean;
   head?: string | null;
   output?: string;
 }
