@@ -16,7 +16,13 @@ test('sessionIsLive treats terminal and awaiting phases as not live', () => {
   assert.equal(sessionIsLive({ phase: 'running', streaming: false }), false);
   // a completed session is never live even while a stale streaming flag lingers
   assert.equal(sessionIsLive({ phase: 'completed', streaming: true }), false);
+  // phase fallback only applies when the streaming flag is absent
   assert.equal(sessionIsLive({ phase: 'orchestrator_turn' }), true);
+  // regression: a settled mission turn keeps phase 'planning' with
+  // streaming=false — it must read as idle or queued prompts never drain
+  assert.equal(sessionIsLive({ phase: 'planning', streaming: false }), false);
+  assert.equal(sessionIsLive({ phase: 'orchestrator_turn', streaming: false }), false);
+  assert.equal(sessionIsLive({ phase: 'initializing', streaming: false }), false);
 });
 
 test('sessionIsUnread flags only newer settled activity on background sessions', () => {
