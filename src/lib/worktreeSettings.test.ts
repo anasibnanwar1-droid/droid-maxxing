@@ -61,16 +61,29 @@ test('uniqueWorktreeRepositories groups duplicate workspace entries under the ma
 });
 
 test('linkedSessionsForWorktree matches exact and nested chat paths without prefix collisions', () => {
-  const linked = linkedSessionsForWorktree('/repo/.worktrees/feature', [
+  const worktrees = [
+    worktree('/repo', true),
+    worktree('/repo/.worktrees/feature'),
+    worktree('/repo/.worktrees/feature/nested'),
+  ];
+  const sessions = [
     session('exact', '/repo/.worktrees/feature', { updatedAt: 2 }),
     session('nested', '/repo/.worktrees/feature/packages/app', { updatedAt: 3 }),
+    session('deeper-worktree', '/repo/.worktrees/feature/nested', { updatedAt: 6 }),
     session('prefix', '/repo/.worktrees/feature-old', { updatedAt: 4 }),
     session('main', '/repo', { updatedAt: 5 }),
-  ]);
+  ];
+  const linked = linkedSessionsForWorktree('/repo/.worktrees/feature', worktrees, sessions);
 
   assert.deepEqual(
     linked.map((candidate) => candidate.appSessionId),
     ['nested', 'exact'],
+  );
+  assert.deepEqual(
+    linkedSessionsForWorktree('/repo', worktrees, sessions).map(
+      (candidate) => candidate.appSessionId,
+    ),
+    ['main', 'prefix'],
   );
 });
 

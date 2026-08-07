@@ -1,34 +1,27 @@
-import {
-  Check,
-  Columns2,
-  GitBranch,
-  Loader2,
-  MessageSquare,
-  RefreshCw,
-  Trash2,
-} from 'lucide-react';
+import { AnimatePresence, motion } from 'framer-motion';
+import { RefreshCw } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../hooks/useStore';
 import { reanchorSessionsForWorktreeRemoval } from '../lib/commands';
 import {
   getGitBranches,
+  getGitDiffStat,
   getGitWorktrees,
   isWorktreeInUse,
   removeGitWorktree,
-  worktreeName,
 } from '../lib/git';
 import { detectPullRequest } from '../lib/github';
 import { activeSessionCwds } from '../lib/sessions';
 import { toast } from '../lib/toast';
 import { utilityTerminalCwds } from '../lib/utilityPanel';
-import {
-  linkedSessionsForWorktree,
-  uniqueWorktreeRepositories,
-  worktreeChatStatus,
-} from '../lib/worktreeSettings';
+import { linkedSessionsForWorktree, uniqueWorktreeRepositories } from '../lib/worktreeSettings';
 import { workspaceName } from '../lib/workspaces';
-import type { SessionSummary } from '../types/bridge';
 import type { GitActionResult, GitBranchList, GitWorktree, PullRequest } from '../types/vcs';
+import { WorktreeRemovalDialog } from './WorktreeRemovalDialog';
+import { WorktreeSettingsRow } from './WorktreeSettingsRow';
+
+const VISIBLE_WORKTREE_LIMIT = 5;
+const PULL_REQUEST_LOOKUP_CONCURRENCY = 6;
 
 interface WorktreeDetails {
   worktree: GitWorktree;
@@ -37,233 +30,108 @@ interface WorktreeDetails {
 
 interface RepositoryWorktrees {
   root: string;
-  name: string;
   branches: GitBranchList;
   worktrees: WorktreeDetails[];
+}
+
+interface RemovalConfirmation {
+  repository: RepositoryWorktrees;
+  details: WorktreeDetails;
+  changedFileCount: number | null;
+  linkedSessionCount: number;
+  isMerged: boolean;
 }
 
 function branchWasDeleted(result: GitActionResult): boolean {
   return 'branchDeleted' in result && result.branchDeleted === true;
 }
 
-function ChatStatus({
-  session,
-  activeAppSessionId,
-}: {
-  session: SessionSummary;
-  activeAppSessionId: string | null;
-}) {
-  const label = worktreeChatStatus(session, activeAppSessionId);
-  return (
-    <span className="rounded bg-droid-elevated px-1.5 py-0.5 text-[10px] text-droid-text-muted">
-      {label}
-    </span>
-  );
-}
-
-function WorktreeAction({
-  worktree,
-  isInUse,
-  isConfirming,
-  removing,
-  onConfirm,
-  onCancel,
-  onRemove,
-}: {
-  worktree: GitWorktree;
-  isInUse: boolean;
-  isConfirming: boolean;
-  removing: string | null;
-  onConfirm: () => void;
-  onCancel: () => void;
-  onRemove: () => void;
-}) {
-  if (worktree.isMain) return null;
-  if (isInUse) {
-    return (
-      <span
-        title="An open or working chat is using this worktree"
-        className="shrink-0 rounded bg-droid-elevated px-1.5 py-0.5 text-[10px] text-droid-text-muted"
-      >
-        in use
-      </span>
-    );
+async function enrichPullRequests(
+  repositories: RepositoryWorktrees[],
+): Promise<RepositoryWorktrees[]> {
+  const candidates: { path: string; branch: string }[] = [];
+  for (const repository of repositories) {
+    for (const { worktree } of repository.worktrees) {
+      if (!worktree.isMain && worktree.path && worktree.branch) {
+        candidates.push({ path: worktree.path, branch: worktree.branch });
+      }
+    }
   }
-  if (isConfirming) {
-    return (
-      <div className="flex shrink-0 items-center gap-1">
-        <button
-          onClick={onRemove}
-          disabled={removing !== null}
-          title="Confirm removal"
-          className="rounded p-1.5 text-red-400 hover:bg-droid-elevated disabled:opacity-40"
-        >
-          <Check className="h-3.5 w-3.5" strokeWidth={3} />
-        </button>
-        <button
-          onClick={onCancel}
-          className="rounded px-1.5 py-1 text-[11px] text-droid-text-muted hover:bg-droid-elevated"
-        >
-          Cancel
-        </button>
-      </div>
-    );
-  }
-  return (
-    <button
-      onClick={onConfirm}
-      disabled={removing !== null}
-      title="Remove worktree"
-      className="rounded-md p-1.5 text-droid-text-muted transition-colors hover:bg-droid-elevated hover:text-red-400 disabled:opacity-40"
-    >
-      {removing === worktree.path ? (
-        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-      ) : (
-        <Trash2 className="h-3.5 w-3.5" />
-      )}
-    </button>
+
+  const pullRequestsByPath = new Map<string, PullRequest | null>();
+  const enrichCandidate = async (index: number): Promise<void> => {
+    if (index >= candidates.length) return;
+    const candidate = candidates[index];
+    const detected = await detectPullRequest(candidate.path, candidate.branch);
+    pullRequestsByPath.set(candidate.path, detected.ok ? detected.pr : null);
+    await enrichCandidate(index + PULL_REQUEST_LOOKUP_CONCURRENCY);
+  };
+  await Promise.all(
+    candidates.slice(0, PULL_REQUEST_LOOKUP_CONCURRENCY).map((_, index) => enrichCandidate(index)),
   );
-}
 
-function WorktreeRow({
-  details,
-  linkedSessions,
-  activeAppSessionId,
-  isMerged,
-  isInUse,
-  isConfirming,
-  removing,
-  onConfirm,
-  onCancel,
-  onRemove,
-  onOpenChat,
-}: {
-  details: WorktreeDetails;
-  linkedSessions: SessionSummary[];
-  activeAppSessionId: string | null;
-  isMerged: boolean;
-  isInUse: boolean;
-  isConfirming: boolean;
-  removing: string | null;
-  onConfirm: () => void;
-  onCancel: () => void;
-  onRemove: () => void;
-  onOpenChat: (appSessionId: string) => void;
-}) {
-  const { worktree, pullRequest } = details;
-  const chatMoveNotice =
-    linkedSessions.length > 0
-      ? `${String(linkedSessions.length)} idle ${linkedSessions.length === 1 ? 'chat' : 'chats'} will move to main. `
-      : '';
-  return (
-    <div className="px-3 py-3">
-      <div className="flex items-start gap-2.5">
-        <Columns2 className="mt-0.5 h-4 w-4 shrink-0 text-droid-text-muted" />
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <GitBranch className="h-3 w-3 shrink-0 text-droid-text-muted" />
-            <span className="truncate text-[12.5px] text-droid-text">{worktreeName(worktree)}</span>
-            <span className="rounded bg-droid-elevated px-1.5 py-0.5 text-[10px] text-droid-text-muted">
-              {worktree.isMain ? 'main checkout' : 'linked worktree'}
-            </span>
-            {isMerged && (
-              <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-400">
-                merged
-              </span>
-            )}
-            {pullRequest && (
-              <span className="rounded bg-droid-accent/10 px-1.5 py-0.5 text-[10px] text-droid-accent">
-                PR #{pullRequest.number}{' '}
-                {pullRequest.isDraft ? 'draft' : pullRequest.state.toLowerCase()}
-              </span>
-            )}
-          </div>
-          <div className="mt-0.5 truncate text-[11px] text-droid-text-muted">{worktree.path}</div>
-        </div>
-        <WorktreeAction
-          worktree={worktree}
-          isInUse={isInUse}
-          isConfirming={isConfirming}
-          removing={removing}
-          onConfirm={onConfirm}
-          onCancel={onCancel}
-          onRemove={onRemove}
-        />
-      </div>
-
-      {isConfirming && !isInUse && (
-        <p className="ml-6 mt-2 text-[11px] text-droid-text-muted">
-          {chatMoveNotice}
-          {isMerged
-            ? 'Git will delete the merged local branch.'
-            : 'The local branch will be kept unless Git confirms it is merged.'}
-        </p>
-      )}
-
-      {linkedSessions.length > 0 && (
-        <div className="ml-6 mt-2 border-l border-droid-border pl-2.5">
-          <div className="mb-1 text-[10px] font-medium uppercase tracking-wider text-droid-text-muted">
-            Linked chats
-          </div>
-          <div className="space-y-0.5">
-            {linkedSessions.map((session) => (
-              <button
-                key={session.appSessionId}
-                onClick={() => {
-                  onOpenChat(session.appSessionId);
-                }}
-                className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left transition-colors hover:bg-droid-elevated/60"
-              >
-                <MessageSquare className="h-3 w-3 shrink-0 text-droid-text-muted" />
-                <span className="min-w-0 flex-1 truncate text-[11.5px] text-droid-text-secondary">
-                  {session.title}
-                </span>
-                <ChatStatus session={session} activeAppSessionId={activeAppSessionId} />
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
+  return repositories.map((repository) => ({
+    ...repository,
+    worktrees: repository.worktrees.map((details) => ({
+      ...details,
+      pullRequest: details.worktree.path
+        ? (pullRequestsByPath.get(details.worktree.path) ?? null)
+        : null,
+    })),
+  }));
 }
 
 export function WorktreesSettings() {
   const { state, dispatch } = useStore();
   const [repositories, setRepositories] = useState<RepositoryWorktrees[]>([]);
   const [loading, setLoading] = useState(false);
+  const [checking, setChecking] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
-  const [confirming, setConfirming] = useState<string | null>(null);
+  const [confirmation, setConfirmation] = useState<RemovalConfirmation | null>(null);
+  const [expandedWorktrees, setExpandedWorktrees] = useState<Set<string>>(() => new Set());
+  const [expandedRepositories, setExpandedRepositories] = useState<Set<string>>(() => new Set());
   const loadRequest = useRef(0);
+  const removalCheckRequest = useRef(0);
   const removingRef = useRef(false);
   const sessions = useMemo(() => Object.values(state.sessions), [state.sessions]);
 
   const load = useCallback(async () => {
     const requestId = ++loadRequest.current;
     setLoading(true);
-    const next: RepositoryWorktrees[] = [];
     const candidates = await Promise.all(
       state.workspaceCwds.map(async (cwd) => ({ cwd, worktrees: await getGitWorktrees(cwd) })),
     );
-    for (const candidate of uniqueWorktreeRepositories(candidates)) {
-      const { root } = candidate;
-      const worktrees = candidate.worktrees.filter((worktree) => !worktree.bare && worktree.path);
-      if (!worktrees.some((worktree) => !worktree.isMain)) continue;
-      const branches = await getGitBranches(root);
-      const details = await Promise.all(
-        worktrees.map(async (worktree): Promise<WorktreeDetails> => {
-          if (worktree.isMain || !worktree.path || !worktree.branch) {
-            return { worktree, pullRequest: null };
-          }
-          const detected = await detectPullRequest(worktree.path, worktree.branch);
-          return { worktree, pullRequest: detected.ok ? detected.pr : null };
-        }),
-      );
-      next.push({ root, name: workspaceName(root), branches, worktrees: details });
-    }
+    const loadedRepositories = await Promise.all(
+      uniqueWorktreeRepositories(candidates).map(
+        async (candidate): Promise<RepositoryWorktrees | null> => {
+          const { root } = candidate;
+          const worktrees = candidate.worktrees.filter(
+            (worktree) => !worktree.bare && worktree.path,
+          );
+          if (!worktrees.some((worktree) => !worktree.isMain)) return null;
+          const branches = await getGitBranches(root);
+          return {
+            root,
+            branches,
+            worktrees: worktrees.map((worktree) => ({ worktree, pullRequest: null })),
+          };
+        },
+      ),
+    );
+    const next = loadedRepositories.filter(
+      (repository): repository is RepositoryWorktrees => repository !== null,
+    );
     if (requestId !== loadRequest.current) return;
     setRepositories(next);
     setLoading(false);
+
+    void enrichPullRequests(next)
+      .then((enriched) => {
+        if (requestId === loadRequest.current) setRepositories(enriched);
+      })
+      .catch((error: unknown) => {
+        console.warn('Could not load worktree pull request metadata', error);
+      });
   }, [state.workspaceCwds]);
 
   useEffect(() => {
@@ -282,14 +150,61 @@ export function WorktreesSettings() {
     ),
   });
 
-  const remove = async (repository: RepositoryWorktrees, details: WorktreeDetails) => {
+  const beginRemoval = async (
+    repository: RepositoryWorktrees,
+    details: WorktreeDetails,
+    linkedSessionCount: number,
+    isMerged: boolean,
+  ) => {
     const path = details.worktree.path;
-    if (!path || removingRef.current) return;
+    if (!path || checking || removing) return;
+    const requestId = ++removalCheckRequest.current;
+    setChecking(path);
+    setConfirmation({
+      repository,
+      details,
+      changedFileCount: null,
+      linkedSessionCount,
+      isMerged,
+    });
+    try {
+      const status = await getGitDiffStat(path, 'uncommitted');
+      if (requestId !== removalCheckRequest.current) return;
+      if (!status) {
+        setConfirmation(null);
+        toast.error('Could not check this worktree for unsaved changes');
+        return;
+      }
+      setConfirmation((current) =>
+        current?.details.worktree.path === path
+          ? { ...current, changedFileCount: status.files }
+          : current,
+      );
+    } catch (error) {
+      if (requestId !== removalCheckRequest.current) return;
+      setConfirmation(null);
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : 'Could not check this worktree for unsaved changes',
+      );
+    } finally {
+      if (requestId === removalCheckRequest.current) setChecking(null);
+    }
+  };
+
+  const remove = async (
+    repository: RepositoryWorktrees,
+    details: WorktreeDetails,
+    discardChanges: boolean,
+  ): Promise<boolean> => {
+    const path = details.worktree.path;
+    if (!path || removingRef.current) return false;
     removingRef.current = true;
     setRemoving(path);
     try {
       const reanchored = await reanchorSessionsForWorktreeRemoval(path, repository.root);
-      const options = { path, deleteBranch: true };
+      const options = { path, deleteBranch: true, force: discardChanges };
       const result = await removeGitWorktree(repository.root, options);
       if (!result.ok) {
         if (
@@ -300,7 +215,7 @@ export function WorktreesSettings() {
         } else {
           toast.error(result.message ?? 'Could not remove worktree');
         }
-        return;
+        return false;
       }
       const outcomes = ['Worktree removed'];
       if (reanchored > 0) {
@@ -313,8 +228,10 @@ export function WorktreesSettings() {
         toast.info('Local branch kept because Git did not confirm it was safe to delete');
       }
       await load();
+      return true;
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not prepare worktree removal');
+      return false;
     } finally {
       removingRef.current = false;
       setRemoving(null);
@@ -328,79 +245,192 @@ export function WorktreesSettings() {
   );
 
   return (
-    <div className="mx-auto max-w-2xl">
-      <div className="mb-4 flex items-start justify-between gap-3">
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+      className="mx-auto max-w-3xl"
+    >
+      <div className="mb-6 flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-[15px] font-semibold text-droid-text">Worktrees</h2>
-          <p className="mt-0.5 text-[12px] text-droid-text-muted">
-            See each workspace, its linked chats, branch status, and pull request before cleanup.
+          <h2 className="text-[17px] font-semibold tracking-[-0.015em] text-droid-text">
+            Worktrees
+          </h2>
+          <p className="mt-1 text-[12.5px] text-droid-text-muted">
+            Manage worktrees and open their linked conversations.
           </p>
         </div>
         <button
           onClick={() => void load()}
-          className="flex shrink-0 items-center gap-1.5 rounded-lg border border-droid-border px-2.5 py-1.5 text-[12px] text-droid-text-secondary transition-colors hover:bg-droid-elevated/60 hover:text-droid-text"
+          title="Refresh worktrees"
+          aria-label="Refresh worktrees"
+          className="shrink-0 rounded-lg border border-droid-border bg-droid-surface p-2 text-droid-text-muted transition-all duration-150 hover:-translate-y-px hover:border-droid-border-hover hover:bg-droid-elevated/60 hover:text-droid-text active:scale-[0.94]"
         >
-          <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
-          Refresh
+          <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
         </button>
       </div>
 
       {linkedCount === 0 ? (
-        <div className="rounded-xl border border-dashed border-droid-border bg-droid-surface/40 p-10 text-center">
+        <motion.div
+          key={loading ? 'loading' : 'empty'}
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="rounded-xl border border-dashed border-droid-border bg-droid-surface/40 p-7 text-center"
+        >
           <p className="text-[13px] text-droid-text-secondary">
             {loading ? 'Scanning workspaces…' : 'No linked worktrees yet.'}
           </p>
-        </div>
+        </motion.div>
       ) : (
-        repositories.map((repository) => (
-          <section key={repository.root} className="mb-8">
-            <div className="mb-2 mt-1 text-[11px] font-medium uppercase tracking-wider text-droid-text-muted">
-              {repository.name}
-            </div>
-            <div className="divide-y divide-droid-border overflow-hidden rounded-xl border border-droid-border bg-droid-surface">
-              {repository.worktrees.map((details) => {
-                const { worktree } = details;
-                const linkedSessions = linkedSessionsForWorktree(worktree.path, sessions);
-                const branch = repository.branches.local.find(
-                  (candidate) => candidate.name === worktree.branch,
-                );
-                const isMerged = !worktree.isMain && branch?.merged === true;
-                const isInUse =
-                  !worktree.isMain &&
-                  !!worktree.path &&
-                  isWorktreeInUse(worktree.path, sessionCwds);
-                return (
-                  <WorktreeRow
-                    key={worktree.path}
-                    details={details}
-                    linkedSessions={linkedSessions}
-                    activeAppSessionId={state.activeAppSessionId}
-                    isMerged={isMerged}
-                    isInUse={isInUse}
-                    isConfirming={confirming === worktree.path}
-                    removing={removing}
-                    onConfirm={() => {
-                      if (worktree.path) setConfirming(worktree.path);
+        repositories.map((repository, repositoryIndex) => {
+          const linkedWorktrees = repository.worktrees.filter(({ worktree }) => !worktree.isMain);
+          const repositoryIsExpanded = expandedRepositories.has(repository.root);
+          const visibleWorktrees = repositoryIsExpanded
+            ? linkedWorktrees
+            : linkedWorktrees.slice(0, VISIBLE_WORKTREE_LIMIT);
+          const hiddenWorktreeCount = linkedWorktrees.length - visibleWorktrees.length;
+          return (
+            <motion.section
+              key={repository.root}
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{
+                duration: 0.18,
+                delay: repositoryIndex * 0.03,
+                ease: [0.16, 1, 0.3, 1],
+              }}
+              className="mb-7"
+            >
+              <div className="mb-2.5 flex min-w-0 items-end justify-between gap-4 px-0.5">
+                <div className="min-w-0">
+                  <h3 className="truncate text-[13px] font-semibold text-droid-text">
+                    {workspaceName(repository.root)}
+                  </h3>
+                  <p className="mt-0.5 truncate text-[11px] text-droid-text-muted">
+                    {repository.root}
+                  </p>
+                </div>
+                <span className="shrink-0 pb-0.5 text-[10.5px] text-droid-text-muted">
+                  {String(linkedWorktrees.length)}{' '}
+                  {linkedWorktrees.length === 1 ? 'worktree' : 'worktrees'}
+                </span>
+              </div>
+              <div className="divide-y divide-droid-border/80 overflow-hidden rounded-xl border border-droid-border bg-droid-surface shadow-[0_10px_30px_rgba(0,0,0,0.08)]">
+                <AnimatePresence initial={false}>
+                  {visibleWorktrees.map((details) => {
+                    const { worktree } = details;
+                    const linkedSessions = linkedSessionsForWorktree(
+                      worktree.path,
+                      repository.worktrees.map((candidate) => candidate.worktree),
+                      sessions,
+                    );
+                    const branch = repository.branches.local.find(
+                      (candidate) => candidate.name === worktree.branch,
+                    );
+                    const isMerged = branch?.merged === true;
+                    const isInUse = !!worktree.path && isWorktreeInUse(worktree.path, sessionCwds);
+                    return (
+                      <motion.div
+                        key={worktree.path}
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
+                        className="overflow-hidden"
+                      >
+                        <WorktreeSettingsRow
+                          worktree={worktree}
+                          pullRequest={details.pullRequest}
+                          linkedSessions={linkedSessions}
+                          activeAppSessionId={state.activeAppSessionId}
+                          isMerged={isMerged}
+                          isInUse={isInUse}
+                          isExpanded={!!worktree.path && expandedWorktrees.has(worktree.path)}
+                          checking={checking}
+                          removing={removing}
+                          onRequestRemoval={() => {
+                            void beginRemoval(repository, details, linkedSessions.length, isMerged);
+                          }}
+                          onToggle={() => {
+                            const path = worktree.path;
+                            if (!path || linkedSessions.length === 0) return;
+                            setExpandedWorktrees((current) => {
+                              const next = new Set(current);
+                              if (next.has(path)) next.delete(path);
+                              else next.add(path);
+                              return next;
+                            });
+                          }}
+                          onOpenChat={(appSessionId) => {
+                            dispatch({ type: 'SET_ACTIVE_SESSION', id: appSessionId });
+                            dispatch({ type: 'SELECT_CHILD', selection: null });
+                            dispatch({ type: 'TOGGLE_SETTINGS' });
+                          }}
+                        />
+                      </motion.div>
+                    );
+                  })}
+                </AnimatePresence>
+                {(hiddenWorktreeCount > 0 || repositoryIsExpanded) && (
+                  <button
+                    onClick={() => {
+                      setExpandedRepositories((current) => {
+                        const next = new Set(current);
+                        if (repositoryIsExpanded) next.delete(repository.root);
+                        else next.add(repository.root);
+                        return next;
+                      });
                     }}
-                    onCancel={() => {
-                      setConfirming(null);
-                    }}
-                    onRemove={() => {
-                      setConfirming(null);
-                      void remove(repository, details);
-                    }}
-                    onOpenChat={(appSessionId) => {
-                      dispatch({ type: 'SET_ACTIVE_SESSION', id: appSessionId });
-                      dispatch({ type: 'SELECT_CHILD', selection: null });
-                      dispatch({ type: 'TOGGLE_SETTINGS' });
-                    }}
-                  />
-                );
-              })}
-            </div>
-          </section>
-        ))
+                    className="flex w-full items-center justify-center border-t border-droid-border/80 px-3 py-2.5 text-[11px] font-medium text-droid-text-muted transition-colors duration-150 hover:bg-droid-elevated/35 hover:text-droid-text active:bg-droid-elevated/55"
+                  >
+                    <AnimatePresence mode="wait" initial={false}>
+                      <motion.span
+                        key={repositoryIsExpanded ? 'less' : 'more'}
+                        initial={{ opacity: 0, y: 3 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -3 }}
+                        transition={{ duration: 0.1 }}
+                      >
+                        {repositoryIsExpanded
+                          ? 'Show less'
+                          : `Show ${String(hiddenWorktreeCount)} more`}
+                      </motion.span>
+                    </AnimatePresence>
+                  </button>
+                )}
+              </div>
+            </motion.section>
+          );
+        })
       )}
-    </div>
+
+      <AnimatePresence>
+        {confirmation && (
+          <WorktreeRemovalDialog
+            key={confirmation.details.worktree.path}
+            worktree={confirmation.details.worktree}
+            changedFileCount={confirmation.changedFileCount}
+            linkedSessionCount={confirmation.linkedSessionCount}
+            isMerged={confirmation.isMerged}
+            isChecking={confirmation.changedFileCount === null}
+            isRemoving={removing === confirmation.details.worktree.path}
+            onCancel={() => {
+              removalCheckRequest.current += 1;
+              setChecking(null);
+              setConfirmation(null);
+            }}
+            onConfirm={() => {
+              const current = confirmation;
+              if (current.changedFileCount === null) return;
+              void remove(current.repository, current.details, current.changedFileCount > 0).then(
+                (removed) => {
+                  if (removed) setConfirmation(null);
+                },
+              );
+            }}
+          />
+        )}
+      </AnimatePresence>
+    </motion.div>
   );
 }

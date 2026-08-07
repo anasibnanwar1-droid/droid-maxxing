@@ -5,11 +5,20 @@ import { sessionIsLive } from './sessions';
 
 export function linkedSessionsForWorktree(
   path: string | null,
+  worktrees: GitWorktree[],
   sessions: SessionSummary[],
 ): SessionSummary[] {
   if (!path) return [];
+  const worktreesByDepth = worktrees
+    .filter((worktree) => worktree.path)
+    .sort((a, b) => (b.path?.length ?? 0) - (a.path?.length ?? 0));
   return sessions
-    .filter((session) => isWorktreeInUse(path, [session.cwd]))
+    .filter((session) => {
+      const owner = worktreesByDepth.find(
+        (worktree) => worktree.path && isWorktreeInUse(worktree.path, [session.cwd]),
+      );
+      return owner?.path === path;
+    })
     .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 

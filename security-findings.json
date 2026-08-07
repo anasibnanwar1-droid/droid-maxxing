@@ -1,6 +1,6 @@
 {
-  "scan_id": "scan-2026-08-07-session-create-failure",
-  "scan_date": "2026-08-07T12:45:00Z",
+  "scan_id": "scan-2026-08-07-responsive-worktree-settings",
+  "scan_date": "2026-08-07T16:48:10Z",
   "scan_type": "working",
   "commit_range": "HEAD..working-tree",
   "pr_number": null,
@@ -8,29 +8,39 @@
   "findings": [],
   "reviewed_candidates": [
     {
-      "id": "create-failure-correlation-spoofing",
+      "id": "dirty-worktree-force-removal-tampering",
       "disposition": "mitigated",
-      "reason": "The renderer clears pending compose state only when both the stable session.create_failed code and an exact clientRef are present. The sidecar derives that clientRef from the original create command rather than provider output, and the bridge remains protected by its existing loopback token boundary."
+      "reason": "The UI derives the removal path from Git's registered worktree list, checks the target for uncommitted files, and only sends force=true after a second explicit Delete anyway action. The existing Electron Git boundary rejects targets that are not registered non-main worktrees."
     },
     {
-      "id": "concurrent-pending-compose-tampering",
+      "id": "unmerged-branch-destruction",
       "disposition": "mitigated",
-      "reason": "Failure cleanup filters only the pending entry whose clientRef matches the failed create. A deterministic regression keeps a concurrent pending creation intact, preventing one failed request from clearing unrelated user state."
+      "reason": "Forced worktree deletion does not force branch deletion. Cleanup continues to use git branch -d, and the integration test verifies that a dirty worktree can be explicitly removed while its unmerged branch remains."
     },
     {
-      "id": "create-error-message-xss",
+      "id": "worktree-metadata-xss",
       "disposition": "mitigated",
-      "reason": "The provider failure message is surfaced through the existing toast path as ordinary React text. The change introduces no raw HTML, URL navigation, shell execution, or executable interpolation."
+      "reason": "Worktree paths, branch names, pull request state, and conversation titles are rendered as ordinary React text. The redesign adds no raw HTML, URL navigation, shell construction, or executable interpolation."
     },
     {
-      "id": "pending-compose-cleanup-resource-use",
+      "id": "dirty-preflight-toctou",
       "disposition": "accepted",
-      "reason": "Cleanup performs a linear filter over the renderer's locally created pending compose entries only when session creation fails. The collection is bounded by user-initiated concurrent creates, and the change introduces no poller, network listener, or unbounded external input."
+      "reason": "The uncommitted-file count is a preflight snapshot and can become stale before confirmation. This does not cross an authorization boundary: dirty removal always requires the explicit destructive confirmation, and the main process revalidates the registered worktree target immediately before removal."
     },
     {
-      "id": "legacy-store-eslint-baseline",
-      "disposition": "pre-existing",
-      "reason": "The native ESLint suppression baseline records the existing error counts in the legacy store so staged lint can enforce that this change adds no diagnostics. It does not disable rules in source or configuration; reducing existing counts will require pruning the baseline separately."
+      "id": "stale-dirty-check-result",
+      "disposition": "mitigated",
+      "reason": "Each dirty-status preflight captures a request generation. Canceling the dialog or starting a newer check invalidates older results before they can update or authorize the current confirmation."
+    },
+    {
+      "id": "pull-request-enrichment-resource-use",
+      "disposition": "mitigated",
+      "reason": "Core worktree inventory renders before optional pull-request metadata. Metadata lookups are bounded to six concurrent requests, operate only on Git-registered worktrees, and use the existing load generation to prevent stale results from replacing newer state."
+    },
+    {
+      "id": "progressive-reveal-resource-use",
+      "disposition": "accepted",
+      "reason": "The initial view renders only five worktrees per repository. Explicitly expanding a repository performs local matching over its registered worktrees and in-memory sessions; no new listener, polling loop, or attacker-controlled allocation is introduced."
     }
   ],
   "summary": {

@@ -255,6 +255,40 @@ test('worktree removal deletes only a branch Git confirms is merged', async () =
   assert.equal((await git(mergedRoot, ['branch', '--list', 'merged-feature'])).trim(), '');
 });
 
+test('dirty worktree removal requires force and still keeps an unmerged branch', async () => {
+  const root = await makeRepo();
+  await write(root, 'base.txt', 'base\n');
+  await commitAll(root, 'base');
+  const created = await createWorktree(root, {
+    branch: 'dirty-feature',
+    base: 'HEAD',
+    newBranch: true,
+  });
+  assert.equal(created.ok, true);
+  await write(created.path, 'feature.txt', 'committed feature\n');
+  await commitAll(created.path, 'feature');
+  await write(created.path, 'unsaved.txt', 'do not discard without confirmation\n');
+
+  const blocked = await removeWorktree(root, {
+    path: created.path,
+    deleteBranch: true,
+  });
+  assert.equal(blocked.ok, false);
+  assert.equal(
+    (await fsp.readFile(path.join(created.path, 'unsaved.txt'), 'utf8')).trim(),
+    'do not discard without confirmation',
+  );
+
+  const removed = await removeWorktree(root, {
+    path: created.path,
+    deleteBranch: true,
+    force: true,
+  });
+  assert.equal(removed.ok, true);
+  assert.equal(removed.branchDeleted, false);
+  assert.equal((await git(root, ['branch', '--list', 'dirty-feature'])).trim(), 'dirty-feature');
+});
+
 test('uncommitted file entries all render a current diff', async () => {
   const dir = await makeRepo();
   await write(dir, 'edited.txt', 'before\n');
