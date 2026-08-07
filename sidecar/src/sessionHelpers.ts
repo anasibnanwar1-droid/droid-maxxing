@@ -382,7 +382,10 @@ export function buildResumedSession(input: BuildResumedSessionInput): {
       features: resumedFeatures(input.init, classification.sessionPurpose),
       ...resumedUsage(input.historical),
       createdAt: input.historical?.createdAt ?? input.now,
-      updatedAt: input.now,
+      // Resuming (to read or to prepare a send) is not user-visible activity:
+      // keep the historical updatedAt so the session does not jump to the top
+      // of the sidebar or read as unread. A real turn moves it when it settles.
+      updatedAt: input.historical?.updatedAt ?? input.now,
     },
     exposedCompaction: exposedCompaction(input.init),
   };

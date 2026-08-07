@@ -36,6 +36,17 @@ interface CachedSessionFile extends SessionFileStat {
   summary: SessionSummary | null;
 }
 
+// One cached session file as transcript content search needs it: identity,
+// location, and the freshness key, plus the base summary for the caller's
+// patch overlay.
+export interface SearchableSessionFileEntry {
+  providerSessionId: string;
+  path: string;
+  mtimeMs: number;
+  sizeBytes: number;
+  summary: SessionSummary;
+}
+
 const UPSERT_SESSION_FILE = `
   INSERT INTO session_file_cache (
     provider_session_id, path, birthtime_ms, mtime_ms, size_bytes, settings_mtime_ms, summary_json
@@ -128,6 +139,25 @@ export class SessionFileCache {
     const rows: SessionSummary[] = [];
     for (const entry of this.files.values()) {
       if (entry.summary) rows.push(entry.summary);
+    }
+    return rows;
+  }
+
+  // Path, stat, and base summary for every cached top-level session file, so
+  // transcript content search can open the files without re-walking the
+  // sessions tree. Callers apply the app_sessions patch overlay.
+  searchableEntries(): SearchableSessionFileEntry[] {
+    const rows: SearchableSessionFileEntry[] = [];
+    for (const entry of this.files.values()) {
+      if (entry.summary) {
+        rows.push({
+          providerSessionId: entry.providerSessionId,
+          path: entry.path,
+          mtimeMs: entry.mtimeMs,
+          sizeBytes: entry.sizeBytes,
+          summary: entry.summary,
+        });
+      }
     }
     return rows;
   }

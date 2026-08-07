@@ -82,6 +82,7 @@ type SessionHistory = Pick<
   | 'syncSummaries'
   | 'summaryPatchesAndHidden'
   | 'listHistoricalSessions'
+  | 'searchSessions'
   | 'reconcileSessionFiles'
   | 'reconcileSessionFilePaths'
   | 'sessionFileCacheSize'
@@ -168,6 +169,9 @@ export class SessionManager {
   private ready = false;
   private cachedModels: ModelInfo[] | null = null;
   private modelRefresh: Promise<ModelInfo[] | null> | null = null;
+  // Newest sessions.search requestId; older in-flight scans check staleness
+  // against this and stop early instead of finishing a discarded scan.
+  private latestSearchRequestId: string | null = null;
   // Context windows observed from provider stats for catalog-missing models.
   private readonly learnedModelContextWindows = new Map<string, number>();
   private readonly runtime: FactoryRuntime;
@@ -538,6 +542,17 @@ export class SessionManager {
       case 'session.loadHistory':
         this.timeline.load(cmd.appSessionId, cmd.cursor);
         return;
+      case 'sessions.search': {
+        // Track the newest query so a superseded scan stops spending its file
+        // budget on results the renderer would discard by requestId anyway.
+        this.latestSearchRequestId = cmd.requestId;
+        const isStale = (): boolean => this.latestSearchRequestId !== cmd.requestId;
+        const results = await this.history.searchSessions(cmd.query, isStale);
+        if (!isStale()) {
+          this.emit({ type: 'sessions.searchResults', requestId: cmd.requestId, results });
+        }
+        return;
+      }
       case 'settings.agent.update':
         await this.updateAgentSettings(cmd);
         return;

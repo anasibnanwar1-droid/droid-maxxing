@@ -178,6 +178,12 @@ export const loadSessionHistory = (appSessionId: string, cursor?: string) => {
   bridge.send({ type: 'session.loadHistory', appSessionId, cursor });
 };
 
+// Transcript content search; the matching sessions.searchResults event
+// carries the same requestId so callers can drop stale responses.
+export const searchSessions = (requestId: string, query: string) => {
+  bridge.send({ type: 'sessions.search', requestId, query });
+};
+
 export const updateAgentSettings = (input: {
   appSessionId?: string;
   agent: ConfigurableSessionRole;

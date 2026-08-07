@@ -3,8 +3,8 @@ import { childSessionIsLive } from './childSessions';
 
 // Phases where the session is waiting on the user (or finished) — never "working".
 const INACTIVE = ['paused', 'completed', 'failed', 'awaiting_plan_approval', 'awaiting_run_start'];
-// Phases that unambiguously mean a turn is in flight, used as a fallback for the
-// brief window before the backend reports `streaming` over the bridge.
+// Phases that unambiguously mean a turn is in flight, used only as a fallback
+// for summaries that predate or omit the `streaming` flag.
 const CLEARLY_ACTIVE = ['planning', 'initializing', 'orchestrator_turn'];
 
 // Whether a session is actively generating. Pure counterpart of the
@@ -12,7 +12,26 @@ const CLEARLY_ACTIVE = ['planning', 'initializing', 'orchestrator_turn'];
 export function sessionIsLive(session: Pick<SessionSummary, 'phase' | 'streaming'>): boolean {
   if (INACTIVE.includes(session.phase)) return false;
   if (session.streaming) return true;
+  // An explicit streaming=false is authoritative: the turn settled. Nothing
+  // moves phase out of an in-flight phase ('planning' for mission turns) at
+  // settle time, so trusting the phase here would pin settled sessions as
+  // live forever — and the composer's queue drain would never fire.
+  if (session.streaming === false) return false;
   return CLEARLY_ACTIVE.includes(session.phase);
+}
+
+// Whether a session reads as unread in the sidebar: the model finished newer
+// activity than the last time the user opened the session. The active session
+// is always considered read, and a session with a turn in flight shows its
+// working indicator instead — unread only appears once the model responded.
+export function sessionIsUnread(
+  session: Pick<SessionSummary, 'appSessionId' | 'updatedAt' | 'phase' | 'streaming'>,
+  activeAppSessionId: string | null,
+  lastSeenAt: number | undefined,
+): boolean {
+  if (session.appSessionId === activeAppSessionId) return false;
+  if (sessionIsLive(session)) return false;
+  return session.updatedAt > (lastSeenAt ?? session.updatedAt);
 }
 
 // The cwds of sessions that genuinely occupy a directory right now: the open

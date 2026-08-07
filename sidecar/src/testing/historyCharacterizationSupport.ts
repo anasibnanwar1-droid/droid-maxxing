@@ -108,6 +108,18 @@ export class FakeHistoryIndex implements SessionHistoryDependencies {
     }));
   }
 
+  // The fake does not scan transcripts; tests that exercise the
+  // sessions.search command seed the results they expect back.
+  nextSearchResults: Protocol.SessionSearchResult[] = [];
+  lastSearchQuery: string | null = null;
+
+  // Mirrors the production contract: records the query for assertions and
+  // returns nothing once the scan has been superseded.
+  searchSessions(query?: string, isStale?: () => boolean): Promise<Protocol.SessionSearchResult[]> {
+    this.lastSearchQuery = query ?? null;
+    return Promise.resolve(isStale?.() ? [] : this.nextSearchResults);
+  }
+
   // The fake has no sqlite cache: it reports an empty cache so boot takes the
   // synchronous populate path, and reconciles are counted no-ops because the
   // fake's listHistoricalSessions already scans the disk on every call.

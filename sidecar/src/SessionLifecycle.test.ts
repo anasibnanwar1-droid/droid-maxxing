@@ -662,6 +662,50 @@ test('send-now queues without interrupting compaction and reports interrupt reje
   await rejectingProvider.waitForPrompts(2);
 });
 
+test('turn start leaves updatedAt alone and the settled turn moves it', async () => {
+  // updatedAt drives sidebar order and the renderer's unread marker. While a
+  // turn is in flight the session must not read as unread; only the settled
+  // turn (the model's finished response) moves updatedAt.
+  const harness = createHarness();
+  const provider = queueCreate(harness, 'touch');
+  await harness.lifecycle.create(createCommand());
+  await provider.waitForPrompts(1);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const before = harness.registry.getCanonicalSummary('touch')?.updatedAt;
+  assert.ok(before !== undefined);
+
+  const gate = provider.deferNextStream();
+  const sending = harness.lifecycle.send('touch', 'second');
+  await provider.waitForPrompts(2);
+  const mid = harness.registry.getCanonicalSummary('touch');
+  assert.equal(mid?.streaming, true);
+  assert.equal(mid?.updatedAt, before);
+
+  gate.resolve();
+  await sending;
+  const after = harness.registry.getCanonicalSummary('touch');
+  assert.equal(after?.streaming, false);
+  assert.ok(after !== undefined && after.updatedAt > before);
+});
+
+test('queueing sends while streaming leaves updatedAt alone', async () => {
+  const harness = createHarness();
+  const provider = queueCreate(harness, 'queue-touch');
+  const gate = provider.deferNextStream();
+  await harness.lifecycle.create(createCommand());
+  await provider.waitForPrompts(1);
+  const before = harness.registry.getCanonicalSummary('queue-touch')?.updatedAt;
+
+  await harness.lifecycle.send('queue-touch', 'queued one');
+  await harness.lifecycle.send('queue-touch', 'queued two');
+  const mid = harness.registry.getCanonicalSummary('queue-touch');
+  assert.equal(mid?.queuedSends, 2);
+  assert.equal(mid?.updatedAt, before);
+
+  gate.resolve();
+  await provider.waitForPrompts(3);
+});
+
 test('interrupt handles idle, streaming, manual compaction, and auto-compaction states', async () => {
   const harness = createHarness();
   const provider = queueCreate(harness, 'stop');

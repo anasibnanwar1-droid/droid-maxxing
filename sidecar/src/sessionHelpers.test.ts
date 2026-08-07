@@ -138,6 +138,44 @@ test('cold resume preserves a persisted Mission Control proposal', () => {
   assert.equal(resumed.summary.proposal, '# Persisted plan');
 });
 
+test('resume keeps the historical updatedAt so reading never reorders the sidebar', () => {
+  // Opening an old session resumes it in the background; that resume must not
+  // stamp "now" into updatedAt or the session would jump to the top of the
+  // list and read as unread in other windows.
+  const historical: SessionSummary = {
+    appSessionId: 'chat-app',
+    providerSessionId: 'chat-provider',
+    sessionPurpose: 'chat',
+    interactionMode: 'auto',
+    role: 'primary',
+    title: 'Chat',
+    goal: 'Old conversation',
+    cwd: '/workspace',
+    workspaceKind: 'folder',
+    autonomy: 'low',
+    phase: 'paused',
+    features: [],
+    tokensIn: 0,
+    tokensOut: 0,
+    contextTokens: 0,
+    createdAt: 100,
+    updatedAt: 200,
+  };
+
+  const resumed = buildResumedSession({
+    init: { settings: {} },
+    historical,
+    appSessionId: historical.appSessionId,
+    providerSessionId: historical.providerSessionId ?? historical.appSessionId,
+    defaults: {},
+    maxContextTokensForModel: () => undefined,
+    now: 999_999,
+  });
+
+  assert.equal(resumed.summary.updatedAt, 200);
+  assert.equal(resumed.summary.createdAt, 100);
+});
+
 test('a child provider cannot be resumed as a top-level session', () => {
   assert.throws(
     () =>
