@@ -211,8 +211,6 @@ export default function Sidebar() {
     });
   };
 
-  // A session reads as unread when the model has newer finished activity than
-  // the last time the user opened it — never while a turn is in flight.
   const activeId = state.activeAppSessionId;
   const lastSeen = state.sessionLastSeen;
   const isUnread = useCallback(

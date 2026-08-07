@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { motion } from 'framer-motion';
-import { ArrowRight, Search, X } from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 import { useStore } from '../hooks/useStore';
 import { bridge } from '../lib/bridge';
 import { searchSessions } from '../lib/commands';
 import { formatRelativeTime } from '../lib/time';
 import type { SessionSearchMatch, SessionSummary } from '../types/bridge';
+import PaletteShell from './PaletteShell';
+import { usePaletteNavigation } from './usePaletteNavigation';
 
 // A session row in the search palette: a title hit, a transcript content hit
 // (with snippets), or both merged into one row.
@@ -28,22 +29,16 @@ const SNIPPETS_PER_ROW = 2;
 export default function SidebarSearch({ onClose }: { onClose: () => void }) {
   const { state, dispatch } = useStore();
   const [query, setQuery] = useState('');
-  const [selected, setSelected] = useState(0);
   const [contentResults, setContentResults] = useState<ReadonlyMap<string, SessionSearchMatch[]>>(
     new Map(),
   );
   const [searchPending, setSearchPending] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
   const requestSeq = useRef(0);
   const latestRequestId = useRef<string | null>(null);
-
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
-
-  useEffect(() => {
-    setSelected(0);
-  }, [query]);
+  // searchResults are broadcast to every connected window, so the requestId
+  // carries a per-instance prefix: two open palettes never accept each
+  // other's responses.
+  const instanceId = useRef(Math.random().toString(36).slice(2));
 
   // Content search is debounced; stale responses are dropped by requestId so
   // a slow scan of a previous keystroke never overwrites newer results.
@@ -55,7 +50,7 @@ export default function SidebarSearch({ onClose }: { onClose: () => void }) {
       setContentResults(new Map());
       return;
     }
-    const requestId = `sidebar-search-${String(++requestSeq.current)}`;
+    const requestId = `sidebar-search-${instanceId.current}-${String(++requestSeq.current)}`;
     // Invalidate any in-flight request at scheduling time, not when the timer
     // fires: a slow response for a superseded query must not overwrite the
     // results shown under the query the user has already typed ahead to.
@@ -97,9 +92,9 @@ export default function SidebarSearch({ onClose }: { onClose: () => void }) {
       if (!titleHit && !contentMatches) continue;
       byId.set(session.appSessionId, { session, matches: contentMatches ?? [] });
     }
-    return [...byId.values()]
-      .sort((a, b) => b.session.updatedAt - a.session.updatedAt)
-      .slice(0, MAX_ENTRIES);
+    // byId iterates in insertion order, which already follows the recency
+    // sort applied to sessions above — no second sort needed.
+    return [...byId.values()].slice(0, MAX_ENTRIES);
   }, [query, state.sessionOrder, state.sessions, contentResults]);
 
   const open = (entry: SearchEntry) => {
@@ -108,135 +103,65 @@ export default function SidebarSearch({ onClose }: { onClose: () => void }) {
     onClose();
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      if (entries.length > 0) setSelected((prev) => (prev + 1) % entries.length);
-    }
-    if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      if (entries.length > 0) setSelected((prev) => (prev - 1 + entries.length) % entries.length);
-    }
-    if (e.key === 'Enter') {
-      const entry = entries.at(selected);
-      if (entry) open(entry);
-    }
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      onClose();
-    }
-  };
+  const { selected, setSelected, handleKeyDown } = usePaletteNavigation(
+    query,
+    entries,
+    open,
+    onClose,
+  );
 
   const now = Date.now();
   const trimmed = query.trim();
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 flex items-start justify-center pt-[15vh] bg-black/40 backdrop-blur-sm"
-      onClick={onClose}
+    <PaletteShell
+      onClose={onClose}
+      query={query}
+      onQueryChange={setQuery}
+      onKeyDown={handleKeyDown}
+      placeholder="Search sessions and messages..."
+      inputAriaLabel="Search sessions and messages"
+      enterHint="Open session"
+      footerRight={trimmed ? 'Titles and message text' : 'Recent sessions'}
     >
-      <motion.div
-        initial={{ scale: 0.96, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        exit={{ scale: 0.96, opacity: 0 }}
-        transition={{ duration: 0.15, ease: [0.16, 1, 0.3, 1] }}
-        className="w-full max-w-[560px] bg-droid-elevated border border-droid-border rounded-xl shadow-2xl overflow-hidden"
-        onClick={(e) => {
-          e.stopPropagation();
-        }}
-      >
-        {/* Search input */}
-        <div className="flex items-center gap-3 px-4 py-3 border-b border-droid-border">
-          <Search className="w-4 h-4 text-droid-text-muted" />
-          <input
-            ref={inputRef}
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-            }}
-            onKeyDown={handleKeyDown}
-            placeholder="Search sessions and messages..."
-            aria-label="Search sessions and messages"
-            className="flex-1 bg-transparent text-sm text-droid-text placeholder-droid-text-muted focus:outline-none"
-          />
-          <button
-            onClick={onClose}
-            title="Close search"
-            aria-label="Close search"
-            className="p-1 rounded-md text-droid-text-muted hover:text-droid-text hover:bg-droid-surface transition-colors"
-          >
-            <X className="w-4 h-4" />
-          </button>
+      {entries.length === 0 && (
+        <div className="px-4 py-8 text-center text-sm text-droid-text-muted">
+          {searchPending ? 'Searching messages...' : 'No sessions found'}
         </div>
-
-        {/* Results */}
-        <div className="py-2 max-h-[400px] overflow-y-auto">
-          {entries.length === 0 && (
-            <div className="px-4 py-8 text-center text-sm text-droid-text-muted">
-              {searchPending ? 'Searching messages...' : 'No sessions found'}
-            </div>
-          )}
-          {entries.map((entry, i) => (
-            <button
-              key={entry.session.appSessionId}
-              data-testid="sidebar-search-result"
-              onMouseEnter={() => {
-                setSelected(i);
-              }}
-              onClick={() => {
-                open(entry);
-              }}
-              className={`w-full flex items-start gap-3 px-4 py-2.5 text-left transition-colors ${
-                i === selected ? 'bg-droid-accent/10' : 'hover:bg-droid-surface'
-              }`}
-            >
-              <span className="min-w-0 flex-1">
-                <span className="flex items-center gap-2">
-                  <span className="min-w-0 flex-1 truncate text-sm text-droid-text">
-                    {entry.session.title}
-                  </span>
-                  <span className="shrink-0 text-[10.5px] tabular-nums text-droid-text-muted">
-                    {formatRelativeTime(entry.session.updatedAt, now)}
-                  </span>
-                </span>
-                {entry.matches.slice(0, SNIPPETS_PER_ROW).map((m, j) => (
-                  <span key={j} className="block truncate text-[12px] text-droid-text-muted mt-0.5">
-                    {m.author === 'user' ? 'You: ' : ''}
-                    {m.snippet}
-                  </span>
-                ))}
+      )}
+      {entries.map((entry, i) => (
+        <button
+          key={entry.session.appSessionId}
+          data-testid="sidebar-search-result"
+          onMouseEnter={() => {
+            setSelected(i);
+          }}
+          onClick={() => {
+            open(entry);
+          }}
+          className={`w-full flex items-start gap-3 px-4 py-2.5 text-left transition-colors ${
+            i === selected ? 'bg-droid-accent/10' : 'hover:bg-droid-surface'
+          }`}
+        >
+          <span className="min-w-0 flex-1">
+            <span className="flex items-center gap-2">
+              <span className="min-w-0 flex-1 truncate text-sm text-droid-text">
+                {entry.session.title}
               </span>
-              {i === selected && (
-                <ArrowRight className="w-3.5 h-3.5 mt-1 shrink-0 text-droid-accent" />
-              )}
-            </button>
-          ))}
-        </div>
-
-        {/* Footer */}
-        <div className="flex items-center justify-between px-4 py-2 border-t border-droid-border bg-droid-surface/50">
-          <div className="flex items-center gap-3 text-[10px] text-droid-text-muted">
-            <span className="flex items-center gap-1">
-              <span className="px-1 py-0.5 rounded bg-droid-elevated border border-droid-border font-mono text-[9px]">
-                ↑↓
+              <span className="shrink-0 text-[10.5px] tabular-nums text-droid-text-muted">
+                {formatRelativeTime(entry.session.updatedAt, now)}
               </span>
-              Navigate
             </span>
-            <span className="flex items-center gap-1">
-              <span className="px-1 py-0.5 rounded bg-droid-elevated border border-droid-border font-mono text-[9px]">
-                ↵
+            {entry.matches.slice(0, SNIPPETS_PER_ROW).map((m, j) => (
+              <span key={j} className="block truncate text-[12px] text-droid-text-muted mt-0.5">
+                {m.author === 'user' ? 'You: ' : ''}
+                {m.snippet}
               </span>
-              Open session
-            </span>
-          </div>
-          <div className="text-[10px] text-droid-text-muted">
-            {trimmed ? 'Titles and message text' : 'Recent sessions'}
-          </div>
-        </div>
-      </motion.div>
-    </motion.div>
+            ))}
+          </span>
+          {i === selected && <ArrowRight className="w-3.5 h-3.5 mt-1 shrink-0 text-droid-accent" />}
+        </button>
+      ))}
+    </PaletteShell>
   );
 }
