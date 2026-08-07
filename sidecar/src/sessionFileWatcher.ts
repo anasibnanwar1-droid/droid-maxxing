@@ -8,7 +8,7 @@
  * reported files (or runs a full diff when events are unexplained), so this
  * module holds no session state and can never serve stale rows.
  */
-import { mkdirSync, watch, type FSWatcher } from 'node:fs';
+import { mkdirSync, statSync, watch, type FSWatcher } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -85,11 +85,13 @@ export function startSessionFileWatcher(
   // exist, which makes watch() throw and live republish silently never
   // starts. The app observes this directory, so ensure it exists; a path
   // that cannot be created (a parent that is a regular file, a permission
-  // error) still falls through to watch() throwing and a null return.
+  // error) returns null before watch(). On Linux, recursive watch setup can
+  // report an invalid root asynchronously instead of throwing here.
   try {
     mkdirSync(root, { recursive: true });
+    if (!statSync(root).isDirectory()) return null;
   } catch {
-    // Ignore; watch() below surfaces a genuinely unwatchable root as null.
+    return null;
   }
   // FSEvents reports a change to the watched root itself under the root's own
   // name (or '.'), not as a path inside the tree.
