@@ -12,7 +12,6 @@ import {
   normalizeFinishNotificationSettings,
   notificationSnippet,
   saveFinishNotificationSettings,
-  sessionIsWorking,
 } from './finishNotifications';
 
 const session = (over: Partial<SessionSummary> = {}): SessionSummary =>
@@ -67,13 +66,6 @@ test('latestAssistantSnippet prefers the newest primary assistant text', () => {
   assert.equal(latestAssistantSnippet(events), 'second answer is longer and wins');
   assert.equal(latestAssistantSnippet([]), '');
   assert.equal(latestAssistantSnippet(undefined), '');
-});
-
-test('sessionIsWorking treats streaming as working even when phase is running/idle-looking', () => {
-  assert.equal(sessionIsWorking({ phase: 'running', streaming: true }), true);
-  assert.equal(sessionIsWorking({ phase: 'running', streaming: false }), false);
-  assert.equal(sessionIsWorking({ phase: 'orchestrator_turn', streaming: false }), true);
-  assert.equal(sessionIsWorking({ phase: 'paused', streaming: false }), false);
 });
 
 test('decideFinishNotification respects settings and foreground gates', () => {

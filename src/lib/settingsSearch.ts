@@ -2,6 +2,11 @@
 // actually type ("play sound", "theme", "autonomy"). Used by the settings shell
 // to filter the nav, jump to the right screen, and list matching controls.
 
+import {
+  FINISH_NOTIFICATION_TEST_ACTION,
+  FINISH_NOTIFICATION_TOGGLES,
+} from './finishNotificationControls';
+
 export interface SettingsSearchEntry {
   /** Settings nav tab to open. */
   tab: string;
@@ -20,42 +25,10 @@ function e(tab: string, label: string, keywords: string[] = []): SettingsSearchE
  * by name/aliases so search still navigates even before those screens exist.
  */
 export const SETTINGS_SEARCH_ENTRIES: readonly SettingsSearchEntry[] = [
-  // ── Notifications ────────────────────────────────────────────────────────
-  e('Notifications', 'When a turn finishes', [
-    'finish',
-    'finished',
-    'banner',
-    'desktop notification',
-    'alert',
-    'notify',
-  ]),
-  e('Notifications', 'Only when DROIDEX is in the background', [
-    'background',
-    'focused',
-    'foreground',
-    'suppress',
-    'interrupt',
-    'only when',
-  ]),
-  e('Notifications', 'Play notification sound', [
-    'play sound',
-    'sound',
-    'audio',
-    'chime',
-    'silent',
-    'volume',
-  ]),
-  e('Notifications', 'Notify for the open chat', [
-    'open chat',
-    'active chat',
-    'current session',
-    'active session',
-  ]),
-  e('Notifications', 'Send test notification', [
-    'test notification',
-    'test banner',
-    'permission',
-    'try notification',
+  // ── Notifications (shared control definitions) ───────────────────────────
+  ...FINISH_NOTIFICATION_TOGGLES.map((row) => e('Notifications', row.label, [...row.keywords])),
+  e('Notifications', FINISH_NOTIFICATION_TEST_ACTION.label, [
+    ...FINISH_NOTIFICATION_TEST_ACTION.keywords,
   ]),
 
   // ── Appearance ───────────────────────────────────────────────────────────

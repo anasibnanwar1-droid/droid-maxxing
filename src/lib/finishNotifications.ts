@@ -112,10 +112,14 @@ export function isAppInForeground(
 }
 
 export type FinishNotifyDecision =
-  | { kind: 'skip'; reason: string }
+  | { kind: 'skip' }
   | { kind: 'notify'; title: string; body: string; silent: boolean };
 
-/** Decide whether a finished session should raise a desktop banner. */
+/**
+ * Decide whether a finished session should raise a desktop banner.
+ * Call with `assistantSnippet` only after cheap gates pass, or pass '' and
+ * fill the body later — snippet is only needed when kind is notify.
+ */
 export function decideFinishNotification(input: {
   settings: FinishNotificationSettings;
   session: Pick<SessionSummary, 'appSessionId' | 'title' | 'phase'>;
@@ -124,13 +128,9 @@ export function decideFinishNotification(input: {
   appInForeground: boolean;
 }): FinishNotifyDecision {
   const { settings, session, isActiveSession, assistantSnippet, appInForeground } = input;
-  if (!settings.enabled) return { kind: 'skip', reason: 'disabled' };
-  if (!settings.notifyActiveSession && isActiveSession) {
-    return { kind: 'skip', reason: 'active-session' };
-  }
-  if (settings.suppressWhenFocused && appInForeground) {
-    return { kind: 'skip', reason: 'foreground' };
-  }
+  if (!settings.enabled) return { kind: 'skip' };
+  if (!settings.notifyActiveSession && isActiveSession) return { kind: 'skip' };
+  if (settings.suppressWhenFocused && appInForeground) return { kind: 'skip' };
 
   const failed = session.phase === 'failed';
   const sessionTitle = session.title.trim() || 'Chat';
@@ -144,15 +144,6 @@ export function decideFinishNotification(input: {
   };
 }
 
-/**
- * Generating right now: streaming flag wins (covers phase=running after a turn
- * while streaming flips off); otherwise fall back to the shared live rule.
- */
-export function sessionIsWorking(session: Pick<SessionSummary, 'phase' | 'streaming'>): boolean {
-  if (session.streaming) return true;
-  return sessionIsLive(session);
-}
-
 /** Working→idle edges only (never cold history that was idle on first scan). */
 export function collectFinishedSessions(input: {
   sessions: Record<string, SessionSummary>;
@@ -162,7 +153,8 @@ export function collectFinishedSessions(input: {
   const finished: SessionSummary[] = [];
   for (const session of Object.values(input.sessions)) {
     if (!session.appSessionId) continue;
-    if (sessionIsWorking(session)) {
+    // Same generating rule as the rest of the app (streaming + phase).
+    if (sessionIsLive(session)) {
       stillWorking.add(session.appSessionId);
       continue;
     }

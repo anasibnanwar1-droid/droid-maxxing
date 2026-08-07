@@ -17,7 +17,6 @@ contextBridge.exposeInMainWorld('droidControl', {
       title,
       body,
       silent: options?.silent === true,
-      suppressWhenFocused: options?.suppressWhenFocused === true,
       appSessionId: typeof options?.appSessionId === 'string' ? options.appSessionId : undefined,
     }),
   onNotificationActivate: (handler) => on('notification-activate', handler),

@@ -137,8 +137,6 @@ export interface FeedbackReportReceipt {
 export interface NotifyOptions {
   /** When true, the OS notification plays without sound. */
   silent?: boolean;
-  /** When true, skip the banner if the main window is focused. */
-  suppressWhenFocused?: boolean;
   /** Session to open when the user clicks the notification. */
   appSessionId?: string;
 }

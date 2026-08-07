@@ -1,6 +1,10 @@
 import { useState } from 'react';
 import { notify } from '../lib/desktop';
 import {
+  FINISH_NOTIFICATION_TEST_ACTION,
+  FINISH_NOTIFICATION_TOGGLES,
+} from '../lib/finishNotificationControls';
+import {
   loadFinishNotificationSettings,
   saveFinishNotificationSettings,
   type FinishNotificationSettings,
@@ -8,42 +12,9 @@ import {
 import { toast } from '../lib/toast';
 import { Switch } from './Switch';
 
-// Settings → Notifications. Desktop turn-finished banners live here (not under
-// General or Personalization) so OS notification prefs stay easy to find.
+// Settings → Notifications. Desktop turn-finished banners.
 
 type SettingKey = keyof FinishNotificationSettings;
-
-const TOGGLES: {
-  key: SettingKey;
-  label: string;
-  description: string;
-  /** When true, the row is disabled if the master switch is off. */
-  needsMaster?: boolean;
-}[] = [
-  {
-    key: 'enabled',
-    label: 'When a turn finishes',
-    description: 'Show a desktop banner with a short snippet of the model reply.',
-  },
-  {
-    key: 'suppressWhenFocused',
-    label: 'Only when DROIDEX is in the background',
-    description: 'Skip the banner while this window is visible and focused.',
-    needsMaster: true,
-  },
-  {
-    key: 'playSound',
-    label: 'Play notification sound',
-    description: 'Use the system notification sound with the banner.',
-    needsMaster: true,
-  },
-  {
-    key: 'notifyActiveSession',
-    label: 'Notify for the open chat',
-    description: 'Also notify when the chat you are looking at finishes. Off = only other chats.',
-    needsMaster: true,
-  },
-];
 
 function rowMatches(label: string, description: string, query: string): boolean {
   const q = query.trim().toLowerCase();
@@ -64,10 +35,8 @@ export function NotificationsSettings({ highlightQuery = '' }: { highlightQuery?
   const sendTest = async () => {
     setTesting(true);
     try {
-      // Always show, even in the foreground, so OS permission can be verified.
       await notify('DROIDEX', 'Test notification — turn finished snippet looks like this.', {
         silent: !settings.playSound,
-        suppressWhenFocused: false,
       });
       toast.info('Test notification sent. Check Notification Center if you missed it.');
     } catch {
@@ -80,8 +49,8 @@ export function NotificationsSettings({ highlightQuery = '' }: { highlightQuery?
   };
 
   const testHighlighted = rowMatches(
-    'Send test notification',
-    'Verify system permission and sound',
+    FINISH_NOTIFICATION_TEST_ACTION.label,
+    FINISH_NOTIFICATION_TEST_ACTION.description,
     highlightQuery,
   );
 
@@ -100,7 +69,7 @@ export function NotificationsSettings({ highlightQuery = '' }: { highlightQuery?
         Finish alerts
       </div>
       <div className="mb-6 overflow-hidden rounded-2xl border border-droid-border/80 bg-droid-surface">
-        {TOGGLES.map(({ key, label, description, needsMaster }, index) => {
+        {FINISH_NOTIFICATION_TOGGLES.map(({ key, label, description, needsMaster }, index) => {
           const highlighted = rowMatches(label, description, highlightQuery);
           return (
             <div
@@ -118,7 +87,7 @@ export function NotificationsSettings({ highlightQuery = '' }: { highlightQuery?
               <Switch
                 label={label}
                 checked={settings[key]}
-                disabled={Boolean(needsMaster && !settings.enabled)}
+                disabled={needsMaster && !settings.enabled}
                 onChange={(value) => {
                   update(key, value);
                 }}
@@ -132,9 +101,11 @@ export function NotificationsSettings({ highlightQuery = '' }: { highlightQuery?
           }`}
         >
           <div className="min-w-0">
-            <div className="text-[13px] tracking-tight text-droid-text">Send test notification</div>
+            <div className="text-[13px] tracking-tight text-droid-text">
+              {FINISH_NOTIFICATION_TEST_ACTION.label}
+            </div>
             <div className="mt-0.5 text-[11.5px] leading-snug text-droid-text-muted">
-              Verify system permission and sound. Always shows, even in the foreground.
+              {FINISH_NOTIFICATION_TEST_ACTION.description}
             </div>
           </div>
           <button

@@ -216,10 +216,9 @@ function registerIpc() {
   ipcMain.handle('discard-image', (_event, { path: target }) =>
     attachments.discard(attachmentsDir, target),
   );
-  // OS finish/status banners. silent=false lets macOS/Windows play the system
-  // notification sound. suppressWhenFocused is a safety net; the renderer
-  // already decides via document visibility in most cases. Clicking the banner
-  // focuses DROIDEX and asks the renderer to open the session that finished.
+  // OS finish/status banners. silent=false plays the system notification sound.
+  // Foreground suppress is owned by the renderer; click opens the finished
+  // session via the pending-open queue.
   ipcMain.handle('notify', (event, payload = {}) => {
     assertMainRenderer(event);
     const title =
@@ -228,22 +227,17 @@ function registerIpc() {
         : 'DROIDEX';
     const body = typeof payload.body === 'string' ? payload.body.trim().slice(0, 280) : '';
     const silent = payload.silent === true;
-    const suppressWhenFocused = payload.suppressWhenFocused === true;
     const appSessionId =
       typeof payload.appSessionId === 'string' && payload.appSessionId.trim()
         ? payload.appSessionId.trim().slice(0, 200)
         : null;
-    if (suppressWhenFocused && mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused()) {
-      return { shown: false, reason: 'focused' };
-    }
     if (typeof Notification.isSupported === 'function' && !Notification.isSupported()) {
       console.warn('[notify] Notification API not supported on this platform');
       return { shown: false, reason: 'unsupported' };
     }
     try {
-      // On macOS Notification Center uses the app icon (dock); keep that DROIDEX.
+      // Dock icon is applied on launch / icon settings; reuse that path for the banner.
       const iconPath = path.join(__dirname, 'assets', resolveAppIconFile(appIconMode));
-      applyAppIcon();
       const note = new Notification({
         title,
         body,

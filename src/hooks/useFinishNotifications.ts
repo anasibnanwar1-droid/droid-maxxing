@@ -6,6 +6,7 @@ import {
   onNotificationActivate,
   takePendingNotificationSession,
 } from '../lib/desktop';
+import { isDocumentVisible, subscribeVisibilityChange } from './useDocumentVisible';
 import {
   collectFinishedSessions,
   decideFinishNotification,
@@ -16,8 +17,7 @@ import {
 import { useStore } from './useStore';
 
 // Desktop finish banners: working→idle sessions raise a short OS notification.
-// Clicks must open that exact chat even when the user was in Safari on another
-// session — main queues the target; we apply it via push IPC + focus pull.
+// Clicks open that chat via a main-process pending queue (push + focus pull).
 
 export function useFinishNotifications(enabled: boolean): void {
   const { state, dispatch } = useStore();
@@ -27,14 +27,15 @@ export function useFinishNotifications(enabled: boolean): void {
   settingsOpenRef.current = state.settingsOpen;
   const sessionsRef = useRef(state.sessions);
   sessionsRef.current = state.sessions;
-  // Avoid double-applying the same open if push and pull both fire.
+  const transcriptsRef = useRef(state.transcripts);
+  transcriptsRef.current = state.transcripts;
+  const activeIdRef = useRef(state.activeAppSessionId);
+  activeIdRef.current = state.activeAppSessionId;
   const lastOpenedRef = useRef<{ id: string; at: number } | null>(null);
 
   const openSessionFromNotification = useCallback(
     (appSessionId: string) => {
       if (!appSessionId) return;
-      // Only jump when we still know this chat; avoids blanking the UI if the
-      // session was closed after the banner was shown.
       if (!(appSessionId in sessionsRef.current)) {
         void ackNotificationActivate(appSessionId);
         return;
@@ -53,7 +54,6 @@ export function useFinishNotifications(enabled: boolean): void {
     [dispatch],
   );
 
-  // Push path: main sends notification-activate after click / focus retry.
   useEffect(() => {
     if (!enabled || !isDesktop()) return;
     return onNotificationActivate(({ appSessionId }) => {
@@ -61,8 +61,6 @@ export function useFinishNotifications(enabled: boolean): void {
     });
   }, [enabled, openSessionFromNotification]);
 
-  // Pull path: when we become visible/focused after a notification click,
-  // reclaim any pending open the push event might have missed.
   useEffect(() => {
     if (!enabled || !isDesktop()) return;
 
@@ -73,19 +71,20 @@ export function useFinishNotifications(enabled: boolean): void {
     };
 
     const onVisibility = () => {
-      if (document.visibilityState === 'visible') pullPending();
+      if (isDocumentVisible()) pullPending();
     };
 
     window.addEventListener('focus', pullPending);
-    document.addEventListener('visibilitychange', onVisibility);
+    const unsubVisibility = subscribeVisibilityChange(onVisibility);
     pullPending();
 
     return () => {
       window.removeEventListener('focus', pullPending);
-      document.removeEventListener('visibilitychange', onVisibility);
+      unsubVisibility();
     };
   }, [enabled, openSessionFromNotification]);
 
+  // Only re-run on session summary changes (streaming/phase), not transcript tokens.
   useEffect(() => {
     if (!enabled || !isDesktop()) return;
 
@@ -104,25 +103,30 @@ export function useFinishNotifications(enabled: boolean): void {
     if (finished.length === 0) return;
 
     const settings = loadFinishNotificationSettings();
+    if (!settings.enabled) return;
     const appInForeground = isAppInForeground();
+    if (settings.suppressWhenFocused && appInForeground) return;
 
     for (const session of finished) {
+      // Build snippet only when we may actually notify this session.
+      const isActive = session.appSessionId === activeIdRef.current;
+      if (!settings.notifyActiveSession && isActive) continue;
+
       const decision = decideFinishNotification({
         settings,
         session,
-        isActiveSession: session.appSessionId === state.activeAppSessionId,
-        assistantSnippet: latestAssistantSnippet(state.transcripts[session.appSessionId]),
+        isActiveSession: isActive,
+        assistantSnippet: latestAssistantSnippet(transcriptsRef.current[session.appSessionId]),
         appInForeground,
       });
       if (decision.kind !== 'notify') continue;
 
       void notify(decision.title, decision.body, {
         silent: decision.silent,
-        suppressWhenFocused: false,
         appSessionId: session.appSessionId,
       }).catch(() => {
         /* permission denied or non-desktop — stay quiet */
       });
     }
-  }, [enabled, state.sessions, state.transcripts, state.activeAppSessionId]);
+  }, [enabled, state.sessions]);
 }
