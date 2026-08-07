@@ -11,6 +11,7 @@ const {
   diffFiles,
   fileDiff,
   markTurnStart,
+  removeWorktree,
 } = require('./git.cjs');
 
 // Integration tests for the last_turn review scope, driven through the module's
@@ -195,6 +196,53 @@ test('a created worktree keeps its review diff after its base branch merges it',
     const rendered = await fileDiff(created.path, { mode, path: 'feature.txt' });
     assert.match(rendered.diff, /\+kept for historical review/);
   }
+});
+
+test('worktree removal deletes only a branch Git confirms is merged', async () => {
+  const unmergedRoot = await makeRepo();
+  await write(unmergedRoot, 'base.txt', 'base\n');
+  await commitAll(unmergedRoot, 'base');
+  const unmerged = await createWorktree(unmergedRoot, {
+    branch: 'unmerged-feature',
+    base: 'HEAD',
+    newBranch: true,
+  });
+  assert.equal(unmerged.ok, true);
+  await write(unmerged.path, 'feature.txt', 'feature\n');
+  await commitAll(unmerged.path, 'feature');
+
+  const kept = await removeWorktree(unmergedRoot, {
+    path: unmerged.path,
+    deleteBranch: true,
+  });
+  assert.equal(kept.ok, true);
+  assert.equal(kept.branchDeleted, false);
+  assert.match(kept.message, /branch was kept/i);
+  assert.equal(
+    (await git(unmergedRoot, ['branch', '--list', 'unmerged-feature'])).trim(),
+    'unmerged-feature',
+  );
+
+  const mergedRoot = await makeRepo();
+  await write(mergedRoot, 'base.txt', 'base\n');
+  await commitAll(mergedRoot, 'base');
+  const merged = await createWorktree(mergedRoot, {
+    branch: 'merged-feature',
+    base: 'HEAD',
+    newBranch: true,
+  });
+  assert.equal(merged.ok, true);
+  await write(merged.path, 'feature.txt', 'feature\n');
+  await commitAll(merged.path, 'feature');
+  await git(mergedRoot, ['merge', '--ff-only', 'merged-feature']);
+
+  const deleted = await removeWorktree(mergedRoot, {
+    path: merged.path,
+    deleteBranch: true,
+  });
+  assert.equal(deleted.ok, true);
+  assert.equal(deleted.branchDeleted, true);
+  assert.equal((await git(mergedRoot, ['branch', '--list', 'merged-feature'])).trim(), '');
 });
 
 test('uncommitted file entries all render a current diff', async () => {

@@ -916,7 +916,7 @@ async function createWorktree(dir, { branch, base, newBranch = false, location }
   }
 }
 
-async function removeWorktree(dir, { path: target, force = false } = {}) {
+async function removeWorktree(dir, { path: target, force = false, deleteBranch = false } = {}) {
   const root = await repoRootOf(dir);
   if (!root) return { ok: false, reason: 'not_a_repo' };
   if (!target)
@@ -943,7 +943,21 @@ async function removeWorktree(dir, { path: target, force = false } = {}) {
   try {
     await run(root, ['worktree', 'remove', ...(force ? ['--force'] : []), '--', resolvedTarget]);
     invalidateReads(root);
-    return { ok: true };
+    if (!deleteBranch || !match.branch) return { ok: true, branch: match.branch };
+    try {
+      // `-d` is intentionally non-forcing: Git refuses to delete a branch that
+      // is not merged into the main checkout's current branch.
+      await run(root, ['branch', '-d', '--', match.branch]);
+      invalidateReads(root);
+      return { ok: true, branch: match.branch, branchDeleted: true };
+    } catch (err) {
+      return {
+        ok: true,
+        branch: match.branch,
+        branchDeleted: false,
+        message: `Worktree removed, but branch was kept: ${sanitizeGitError(err.message)}`,
+      };
+    }
   } catch (err) {
     return { ok: false, reason: 'git_error', message: sanitizeGitError(err.message) };
   }

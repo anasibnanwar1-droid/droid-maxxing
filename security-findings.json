@@ -8,29 +8,24 @@
   "findings": [],
   "reviewed_candidates": [
     {
-      "id": "baseline-owner-spoofing",
+      "id": "branch-name-command-injection",
       "disposition": "mitigated",
-      "reason": "The provisional clientRef and final appSessionId are correlated by the sidecar's session.created event; adoption moves only an existing in-memory baseline within the same canonical Git root and does not grant repository or session access."
+      "reason": "The branch name comes from Git's registered-worktree metadata rather than renderer input and is passed to execFile as an array argument after --, so it cannot become an option or shell fragment."
     },
     {
-      "id": "baseline-cache-resource-exhaustion",
+      "id": "forced-unmerged-branch-deletion",
       "disposition": "mitigated",
-      "reason": "Provisional baselines use the existing 64-entry bounded cache, successful adoption deletes the provisional key before inserting the final key, and failed session creation therefore cannot cause unbounded memory growth."
+      "reason": "Branch cleanup always uses git branch -d. The renderer cannot request -D or otherwise bypass Git's merged-branch check, and a refusal leaves the branch intact while reporting that only the worktree was removed."
     },
     {
-      "id": "cross-session-baseline-tampering",
+      "id": "arbitrary-worktree-removal",
       "disposition": "mitigated",
-      "reason": "First turns are keyed by unique clientRef values rather than a repository-wide fallback, and Last turn lookup accepts only the final appSessionId, preventing one concurrent first turn from replacing another's baseline."
-    },
-    {
-      "id": "baseline-adoption-review-race",
-      "disposition": "mitigated",
-      "reason": "The bridge issues baseline adoption before publishing session.created, but a resulting Review IPC can still race its asynchronous completion. A missing baseline safely falls back to HEAD, and subsequent reads use the adopted session baseline."
+      "reason": "The existing canonical path and registered linked-worktree checks still run before removal, and the main worktree remains explicitly non-removable."
     },
     {
       "id": "git-ipc-sender-authorization",
       "disposition": "pre-existing",
-      "reason": "Git IPC handlers still lack assertMainRenderer, as documented in the threat model. The new adoption handler only renames bounded in-memory metadata and adds no filesystem mutation or repository access beyond the existing Git IPC surface."
+      "reason": "Git IPC handlers still lack assertMainRenderer, as documented in the threat model. The new option adds only Git's non-forcing merged-branch deletion after an already-authorized worktree removal."
     }
   ],
   "summary": {
@@ -49,7 +44,7 @@
       "DoS": 0,
       "ElevationOfPrivilege": 0
     },
-    "files_analyzed": 8
+    "files_analyzed": 2
   },
   "thresholds": {
     "block_merge": ["CRITICAL"],
