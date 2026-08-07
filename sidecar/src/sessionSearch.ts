@@ -163,20 +163,36 @@ export async function searchSessionFiles(
         setImmediate(resolve);
       });
     }
-    const matches: SessionSearchMatch[] = [];
-    const records = await cachedExtraction(candidate);
-    for (let i = records.length - 1; i >= 0 && matches.length < MAX_MATCHES_PER_SESSION; i -= 1) {
-      const record = records[i];
-      const snippet = buildSnippet(record.text, queryLower);
-      if (snippet !== null) {
-        matches.push({ snippet, author: record.author, ts: record.ts });
-      }
-    }
-    if (matches.length > 0) {
-      results.push({ appSessionId: candidate.appSessionId, matches });
-    }
+    const result = await searchOneFile(candidate, queryLower);
+    if (result !== null) results.push(result);
   }
   return results;
+}
+
+// Extract one file (via the freshness cache) and collect its best snippets,
+// newest match first. Returns null when the file produced no matches — or
+// vanished between the cache snapshot and the read; nothing is cached for a
+// failed read, so the next query retries it like reconcile() does.
+async function searchOneFile(
+  candidate: SessionSearchCandidate,
+  queryLower: string,
+): Promise<SessionSearchResult | null> {
+  let records: SearchableRecord[];
+  try {
+    records = await cachedExtraction(candidate);
+  } catch {
+    return null;
+  }
+  const matches: SessionSearchMatch[] = [];
+  for (let i = records.length - 1; i >= 0 && matches.length < MAX_MATCHES_PER_SESSION; i -= 1) {
+    const record = records[i];
+    const snippet = buildSnippet(record.text, queryLower);
+    if (snippet !== null) {
+      matches.push({ snippet, author: record.author, ts: record.ts });
+    }
+  }
+  if (matches.length === 0) return null;
+  return { appSessionId: candidate.appSessionId, matches };
 }
 
 /** Test hook: drop cached extractions so file edits are observed. */

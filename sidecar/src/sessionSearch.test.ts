@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { appendFileSync, mkdtempSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -131,6 +131,21 @@ test('corrupt lines are skipped like the transcript reader does', async () => {
   ]);
   const results = await searchSessionFiles([candidate], 'forty-two');
   assert.equal(results.length, 1);
+});
+
+test('a file deleted after the snapshot is skipped instead of failing the scan', async () => {
+  const ghost = writeSession('ghost', [messageLine('m1', 'user', 'shared topic ghost', 1)]);
+  const alive = writeSession('alive', [messageLine('m2', 'user', 'shared topic alive', 2)]);
+  // The candidate list is a snapshot of the file cache; the file can vanish
+  // before the search reads it.
+  rmSync(ghost.path);
+  const results = await searchSessionFiles([ghost, alive], 'shared topic');
+  assert.deepEqual(
+    results.map((r) => r.appSessionId),
+    ['alive'],
+  );
+
+  resetSessionSearchCache();
 });
 
 test('a blank query never scans anything', async () => {
