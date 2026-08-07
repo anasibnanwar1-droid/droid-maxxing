@@ -109,12 +109,7 @@ export function sessionWorkingDirectory(
 ): string {
   const worktrees = registeredWorktrees
     .flatMap((worktree) => (worktree.bare || !worktree.path ? [] : [worktree.path]))
-    .sort((left, right) => {
-      const leftIsSession = comparablePath(left) === comparablePath(sessionCwd);
-      const rightIsSession = comparablePath(right) === comparablePath(sessionCwd);
-      if (leftIsSession !== rightIsSession) return leftIsSession ? 1 : -1;
-      return right.length - left.length;
-    });
+    .sort((left, right) => comparablePath(right).length - comparablePath(left).length);
   if (worktrees.length === 0) return sessionCwd;
 
   let workingDirectory = sessionCwd;
