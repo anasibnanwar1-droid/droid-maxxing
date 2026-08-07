@@ -12,7 +12,18 @@ contextBridge.exposeInMainWorld('droidControl', {
   pickFiles: () => ipcRenderer.invoke('pick-files'),
   saveImage: (dataUrl) => ipcRenderer.invoke('save-image', { dataUrl }),
   discardImage: (path) => ipcRenderer.invoke('discard-image', { path }),
-  notify: (title, body) => ipcRenderer.invoke('notify', { title, body }),
+  notify: (title, body, options) =>
+    ipcRenderer.invoke('notify', {
+      title,
+      body,
+      silent: options?.silent === true,
+      suppressWhenFocused: options?.suppressWhenFocused === true,
+      appSessionId: typeof options?.appSessionId === 'string' ? options.appSessionId : undefined,
+    }),
+  onNotificationActivate: (handler) => on('notification-activate', handler),
+  takePendingNotificationSession: () => ipcRenderer.invoke('notification-take-pending'),
+  ackNotificationActivate: (appSessionId) =>
+    ipcRenderer.invoke('notification-activate-ack', { appSessionId }),
   getApiKey: () => ipcRenderer.invoke('get-api-key'),
   setApiKey: (key) => ipcRenderer.invoke('set-api-key', { key }),
   clearApiKey: () => ipcRenderer.invoke('clear-api-key'),

@@ -50,6 +50,7 @@ import { utilityPanelForSession, type UtilityTool } from './lib/utilityPanel';
 import { isTerminalInputTarget, isTerminalTabShortcut } from './lib/keyboardShortcuts';
 import { useSessionWorkingDirectory } from './hooks/useSessionWorkingDirectory';
 import { useDiagnosticsContext } from './hooks/useDiagnosticsContext';
+import { useFinishNotifications } from './hooks/useFinishNotifications';
 
 function ContextListIcon({ className }: { className?: string }) {
   return (
@@ -88,6 +89,8 @@ export default function App() {
   const launchHandled = useRef(false);
   const showWizard =
     !embedded && onboard.ready && (forceWizard || shouldShowOnboarding(onboard.onboarding));
+  // Desktop-only: toast when a model turn finishes (snippet + optional sound).
+  useFinishNotifications(!embedded && !showWizard);
   const activeSession = state.activeAppSessionId ? state.sessions[state.activeAppSessionId] : null;
   const workingDirectory = useSessionWorkingDirectory(activeSession);
   const repoStatus = useRepoStatus(workingDirectory);
@@ -99,16 +102,17 @@ export default function App() {
   const activeUtilityTab =
     utilityPanel.tabs.find((tab) => tab.id === utilityPanel.activeTabId) ?? null;
   const showUtilityPane = !embedded && !!activeSession && utilityPanel.open && !showWizard;
-  const browserExpanded = Boolean(
+  const browserExpanded =
+    !!activeSession &&
     showUtilityPane &&
     activeUtilityTab?.tool === 'browser' &&
-    expandedBrowserAppSessionId === activeSession?.appSessionId,
-  );
+    expandedBrowserAppSessionId === activeSession.appSessionId;
   const focused = isMissionControlView;
   // A normal/spec session only has something worth showing once a message has
   // been sent (the first transcript is seeded from the opening prompt).
-  const hasSessionContent =
-    !!activeSession && (state.transcripts[activeSession.appSessionId]?.length ?? 0) > 0;
+  const hasSessionContent = Boolean(
+    activeSession && (state.transcripts[activeSession.appSessionId] ?? []).length > 0,
+  );
   // The context toggle is meaningful in Mission Control (always) and in a normal
   // chat only after it has content; otherwise there is nothing to open.
   const canToggleContext = isMissionControlView || hasSessionContent;
@@ -151,7 +155,9 @@ export default function App() {
       setUtilityPaneWidth((width) => clampUtilityPane(width, available));
     };
     window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+    };
   }, []);
 
   useEffect(() => {
@@ -166,7 +172,9 @@ export default function App() {
     update();
     const observer = new ResizeObserver(update);
     observer.observe(node);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+    };
   }, []);
 
   useEffect(() => {
@@ -177,7 +185,9 @@ export default function App() {
     const root = document.documentElement;
     if (documentVisible) root.removeAttribute('data-window-hidden');
     else root.setAttribute('data-window-hidden', 'true');
-    return () => root.removeAttribute('data-window-hidden');
+    return () => {
+      root.removeAttribute('data-window-hidden');
+    };
   }, [documentVisible]);
 
   useEffect(() => {
@@ -190,9 +200,13 @@ export default function App() {
   useEffect(() => {
     if (state.theme.mode !== 'system') return;
     const mq = window.matchMedia('(prefers-color-scheme: light)');
-    const onChange = () => dispatch({ type: 'SET_THEME', theme: paletteForMode('system') });
+    const onChange = () => {
+      dispatch({ type: 'SET_THEME', theme: paletteForMode('system') });
+    };
     mq.addEventListener('change', onChange);
-    return () => mq.removeEventListener('change', onChange);
+    return () => {
+      mq.removeEventListener('change', onChange);
+    };
   }, [state.theme.mode, dispatch]);
 
   useEffect(() => {
@@ -251,7 +265,9 @@ export default function App() {
       setForceWizard(true);
     };
     window.addEventListener('droid:open-onboarding', onOpen);
-    return () => window.removeEventListener('droid:open-onboarding', onOpen);
+    return () => {
+      window.removeEventListener('droid:open-onboarding', onOpen);
+    };
   }, []);
 
   useEffect(() => {
@@ -271,7 +287,7 @@ export default function App() {
       }
       void performNativeBrowserRequest(event.request)
         .then(sendNativeBrowserResult)
-        .catch((err) => {
+        .catch((err: unknown) => {
           sendNativeBrowserResult({
             requestId: event.request.requestId,
             appSessionId: event.request.appSessionId,
@@ -281,7 +297,9 @@ export default function App() {
           });
         });
     });
-    return () => unsub();
+    return () => {
+      unsub();
+    };
   }, [dispatch, embedded, state.activeAppSessionId, state.sessions]);
 
   useEffect(() => {
@@ -300,13 +318,14 @@ export default function App() {
   useEffect(() => {
     if (embedded || !activeSession) return;
     const selection = state.selectedChild;
-    if (!selection || selection.parentAppSessionId !== activeSession.appSessionId) return;
-    const access = state.childAccess[selection.parentAppSessionId]?.[selection.childSessionId];
+    if (!selection) return;
+    if (selection.parentAppSessionId !== activeSession.appSessionId) return;
+    const access = state.childAccess[selection.parentAppSessionId][selection.childSessionId];
     if (!shouldOpenSelectedChild(access)) return;
     const requestId = newChildOpenRequestId();
     dispatch({ type: 'SELECT_CHILD', selection, requestId });
     openChild(selection.parentAppSessionId, selection.childSessionId, requestId);
-  }, [activeSession?.appSessionId, embedded, state.selectedChild, state.childAccess, dispatch]);
+  }, [activeSession, embedded, state.selectedChild, state.childAccess, dispatch]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -348,7 +367,9 @@ export default function App() {
       }
     };
     window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
+    return () => {
+      window.removeEventListener('keydown', handler);
+    };
   }, [dispatch, openUtilityTool, toggleUtilityPane]);
 
   const setupBlocker =
@@ -369,8 +390,12 @@ export default function App() {
           kind="blocker"
           message="Finish setting up Droid to start running agents."
           actionLabel="Finish setup"
-          onAction={() => setForceWizard(true)}
-          onDismiss={() => setBannerDismissed(true)}
+          onAction={() => {
+            setForceWizard(true);
+          }}
+          onDismiss={() => {
+            setBannerDismissed(true);
+          }}
         />
       )}
       <div className="flex-1 flex min-h-0 relative">
@@ -565,7 +590,9 @@ export default function App() {
         className="absolute top-0 left-[92px] h-9 z-40 flex items-center gap-1.5"
       >
         <button
-          onClick={() => dispatch({ type: 'TOGGLE_SIDEBAR' })}
+          onClick={() => {
+            dispatch({ type: 'TOGGLE_SIDEBAR' });
+          }}
           className="p-1.5 rounded-md text-droid-text-muted/70 hover:text-droid-text hover:bg-droid-elevated/60 transition-colors"
           title="Toggle sidebar (Cmd+B)"
         >
