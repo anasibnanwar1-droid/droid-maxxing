@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict';
-import { appendFileSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  truncateSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -176,6 +183,32 @@ test('results cap at 25 sessions, keeping the candidates’ recency order', asyn
   assert.equal(results.length, 25);
   assert.equal(results[0]?.appSessionId, 's0');
   assert.equal(results[24]?.appSessionId, 's24');
+});
+
+test('the byte budget charges the tail window actually read, not the file size', async () => {
+  // A sparse 41 MB session file: larger than the 40 MB query budget, but the
+  // reader only scans the newest 5 MB tail, so the needle lives at the end.
+  const big = writeSession('big-budget', [
+    messageLine('m0', 'user', 'old history outside the window', 0),
+  ]);
+  truncateSync(big.path, 41_000_000);
+  appendFileSync(big.path, '\n' + messageLine('m1', 'user', 'shared topic big', 1) + '\n');
+  const stat = statSync(big.path);
+  const oversized: SessionSearchCandidate = {
+    ...big,
+    mtimeMs: stat.mtimeMs,
+    sizeBytes: stat.size,
+  };
+  const small = writeSession('small-budget', [messageLine('m2', 'user', 'shared topic small', 2)]);
+  // Charging the full 41 MB would bust the 40 MB budget before `small` is
+  // scanned; charging the 5 MB tail window leaves room for it.
+  const results = await searchSessionFiles([oversized, small], 'shared topic');
+  assert.deepEqual(
+    results.map((r) => r.appSessionId),
+    ['big-budget', 'small-budget'],
+  );
+
+  resetSessionSearchCache();
 });
 
 test('a superseded query stops the scan before spending the file budget', async () => {

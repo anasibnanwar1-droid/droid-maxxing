@@ -12,7 +12,7 @@ import {
   type StoredMessageLine,
   type StoredSessionStart,
 } from './sessionTranscriptParser.js';
-import { readSessionRawWindowAsync } from './sessionTranscript.js';
+import { MAX_SESSION_BYTES, readSessionRawWindowAsync } from './sessionTranscript.js';
 import type { SessionSearchMatch, SessionSearchResult, TranscriptEvent } from './protocol.js';
 
 // One searchable chat moment: who said it, when, and what the text was. Text
@@ -159,7 +159,10 @@ export async function searchSessionFiles(
     const warm = hit?.mtimeMs === candidate.mtimeMs && hit.sizeBytes === candidate.sizeBytes;
     if (!warm) {
       filesScanned += 1;
-      bytesRead += candidate.sizeBytes;
+      // Charge the bytes actually read: oversized files are tail-windowed to
+      // MAX_SESSION_BYTES, so their full size would bust the budget early and
+      // silently drop matches from later sessions.
+      bytesRead += Math.min(candidate.sizeBytes, MAX_SESSION_BYTES);
       // Warm-cache hits continue in microtasks; a cold file's read/parse is a
       // sync burst, so hand the loop a macrotask slot before the next file.
       await new Promise((resolve) => {
