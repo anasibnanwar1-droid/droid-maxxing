@@ -88,7 +88,10 @@ async function extractRecords(candidate: SessionSearchCandidate): Promise<Search
   const window = await readSessionRawWindowAsync(candidate.path, candidate.sizeBytes);
   const records: SearchableRecord[] = [];
   for (const raw of window.text.split(/\r?\n/)) {
-    if (!raw.includes('"message"') || raw.includes('"llm_only"')) continue;
+    // The llm_only gate matches the exact serialized visibility marker (the
+    // daemon writes compact JSON), not the bare token: a chat message whose
+    // text happens to be llm_only must stay searchable.
+    if (!raw.includes('"message"') || raw.includes('"visibility":"llm_only"')) continue;
     let events: TranscriptEvent[];
     try {
       // Candidates are top-level session files, so the transcript role is

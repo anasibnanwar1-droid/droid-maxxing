@@ -567,6 +567,7 @@ export default function Sidebar() {
             onClose={() => {
               setSearchOpen(false);
             }}
+            onOpen={handleSelectSession}
           />
         )}
       </AnimatePresence>

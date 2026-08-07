@@ -124,6 +124,19 @@ test('llm-only orchestration context is not searchable', async () => {
   assert.equal((await searchSessionFiles([candidate], 'secret handshake')).length, 0);
 });
 
+test('a chat message whose text is the token llm_only stays searchable', async () => {
+  const candidate = writeSession('s1', [
+    messageLine('m1', 'user', 'llm_only', 1),
+    messageLine('m2', 'assistant', 'what does llm_only mean', 2),
+  ]);
+  const results = await searchSessionFiles([candidate], 'llm_only');
+  assert.equal(results.length, 1);
+  assert.equal(results[0]?.matches[0]?.snippet, 'what does llm_only mean');
+  assert.ok(results[0]?.matches.some((m) => m.snippet === 'llm_only'));
+
+  resetSessionSearchCache();
+});
+
 test('corrupt lines are skipped like the transcript reader does', async () => {
   const candidate = writeSession('s1', [
     '{"type":"message",broken',

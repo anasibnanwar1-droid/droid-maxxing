@@ -26,8 +26,16 @@ const SNIPPETS_PER_ROW = 2;
 // preview so a query like "hi bro whatsapp" finds the session that contains
 // it even when the title says something else. Local state only — the palette
 // is a sidebar-local feature and closes itself after opening a session.
-export default function SidebarSearch({ onClose }: { onClose: () => void }) {
-  const { state, dispatch } = useStore();
+// Opening routes through the sidebar's onOpen so all open paths share one
+// behavior (e.g. the unread-only filter drops so the row cannot vanish).
+export default function SidebarSearch({
+  onClose,
+  onOpen,
+}: {
+  onClose: () => void;
+  onOpen: (appSessionId: string) => void;
+}) {
+  const { state } = useStore();
   const [query, setQuery] = useState('');
   const [contentResults, setContentResults] = useState<ReadonlyMap<string, SessionSearchMatch[]>>(
     new Map(),
@@ -98,8 +106,7 @@ export default function SidebarSearch({ onClose }: { onClose: () => void }) {
   }, [query, state.sessionOrder, state.sessions, contentResults]);
 
   const open = (entry: SearchEntry) => {
-    dispatch({ type: 'SET_ACTIVE_SESSION', id: entry.session.appSessionId });
-    dispatch({ type: 'SELECT_CHILD', selection: null });
+    onOpen(entry.session.appSessionId);
     onClose();
   };
 
