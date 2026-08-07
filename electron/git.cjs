@@ -315,13 +315,21 @@ function storedBase(root, branch) {
   return tryRun(root, ['config', `branch.${branch}.droidcontrolBase`]);
 }
 
+function storedBaseCommit(root, branch) {
+  if (!branch) return Promise.resolve(null);
+  return tryRun(root, ['config', `branch.${branch}.droidcontrolBaseCommit`]);
+}
+
 // The ref the current branch was forked from: the user's chosen base (persisted
-// at creation), verified to still exist, else the repo's default branch. Diffs
-// and Review scopes compare against this so a branch cut from `develop` is not
-// measured against main (which would surface unrelated changes).
+// at creation), with its immutable commit preferred for diffs. Keeping the
+// selected ref separately lets the UI still display "main" or "origin/main",
+// while the comparison remains useful after that ref advances through a merge.
 function effectiveBaseRef(root) {
   return cachedRead(root, 'baseRef', async () => {
     const branch = await tryRun(root, ['symbolic-ref', '--short', 'HEAD']);
+    const forkCommit = branch ? await storedBaseCommit(root, branch) : null;
+    if (forkCommit && (await tryRun(root, ['rev-parse', '--verify', '--quiet', forkCommit])))
+      return forkCommit;
     const stored = branch ? await storedBase(root, branch) : null;
     if (stored && (await tryRun(root, ['rev-parse', '--verify', '--quiet', stored]))) return stored;
     return resolveBaseRef(root);
@@ -331,7 +339,9 @@ function effectiveBaseRef(root) {
 async function rememberBase(root, branch, base) {
   if (!branch || !base) return;
   try {
+    const commit = await tryRun(root, ['rev-parse', '--verify', `${base}^{commit}`]);
     await run(root, ['config', `branch.${branch}.droidcontrolBase`, base]);
+    if (commit) await run(root, ['config', `branch.${branch}.droidcontrolBaseCommit`, commit]);
   } catch {
     // non-fatal: base display simply falls back to the upstream ref
   }

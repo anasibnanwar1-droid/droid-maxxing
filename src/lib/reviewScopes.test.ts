@@ -10,10 +10,12 @@ test('diffModeToReviewScope maps a summary mode to the matching review scope', (
   assert.equal(diffModeToReviewScope('uncommitted'), 'uncommitted');
 });
 
-test('nextReviewFocusScope walks last_turn through uncommitted to worktree', () => {
+test('nextReviewFocusScope walks current changes through branch history', () => {
   assert.equal(nextReviewFocusScope('last_turn'), 'uncommitted');
   assert.equal(nextReviewFocusScope('uncommitted'), 'worktree');
-  assert.equal(nextReviewFocusScope('worktree'), null);
+  assert.equal(nextReviewFocusScope('worktree'), 'branch');
+  assert.equal(nextReviewFocusScope('branch'), 'commit');
+  assert.equal(nextReviewFocusScope('commit'), null);
 });
 
 test('nextReviewFocusScope stops for scopes outside the focus chain', () => {
@@ -21,8 +23,6 @@ test('nextReviewFocusScope stops for scopes outside the focus chain', () => {
   // means the user navigated away mid-flight, so the chain must not resume.
   assert.equal(nextReviewFocusScope('staged'), null);
   assert.equal(nextReviewFocusScope('unstaged'), null);
-  assert.equal(nextReviewFocusScope('branch'), null);
-  assert.equal(nextReviewFocusScope('commit'), null);
 });
 
 test('matchReviewFocusPath matches repo-relative paths exactly', () => {

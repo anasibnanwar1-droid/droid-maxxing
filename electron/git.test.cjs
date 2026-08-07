@@ -5,7 +5,7 @@ const fsp = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 
-const { diffFiles, fileDiff, markTurnStart } = require('./git.cjs');
+const { createWorktree, diffFiles, fileDiff, markTurnStart } = require('./git.cjs');
 
 // Integration tests for the last_turn review scope, driven through the module's
 // public API against real scratch repositories. Each scenario gets its own
@@ -150,4 +150,62 @@ test('last_turn works in an unborn repo via the write-tree baseline', async () =
   await write(dir, 'first.txt', 'x\n');
   const res = await diffFiles(dir, { mode: 'last_turn', appSessionId: 'session-a' });
   assert.ok(pathsOf(res).includes('first.txt'));
+});
+
+test('a created worktree keeps its review diff after its base branch merges it', async () => {
+  const dir = await makeRepo();
+  await write(dir, 'seed.txt', 'seed\n');
+  await commitAll(dir, 'init');
+  const baseCommit = (await git(dir, ['rev-parse', 'HEAD'])).trim();
+  const baseBranch = (await git(dir, ['branch', '--show-current'])).trim();
+
+  const created = await createWorktree(dir, {
+    branch: 'feature/review-after-merge',
+    base: baseBranch,
+    newBranch: true,
+  });
+  assert.equal(created.ok, true);
+  assert.equal(
+    created.path,
+    path.join(await fsp.realpath(dir), '.worktrees', 'feature-review-after-merge'),
+  );
+
+  await write(created.path, 'feature.txt', 'kept for historical review\n');
+  await commitAll(created.path, 'feature');
+  const featureCommit = (await git(created.path, ['rev-parse', 'HEAD'])).trim();
+
+  // Simulate main fast-forwarding when the branch is merged. The worktree
+  // remains open on the feature branch, and Review must still show what that
+  // session produced rather than comparing two refs that now point together.
+  await git(dir, ['update-ref', `refs/heads/${baseBranch}`, featureCommit, baseCommit]);
+
+  for (const mode of ['branch', 'worktree']) {
+    const files = await diffFiles(created.path, { mode });
+    assert.deepEqual(pathsOf(files), ['feature.txt'], `${mode} scope lost the merged change`);
+
+    const rendered = await fileDiff(created.path, { mode, path: 'feature.txt' });
+    assert.match(rendered.diff, /\+kept for historical review/);
+  }
+});
+
+test('uncommitted file entries all render a current diff', async () => {
+  const dir = await makeRepo();
+  await write(dir, 'edited.txt', 'before\n');
+  await write(dir, 'deleted.txt', 'remove me\n');
+  await write(dir, 'renamed.txt', 'rename me\n');
+  await commitAll(dir, 'init');
+
+  await write(dir, 'edited.txt', 'after\n');
+  await fsp.rm(path.join(dir, 'deleted.txt'));
+  await git(dir, ['mv', 'renamed.txt', 'moved.txt']);
+  await write(dir, 'untracked.txt', 'brand new\n');
+
+  const result = await diffFiles(dir, { mode: 'uncommitted' });
+  assert.deepEqual(pathsOf(result), ['deleted.txt', 'edited.txt', 'moved.txt', 'untracked.txt']);
+  assert.equal(result.files.find((file) => file.path === 'moved.txt')?.status, 'renamed');
+
+  for (const file of result.files) {
+    const rendered = await fileDiff(dir, { mode: 'uncommitted', path: file.path });
+    assert.notEqual(rendered.diff, '', `${file.status} ${file.path} had no diff`);
+  }
 });
