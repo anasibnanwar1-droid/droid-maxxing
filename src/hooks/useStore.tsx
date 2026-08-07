@@ -1,12 +1,5 @@
-import {
-  createContext,
-  useContext,
-  useMemo,
-  useReducer,
-  useState,
-  ReactNode,
-  useEffect,
-} from 'react';
+import type { ReactNode } from 'react';
+import { createContext, useContext, useMemo, useReducer, useState, useEffect } from 'react';
 import { bridge } from '../lib/bridge';
 import { normalizeAppIconMode, type AppIconMode } from '../lib/appIcon';
 import { updateCompactionSettings } from '../lib/commands';
@@ -371,6 +364,7 @@ type Action =
       providerSessionId?: string;
       message: string;
     }
+  | { type: 'SESSION_CREATE_FAILED'; clientRef: string; message: string }
   | { type: 'SESSION_LIST'; sessions: SessionSummary[] }
   | {
       type: 'SESSION_HISTORY';
@@ -1378,6 +1372,8 @@ function baseReducer(state: AppState, action: Action): AppState {
           : state.contextStats,
       };
       if (
+        // Keep the existence guard because the following comparison dereferences previousRuntime.
+        // eslint-disable-next-line @typescript-eslint/prefer-optional-chain
         previousRuntime &&
         action.runtimeGeneration === previousRuntime.runtimeGeneration &&
         action.runtimeAvailable === previousRuntime.available
@@ -1614,6 +1610,8 @@ function baseReducer(state: AppState, action: Action): AppState {
     case 'SPEC_SET': {
       const prev = state.sessionSpecs[action.appSessionId];
       if (
+        // Keep the existence guard because the following comparisons dereference prev.
+        // eslint-disable-next-line @typescript-eslint/prefer-optional-chain
         prev &&
         prev.content === action.content &&
         prev.path === action.path &&
@@ -1666,6 +1664,16 @@ function baseReducer(state: AppState, action: Action): AppState {
 
     case 'SESSION_QUESTION':
       return { ...state, pendingQuestion: action.question };
+
+    case 'SESSION_CREATE_FAILED':
+      return {
+        ...state,
+        pendingCompose: Object.fromEntries(
+          Object.entries(state.pendingCompose).filter(
+            ([clientRef]) => clientRef !== action.clientRef,
+          ),
+        ),
+      };
 
     case 'SESSION_ERROR': {
       let next = state;
@@ -2303,6 +2311,8 @@ function baseReducer(state: AppState, action: Action): AppState {
       if (!action.browser.appSessionId) return state;
       const appSessionId = action.browser.appSessionId;
       // Surface a freshly opened browser, but never re-open a pane the user hid.
+      // Missing keys differ from explicitly hidden panes.
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-boolean-literal-compare
       const hidden = state.browserOpenKeys[appSessionId] === false;
       return {
         ...state,
@@ -2328,6 +2338,8 @@ function baseReducer(state: AppState, action: Action): AppState {
 
     case 'BROWSER_NAVIGATED': {
       const browser = state.browsers[action.appSessionId];
+      // Keep the existence guard because the update below dereferences browser.
+      // eslint-disable-next-line @typescript-eslint/prefer-optional-chain
       if (!browser || browser.browserSessionId !== action.browserSessionId) return state;
       return {
         ...state,
@@ -2372,6 +2384,8 @@ function baseReducer(state: AppState, action: Action): AppState {
         browserErrors: { ...state.browserErrors, [action.appSessionId]: action.message },
         // Respect an explicit hide; otherwise surface the errored browser.
         browserOpenKeys:
+          // Missing keys differ from explicitly hidden panes.
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-boolean-literal-compare
           state.browserOpenKeys[action.appSessionId] === false
             ? state.browserOpenKeys
             : withBrowserOpenKey(state.browserOpenKeys, action.appSessionId, true),
@@ -2683,7 +2697,12 @@ function finiteNumber(value: unknown): number | undefined {
 
 /* ── Bridge event adapter ── */
 export function toastMessageForEvent(ev: ServerEvent): string | undefined {
-  if (ev.type === 'error' && ev.code === 'session.autonomy_update_failed') return ev.message;
+  if (
+    ev.type === 'error' &&
+    (ev.code === 'session.autonomy_update_failed' || ev.code === 'session.create_failed')
+  ) {
+    return ev.message;
+  }
   return ev.type === 'child.error' && ev.operation !== 'open' ? ev.message : undefined;
 }
 
@@ -2752,6 +2771,13 @@ export function adaptEvent(ev: ServerEvent): Action | null {
         return ev.appSessionId
           ? { type: 'AUTONOMY_UPDATE_SETTLED', appSessionId: ev.appSessionId }
           : null;
+      }
+      if (ev.code === 'session.create_failed' && ev.clientRef) {
+        return {
+          type: 'SESSION_CREATE_FAILED',
+          clientRef: ev.clientRef,
+          message: ev.message,
+        };
       }
       if (ev.recoverable) return null;
       if (ev.appSessionId) {

@@ -772,6 +772,7 @@ export type ServerEvent =
   | {
       type: 'error';
       code?: string;
+      clientRef?: string;
       appSessionId?: string;
       providerSessionId?: string;
       message: string;

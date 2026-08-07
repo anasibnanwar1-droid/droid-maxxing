@@ -1,6 +1,6 @@
 {
-  "scan_id": "scan-2026-08-07-repository-lifecycle",
-  "scan_date": "2026-08-07T12:14:59Z",
+  "scan_id": "scan-2026-08-07-session-create-failure",
+  "scan_date": "2026-08-07T12:45:00Z",
   "scan_type": "working",
   "commit_range": "HEAD..working-tree",
   "pr_number": null,
@@ -8,29 +8,29 @@
   "findings": [],
   "reviewed_candidates": [
     {
-      "id": "settings-triggered-unmerged-branch-deletion",
+      "id": "create-failure-correlation-spoofing",
       "disposition": "mitigated",
-      "reason": "Settings opts into cleanup only after historical chats are re-anchored. The Electron boundary still derives the branch from registered worktree metadata and uses non-forcing git branch -d with an argument array and --, so unmerged branches are retained and branch names cannot inject options or commands."
+      "reason": "The renderer clears pending compose state only when both the stable session.create_failed code and an exact clientRef are present. The sidecar derives that clientRef from the original create command rather than provider output, and the bridge remains protected by its existing loopback token boundary."
     },
     {
-      "id": "worktree-path-prefix-confusion",
+      "id": "concurrent-pending-compose-tampering",
       "disposition": "mitigated",
-      "reason": "Linked-chat display and in-use checks reuse isWorktreeInUse, which normalizes paths and requires an exact match or path-separator boundary. The regression test excludes similarly prefixed sibling paths."
+      "reason": "Failure cleanup filters only the pending entry whose clientRef matches the failed create. A deterministic regression keeps a concurrent pending creation intact, preventing one failed request from clearing unrelated user state."
     },
     {
-      "id": "status-string-xss",
+      "id": "create-error-message-xss",
       "disposition": "mitigated",
-      "reason": "Repository paths, branch names, chat titles, and pull-request state are rendered as ordinary React text nodes. The change introduces no raw HTML, URL navigation, or executable interpolation."
+      "reason": "The provider failure message is surfaced through the existing toast path as ordinary React text. The change introduces no raw HTML, URL navigation, shell execution, or executable interpolation."
     },
     {
-      "id": "settings-enumeration-resource-use",
+      "id": "pending-compose-cleanup-resource-use",
       "disposition": "accepted",
-      "reason": "Opening or explicitly refreshing Settings enumerates only locally configured workspaces and registered worktrees. Requests are generation-guarded so stale results cannot overwrite newer state, and no new background poller or externally reachable endpoint is introduced."
+      "reason": "Cleanup performs a linear filter over the renderer's locally created pending compose entries only when session creation fails. The collection is bounded by user-initiated concurrent creates, and the change introduces no poller, network listener, or unbounded external input."
     },
     {
-      "id": "git-ipc-sender-authorization",
+      "id": "legacy-store-eslint-baseline",
       "disposition": "pre-existing",
-      "reason": "Git IPC handlers still lack assertMainRenderer, as documented in the threat model. This Settings slice uses the existing Git IPC surface and does not weaken its repository, worktree, branch, or command-argument validation."
+      "reason": "The native ESLint suppression baseline records the existing error counts in the legacy store so staged lint can enforce that this change adds no diagnostics. It does not disable rules in source or configuration; reducing existing counts will require pruning the baseline separately."
     }
   ],
   "summary": {
@@ -49,7 +49,7 @@
       "DoS": 0,
       "ElevationOfPrivilege": 0
     },
-    "files_analyzed": 7
+    "files_analyzed": 8
   },
   "thresholds": {
     "block_merge": ["CRITICAL"],
