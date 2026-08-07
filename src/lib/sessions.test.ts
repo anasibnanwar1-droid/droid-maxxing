@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert';
-import { activeSessionCwds, sessionIsLive } from './sessions';
+import { activeSessionCwds, sessionIsLive, sessionIsUnread } from './sessions';
 import type { SessionSummary } from '../types/bridge';
 
 function session(over: Partial<SessionSummary>): SessionSummary {
@@ -17,6 +17,28 @@ test('sessionIsLive treats terminal and awaiting phases as not live', () => {
   // a completed session is never live even while a stale streaming flag lingers
   assert.equal(sessionIsLive({ phase: 'completed', streaming: true }), false);
   assert.equal(sessionIsLive({ phase: 'orchestrator_turn' }), true);
+});
+
+test('sessionIsUnread flags only newer settled activity on background sessions', () => {
+  const row = (over: Partial<SessionSummary>) => ({
+    appSessionId: 'sess',
+    phase: 'running',
+    updatedAt: 2_000,
+    ...over,
+  });
+  // newer finished activity after the last open reads as unread
+  assert.equal(sessionIsUnread(row({}), null, 1_000), true);
+  // nothing newer since the last open
+  assert.equal(sessionIsUnread(row({}), null, 2_000), false);
+  // never opened sessions default to their own updatedAt and are not unread
+  assert.equal(sessionIsUnread(row({}), null, undefined), false);
+  // the session currently on screen is always considered read
+  assert.equal(sessionIsUnread(row({}), 'sess', 1_000), false);
+  // a turn in flight shows the working indicator instead of the unread marker
+  assert.equal(sessionIsUnread(row({ streaming: true }), null, 1_000), false);
+  assert.equal(sessionIsUnread(row({ phase: 'orchestrator_turn' }), null, 1_000), false);
+  // a settled session with the same flag pattern is unread again
+  assert.equal(sessionIsUnread(row({ streaming: false }), null, 1_000), true);
 });
 
 test('activeSessionCwds includes the draft, active chat, and live sessions only', () => {

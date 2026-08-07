@@ -15,6 +15,20 @@ export function sessionIsLive(session: Pick<SessionSummary, 'phase' | 'streaming
   return CLEARLY_ACTIVE.includes(session.phase);
 }
 
+// Whether a session reads as unread in the sidebar: the model finished newer
+// activity than the last time the user opened the session. The active session
+// is always considered read, and a session with a turn in flight shows its
+// working indicator instead — unread only appears once the model responded.
+export function sessionIsUnread(
+  session: Pick<SessionSummary, 'appSessionId' | 'updatedAt' | 'phase' | 'streaming'>,
+  activeAppSessionId: string | null,
+  lastSeenAt: number | undefined,
+): boolean {
+  if (session.appSessionId === activeAppSessionId) return false;
+  if (sessionIsLive(session)) return false;
+  return session.updatedAt > (lastSeenAt ?? session.updatedAt);
+}
+
 // The cwds of sessions that genuinely occupy a directory right now: the open
 // draft, the active chat, any session with a live turn, and any session with a
 // still-running child (children run in the parent session's cwd, so they pin it
