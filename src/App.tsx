@@ -20,6 +20,7 @@ import {
   nativeBrowserRequestTargetsActiveSession,
 } from './lib/browserSessionIdentity';
 import { shouldOpenSelectedChild } from './lib/childSessions';
+import type { ChildAccess } from './hooks/useStore';
 import Sidebar from './components/Sidebar';
 import ChatView from './components/ChatView';
 import MissionControl from './components/MissionControl';
@@ -75,6 +76,18 @@ const UTILITY_PANE_MAX = 980;
 const UTILITY_PANE_DEFAULT = 560;
 const UTILITY_PANE_CONTENT_RESERVE = 520;
 const UTILITY_PANE_WIDTH_STORAGE_KEY = 'droid-utility-pane-width';
+
+// selectedChild can outlive its childAccess entry after failed/closed cleanup
+// (withoutChildAccess deletes the parent key). Record indexing types that as
+// always present; this runtime-safe lookup returns undefined instead of throwing.
+function childAccessForSelection(
+  childAccess: Record<string, Record<string, ChildAccess>>,
+  parentAppSessionId: string,
+  childSessionId: string,
+): ChildAccess | undefined {
+  if (!Object.hasOwn(childAccess, parentAppSessionId)) return undefined;
+  return childAccess[parentAppSessionId][childSessionId];
+}
 
 export default function App() {
   const { state, dispatch } = useStore();
@@ -320,7 +333,11 @@ export default function App() {
     const selection = state.selectedChild;
     if (!selection) return;
     if (selection.parentAppSessionId !== activeSession.appSessionId) return;
-    const access = state.childAccess[selection.parentAppSessionId][selection.childSessionId];
+    const access = childAccessForSelection(
+      state.childAccess,
+      selection.parentAppSessionId,
+      selection.childSessionId,
+    );
     if (!shouldOpenSelectedChild(access)) return;
     const requestId = newChildOpenRequestId();
     dispatch({ type: 'SELECT_CHILD', selection, requestId });
