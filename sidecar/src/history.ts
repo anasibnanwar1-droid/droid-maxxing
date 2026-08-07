@@ -316,7 +316,7 @@ export class HistoryIndex {
   // Transcript content search across every cached top-level session file,
   // most recently active first. Title matching happens renderer-side over
   // the session list; this only reports chat-content hits with snippets.
-  async searchSessions(query: string): Promise<SessionSearchResult[]> {
+  async searchSessions(query: string, isStale?: () => boolean): Promise<SessionSearchResult[]> {
     const patches = this.summaryPatches();
     const entries = this.sessionFiles
       .searchableEntries()
@@ -331,6 +331,7 @@ export class HistoryIndex {
         sizeBytes: entry.sizeBytes,
       })),
       query,
+      isStale,
     );
   }
 

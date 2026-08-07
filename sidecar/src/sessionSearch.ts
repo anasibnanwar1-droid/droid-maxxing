@@ -7,11 +7,17 @@
  * changed since the previous query; per-query file and byte budgets cap the
  * cold-scan cost so a large sessions tree cannot monopolize the bridge.
  */
-import { parseSessionLineEvents } from './sessionTranscriptParser.js';
+import {
+  parseSessionLineEvents,
+  type StoredMessageLine,
+  type StoredSessionStart,
+} from './sessionTranscriptParser.js';
 import { readSessionRawWindowAsync } from './sessionTranscript.js';
 import type { SessionSearchMatch, SessionSearchResult, TranscriptEvent } from './protocol.js';
 
-// One searchable chat moment: who said it, when, and what the text was.
+// One searchable chat moment: who said it, when, and what the text was. Text
+// is whitespace-flattened at extraction so per-keystroke matching is a single
+// lowercase + indexOf, not a regex over every record.
 interface SearchableRecord {
   ts: number;
   author: 'user' | 'assistant';
@@ -36,9 +42,11 @@ const MAX_FILES_PER_QUERY = 150;
 const MAX_BYTES_PER_QUERY = 40_000_000;
 const MAX_RESULTS = 25;
 const MAX_MATCHES_PER_SESSION = 3;
-// Extraction cache size in files; an active sidebar search touches a handful
-// of changing files, so a small LRU is enough.
-const MAX_CACHED_FILES = 40;
+// Extraction cache size in files. Must cover one full scan budget: with a
+// stable newest-first scan order, a smaller LRU would evict the first-scanned
+// files before the next keystroke reaches them, so the cache would never hit
+// for exactly the large trees the budgets exist for.
+const MAX_CACHED_FILES = MAX_FILES_PER_QUERY;
 const SNIPPET_RADIUS = 70;
 
 interface CachedExtraction {
@@ -72,15 +80,15 @@ async function cachedExtraction(candidate: SessionSearchCandidate): Promise<Sear
 }
 
 // Parse the file's message lines into searchable chat records. Lines are
-// cheaply prefiltered by the message field name so tool-heavy sessions only
-// JSON.parse real conversation rows; corrupt rows are skipped like the
-// transcript reader does.
+// cheaply prefiltered by field names so meta rows and llm_only orchestration
+// context skip JSON.parse entirely; message-wrapped tool rows still parse and
+// drop at the event filter. Corrupt rows are skipped like the transcript
+// reader does.
 async function extractRecords(candidate: SessionSearchCandidate): Promise<SearchableRecord[]> {
   const window = await readSessionRawWindowAsync(candidate.path, candidate.sizeBytes);
   const records: SearchableRecord[] = [];
   for (const raw of window.text.split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line.includes('"message"')) continue;
+    if (!raw.includes('"message"') || raw.includes('"llm_only"')) continue;
     let events: TranscriptEvent[];
     try {
       // Candidates are top-level session files, so the transcript role is
@@ -90,28 +98,32 @@ async function extractRecords(candidate: SessionSearchCandidate): Promise<Search
         candidate.appSessionId,
         candidate.providerSessionId,
         'primary',
-        JSON.parse(line) as Parameters<typeof parseSessionLineEvents>[3],
+        JSON.parse(raw) as StoredMessageLine | StoredSessionStart,
       );
     } catch {
       continue;
     }
     for (const e of events) {
       if (e.kind !== 'text' || !e.text) continue;
-      records.push({ ts: e.ts, author: e.author === 'user' ? 'user' : 'assistant', text: e.text });
+      records.push({
+        ts: e.ts,
+        author: e.author === 'user' ? 'user' : 'assistant',
+        text: e.text.replace(/\s+/g, ' '),
+      });
     }
   }
   return records;
 }
 
 // A single-line snippet centered on the first match, ellipsized at the cut
-// boundaries, or null when the record does not contain the query.
+// boundaries, or null when the record does not contain the query. The text
+// arrives pre-flattened by extraction.
 function buildSnippet(text: string, queryLower: string): string | null {
-  const flat = text.replace(/\s+/g, ' ');
-  const index = flat.toLowerCase().indexOf(queryLower);
+  const index = text.toLowerCase().indexOf(queryLower);
   if (index < 0) return null;
   const start = Math.max(0, index - SNIPPET_RADIUS);
-  const end = Math.min(flat.length, index + queryLower.length + SNIPPET_RADIUS);
-  const snippet = `${start > 0 ? '…' : ''}${flat.slice(start, end)}${end < flat.length ? '…' : ''}`;
+  const end = Math.min(text.length, index + queryLower.length + SNIPPET_RADIUS);
+  const snippet = `${start > 0 ? '…' : ''}${text.slice(start, end)}${end < text.length ? '…' : ''}`;
   return snippet;
 }
 
@@ -127,6 +139,7 @@ function buildSnippet(text: string, queryLower: string): string | null {
 export async function searchSessionFiles(
   candidates: SessionSearchCandidate[],
   query: string,
+  isStale?: () => boolean,
 ): Promise<SessionSearchResult[]> {
   const queryLower = query.trim().toLowerCase();
   if (!queryLower) return [];
@@ -134,6 +147,9 @@ export async function searchSessionFiles(
   let filesScanned = 0;
   let bytesRead = 0;
   for (const candidate of candidates) {
+    // A newer query superseded this one: stop spending the budget on results
+    // the caller will discard.
+    if (isStale?.()) break;
     if (results.length >= MAX_RESULTS || filesScanned >= MAX_FILES_PER_QUERY) break;
     if (bytesRead > MAX_BYTES_PER_QUERY) break;
     const hit = extractionCache.get(candidate.path);

@@ -809,7 +809,6 @@ export type ServerEvent =
   | {
       type: 'sessions.searchResults';
       requestId: string;
-      query: string;
       results: SessionSearchResult[];
     }
   | { type: 'history.list'; sessions: SessionHistoryEntry[] }

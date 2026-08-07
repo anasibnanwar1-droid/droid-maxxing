@@ -150,6 +150,24 @@ test('results cap at 25 sessions, keeping the candidates’ recency order', asyn
   assert.equal(results[24]?.appSessionId, 's24');
 });
 
+test('a superseded query stops the scan before spending the file budget', async () => {
+  const candidates = [
+    writeSession('s1', [messageLine('m1', 'user', 'shared topic one', 1)]),
+    writeSession('s2', [messageLine('m2', 'user', 'shared topic two', 2)]),
+  ];
+  let probes = 0;
+  const results = await searchSessionFiles(candidates, 'shared topic', () => {
+    probes += 1;
+    return probes > 1;
+  });
+  assert.deepEqual(
+    results.map((r) => r.appSessionId),
+    ['s1'],
+  );
+
+  resetSessionSearchCache();
+});
+
 test('extractions are cached by file freshness and re-read after writes', async () => {
   const candidate = writeSession('s1', [messageLine('m1', 'user', 'first version', 1)]);
   assert.equal((await searchSessionFiles([candidate], 'second version')).length, 0);
