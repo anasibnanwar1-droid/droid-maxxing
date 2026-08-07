@@ -6,6 +6,7 @@
 // parses a few hundred more lines per page instead of re-reading the whole
 // file, and the per-line parse memo makes repeat pages and reopens free.
 import { closeSync, openSync, readFileSync, readSync, statSync } from 'node:fs';
+import { open as openAsync, readFile as readFileAsync } from 'node:fs/promises';
 import { dateMs, numberValue, objectValue, stringValue } from './values.js';
 import {
   event,
@@ -67,6 +68,30 @@ export function readSessionRawWindow(
     };
   } finally {
     closeSync(fd);
+  }
+}
+
+// Async twin of readSessionRawWindow for callers that must not block the
+// event loop (transcript content search answers bridge commands inline).
+export async function readSessionRawWindowAsync(
+  path: string,
+  size: number,
+): Promise<{ text: string; trimmed: boolean }> {
+  if (size <= MAX_SESSION_BYTES) {
+    return { text: await readFileAsync(path, 'utf8'), trimmed: false };
+  }
+  const handle = await openAsync(path, 'r');
+  try {
+    const buffer = Buffer.alloc(MAX_SESSION_BYTES);
+    await handle.read(buffer, 0, MAX_SESSION_BYTES, size - MAX_SESSION_BYTES);
+    const raw = buffer.toString('utf8');
+    const firstNewline = raw.indexOf('\n');
+    return {
+      text: firstNewline >= 0 ? raw.slice(firstNewline + 1) : raw,
+      trimmed: true,
+    };
+  } finally {
+    await handle.close();
   }
 }
 

@@ -132,6 +132,37 @@ export class SessionFileCache {
     return rows;
   }
 
+  // Path, stat, and base summary for every cached top-level session file, so
+  // transcript content search can open the files without re-walking the
+  // sessions tree. Callers apply the app_sessions patch overlay.
+  searchableEntries(): {
+    providerSessionId: string;
+    path: string;
+    mtimeMs: number;
+    sizeBytes: number;
+    summary: SessionSummary;
+  }[] {
+    const rows: {
+      providerSessionId: string;
+      path: string;
+      mtimeMs: number;
+      sizeBytes: number;
+      summary: SessionSummary;
+    }[] = [];
+    for (const entry of this.files.values()) {
+      if (entry.summary) {
+        rows.push({
+          providerSessionId: entry.providerSessionId,
+          path: entry.path,
+          mtimeMs: entry.mtimeMs,
+          sizeBytes: entry.sizeBytes,
+          summary: entry.summary,
+        });
+      }
+    }
+    return rows;
+  }
+
   // Diff cached session files against the files on disk, re-summarizing only
   // new or changed files and dropping deleted ones. A file that vanishes or
   // breaks mid-reconcile is skipped and retried on the next reconcile, so

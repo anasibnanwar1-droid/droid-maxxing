@@ -82,6 +82,7 @@ type SessionHistory = Pick<
   | 'syncSummaries'
   | 'summaryPatchesAndHidden'
   | 'listHistoricalSessions'
+  | 'searchSessions'
   | 'reconcileSessionFiles'
   | 'reconcileSessionFilePaths'
   | 'sessionFileCacheSize'
@@ -537,6 +538,14 @@ export class SessionManager {
         return;
       case 'session.loadHistory':
         this.timeline.load(cmd.appSessionId, cmd.cursor);
+        return;
+      case 'sessions.search':
+        this.emit({
+          type: 'sessions.searchResults',
+          requestId: cmd.requestId,
+          query: cmd.query,
+          results: await this.history.searchSessions(cmd.query),
+        });
         return;
       case 'settings.agent.update':
         await this.updateAgentSettings(cmd);

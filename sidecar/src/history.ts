@@ -20,6 +20,7 @@ import type {
   FactoryDefaultSettings,
   SessionHistoryEntry,
   SessionPhase,
+  SessionSearchResult,
   SessionSummary,
   ProgressEntry,
   ReasoningEffort,
@@ -41,6 +42,7 @@ import {
   type StoredSessionStart,
   type TranscriptWindowCursor,
 } from './sessionTranscript.js';
+import { searchSessionFiles } from './sessionSearch.js';
 
 interface StoredMissionState {
   missionId?: string;
@@ -308,6 +310,27 @@ export class HistoryIndex {
       workspaceCwds,
       options.limitPerWorkspace,
       options.includePlainChats,
+    );
+  }
+
+  // Transcript content search across every cached top-level session file,
+  // most recently active first. Title matching happens renderer-side over
+  // the session list; this only reports chat-content hits with snippets.
+  async searchSessions(query: string): Promise<SessionSearchResult[]> {
+    const patches = this.summaryPatches();
+    const entries = this.sessionFiles
+      .searchableEntries()
+      .map((entry) => ({ entry, summary: applyCachedSummary({ ...entry.summary }, patches) }))
+      .sort((a, b) => b.summary.updatedAt - a.summary.updatedAt);
+    return await searchSessionFiles(
+      entries.map(({ entry, summary }) => ({
+        providerSessionId: entry.providerSessionId,
+        appSessionId: summary.appSessionId,
+        path: entry.path,
+        mtimeMs: entry.mtimeMs,
+        sizeBytes: entry.sizeBytes,
+      })),
+      query,
     );
   }
 
