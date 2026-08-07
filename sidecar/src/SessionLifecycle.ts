@@ -341,7 +341,12 @@ export class SessionLifecycle {
     const appSessionId = liveSession.summary.appSessionId;
     liveSession.pendingSends = [];
     if (liveSession.compacting) {
-      this.dependencies.registry.updateSummary(appSessionId, { queuedSends: 0 });
+      // Clearing the queue mid-compaction is bookkeeping, not activity.
+      this.dependencies.registry.updateSummary(
+        appSessionId,
+        { queuedSends: 0 },
+        { touchActivity: false },
+      );
       return;
     }
     const wasAutoCompacting = liveSession.autoCompacting;
@@ -592,11 +597,18 @@ export class SessionLifecycle {
     const stableAppSessionId = liveSession.summary.appSessionId;
     try {
       liveSession.streaming = true;
-      d.registry.updateSummary(stableAppSessionId, {
-        phase: liveSession.summary.sessionPurpose === 'mission-control' ? 'planning' : 'running',
-        streaming: true,
-        queuedSends: liveSession.pendingSends.length,
-      });
+      // Turn start is not user-visible activity: updatedAt (sidebar order and
+      // the renderer's unread marker) must not move until the turn settles,
+      // otherwise background sessions read as unread while the model works.
+      d.registry.updateSummary(
+        stableAppSessionId,
+        {
+          phase: liveSession.summary.sessionPurpose === 'mission-control' ? 'planning' : 'running',
+          streaming: true,
+          queuedSends: liveSession.pendingSends.length,
+        },
+        { touchActivity: false },
+      );
       await d.runPrimaryTurn(liveSession, prompt);
     } finally {
       liveSession.interruptingForSteer = false;
@@ -609,10 +621,10 @@ export class SessionLifecycle {
         if (queued.length > 0) void this.redeliverQueuedSends(stableAppSessionId, queued);
       } else if (liveSession.autoCompacting) {
         d.compaction.afterTurn(this.primaryAutomaticCompactionTarget(liveSession));
-        this.updateQueuedSends(liveSession);
+        this.publishTurnSettled(liveSession);
       } else {
         const next = liveSession.pendingSends.shift();
-        this.updateQueuedSends(liveSession);
+        this.publishTurnSettled(liveSession);
         if (next !== undefined) this.driveInBackground(stableAppSessionId, next);
       }
     }
@@ -625,11 +637,26 @@ export class SessionLifecycle {
     });
   }
 
+  // Queue/steer bookkeeping: never moves updatedAt on its own.
   private updateQueuedSends(liveSession: LiveSession): void {
-    this.dependencies.registry.updateSummary(liveSession.summary.appSessionId, {
-      streaming: liveSession.streaming,
-      queuedSends: liveSession.pendingSends.length,
-    });
+    this.publishTurnState(liveSession, false);
+  }
+
+  // The turn ended (completed, failed, or stopped): this is the "model has
+  // finally responded" moment, so the summary's updatedAt moves now.
+  private publishTurnSettled(liveSession: LiveSession): void {
+    this.publishTurnState(liveSession, true);
+  }
+
+  private publishTurnState(liveSession: LiveSession, turnSettled: boolean): void {
+    this.dependencies.registry.updateSummary(
+      liveSession.summary.appSessionId,
+      {
+        streaming: liveSession.streaming,
+        queuedSends: liveSession.pendingSends.length,
+      },
+      { touchActivity: turnSettled },
+    );
   }
 
   private shouldDiscardPendingSends(liveSession: LiveSession): boolean {

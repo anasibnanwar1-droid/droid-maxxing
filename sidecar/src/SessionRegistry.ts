@@ -101,8 +101,10 @@ export class SessionRegistry<TLive extends RegisteredSession> {
     if (current.providerSessionId === providerSessionId) return current;
     const liveSession = this.sessions.get(current.appSessionId);
 
+    // A provider swap is compaction bookkeeping, not user-visible activity:
+    // updatedAt (sidebar order, unread marker) stays where the turn left it.
     const updated = {
-      ...this.withPatch(current, patch),
+      ...this.withPatch(current, patch, false),
       providerSessionId,
       compactedFromProviderSessionIds: uniqueStrings([
         ...(current.compactedFromProviderSessionIds ?? []),

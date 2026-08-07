@@ -313,7 +313,9 @@ test('replaceProvider retains the alias chain and supports live and historical s
     'live-provider-old',
     'live-provider',
   ]);
-  assert.equal(liveUpdated?.updatedAt, 10);
+  // A compaction provider swap is background bookkeeping: it must not move
+  // updatedAt, or it would reorder the sidebar and read as unread.
+  assert.equal(liveUpdated?.updatedAt, 1);
   assert.equal(registry.getLive('live-provider-next'), session);
   assert.equal(registry.getLive('live-provider'), session);
   assert.equal(registry.getLive('live-provider-old'), session);
@@ -329,7 +331,7 @@ test('replaceProvider retains the alias chain and supports live and historical s
     'historical-provider-old',
     'historical-provider',
   ]);
-  assert.equal(historicalUpdated?.updatedAt, 11);
+  assert.equal(historicalUpdated?.updatedAt, 1);
   assert.equal(registry.getLive('historical-provider-next'), undefined);
   assert.equal(registry.resolveSummary('historical-provider-next')?.appSessionId, 'historical-app');
   assert.deepEqual(history.trace, ['persist', 'publish', 'persist', 'publish']);
