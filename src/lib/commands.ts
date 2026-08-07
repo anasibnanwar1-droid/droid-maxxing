@@ -166,6 +166,31 @@ export const closeSession = (appSessionId: string) => {
   bridge.send({ type: 'session.close', appSessionId });
 };
 
+export const reanchorSessionsForWorktreeRemoval = (
+  fromCwd: string,
+  toCwd: string,
+): Promise<number> => {
+  const requestId = newClientRef();
+  return new Promise((resolve, reject) => {
+    const timeout = globalThis.setTimeout(() => {
+      unsubscribe();
+      reject(new Error('Timed out while updating sessions that used this worktree.'));
+    }, 10_000);
+    const unsubscribe = bridge.subscribe((event) => {
+      if (event.type !== 'sessions.cwdReanchored' || event.requestId !== requestId) return;
+      globalThis.clearTimeout(timeout);
+      unsubscribe();
+      if (event.ok) resolve(event.count);
+      else reject(new Error(event.message ?? 'Could not update sessions that used this worktree.'));
+    });
+    if (!bridge.sendIfConnected({ type: 'sessions.reanchorCwd', requestId, fromCwd, toCwd })) {
+      globalThis.clearTimeout(timeout);
+      unsubscribe();
+      reject(new Error('Reconnect to DROIDEX before removing a worktree.'));
+    }
+  });
+};
+
 export const listSessions = (options?: {
   workspaceCwds?: string[];
   includePlainChats?: boolean;

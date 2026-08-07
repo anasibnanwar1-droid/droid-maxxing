@@ -391,6 +391,7 @@ test('create and cold resume publish only after registration', async () => {
     resumed.events.slice(-2).map((event) => event.type),
     ['session.created', 'session.updated'],
   );
+  assert.equal(resumed.runtime.loadCalls[0]?.handlers.cwd, '/workspace');
   assert.equal(resumed.publicationRegistration.every(Boolean), true);
 });
 

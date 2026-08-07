@@ -87,6 +87,12 @@ export class Bridge {
     else this.queue.push(cmd);
   }
 
+  sendIfConnected(cmd: ClientCommand): boolean {
+    if (this.ws?.readyState !== WebSocket.OPEN) return false;
+    this.ws.send(JSON.stringify(cmd));
+    return true;
+  }
+
   subscribe(l: Listener): () => void {
     this.listeners.add(l);
     return () => this.listeners.delete(l);

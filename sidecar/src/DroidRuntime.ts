@@ -27,6 +27,7 @@ export interface RuntimeHandlers {
   permissionHandler?: PermissionHandler;
   askUserHandler?: AskUserHandler;
   mcpServers?: McpServerConfig[];
+  cwd?: string;
 }
 
 export interface CreateRuntimeSessionOptions extends RuntimeHandlers {
@@ -146,7 +147,7 @@ export class DroidRuntime implements FactoryRuntime {
   }
 
   async loadSession(sessionId: string, handlers: RuntimeHandlers = {}): Promise<DroidSession> {
-    const { client, transport } = await this.createClient(undefined, handlers);
+    const { client, transport } = await this.createClient(handlers.cwd, handlers);
     const params: LoadSessionRequestParams = { sessionId };
     if (handlers.mcpServers?.length) params.mcpServers = handlers.mcpServers;
     try {

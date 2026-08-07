@@ -1,56 +1,41 @@
 {
-  "scan_id": "scan-2026-07-25-055",
-  "scan_date": "2026-07-25T17:33:59Z",
-  "scan_type": "pr",
-  "commit_range": "origin/main..working-tree",
-  "pr_number": 55,
+  "scan_id": "scan-2026-08-07-repository-lifecycle",
+  "scan_date": "2026-08-07T11:28:23Z",
+  "scan_type": "working",
+  "commit_range": "HEAD..working-tree",
+  "pr_number": null,
   "threat_model_version": "1.0.0",
   "findings": [],
   "reviewed_candidates": [
     {
-      "id": "files-path-traversal-toctou",
+      "id": "session-cwd-path-traversal",
       "disposition": "mitigated",
-      "reason": "Root-token authorization, lexical and realpath confinement, symlink-walk checks, O_NOFOLLOW, and post-open device/inode verification prevent file-content disclosure outside the authorized root."
+      "reason": "Re-anchoring requires absolute paths, canonicalizes them, and uses path.relative containment checks that reject sibling-prefix collisions before preserving only the contained relative suffix."
     },
     {
-      "id": "terminal-shell-args-env-override",
-      "disposition": "not-reachable",
-      "reason": "Renderer IPC forwards only missionId, cwd, cols, and rows; internal shell, args, and env overrides are not exposed through the production bridge."
+      "id": "arbitrary-runtime-working-directory",
+      "disposition": "no-capability-expansion",
+      "reason": "The new resume cwd reaches the Droid process spawn, but it comes from the same persisted summary cwd already accepted for new sessions; the change does not expose a new filesystem privilege or shell interpolation sink."
     },
     {
-      "id": "terminal-environment-inheritance",
-      "disposition": "accepted-functionality",
-      "reason": "The PTY is an explicitly user-opened local shell, the sender is authorized, and inherited launch environment values are already available to that same local user."
-    },
-    {
-      "id": "native-browser-ipc-authorization",
+      "id": "stale-destructive-command-replay",
       "disposition": "mitigated",
-      "reason": "All new privileged native-browser IPC handlers authorize the main renderer; child-view events are mapped back to an owned native browser session."
+      "reason": "Worktree-removal preparation uses connected-only sending, correlated request IDs, acknowledgement handling, waiter cleanup, and a bounded timeout, so it cannot be queued and replayed after reconnection."
     },
     {
-      "id": "browser-inspection-information-disclosure",
+      "id": "live-session-state-tampering",
       "disposition": "mitigated",
-      "reason": "Inspection and design payloads remove script, style, and noscript text, redact sensitive fields and attributes, sanitize URL-bearing attributes, and bound returned text and HTML."
+      "reason": "The authoritative sidecar registry refuses re-anchoring whenever any matching summary is live, independently of renderer-side active-session checks."
     },
     {
-      "id": "browser-diagnostic-secret-leakage-redos",
+      "id": "partial-history-persistence",
       "disposition": "mitigated",
-      "reason": "Diagnostic URLs and console messages redact credential-like values with bounded linear scanning, and network and console buffers are capped."
+      "reason": "All affected summaries are persisted in one history synchronization call before canonical in-memory publication, preventing partial visible migration."
     },
     {
-      "id": "docx-preview-active-content",
-      "disposition": "mitigated",
-      "reason": "DOCX preview removes active elements, rejects unsafe CSS constructs, disables alt-chunk rendering, and sanitizes generated content before insertion."
-    },
-    {
-      "id": "legacy-renderer-xss-and-ipc-risks",
+      "id": "websocket-ingress-validation",
       "disposition": "pre-existing",
-      "reason": "Unsafe SVG/Mermaid rendering and legacy unguarded IPC channels predate this PR; the PR does not introduce or weaken those paths."
-    },
-    {
-      "id": "browser-file-url-and-shared-partition",
-      "disposition": "pre-existing-accepted-risk",
-      "reason": "Local file navigation and a shared persistent browser partition are documented product trade-offs that predate the scanned change set."
+      "reason": "ClientCommand ingress still relies on the existing bridge token and TypeScript-only command dispatch rather than runtime schemas; this change adds no authentication bypass and does not expand privileges beyond existing arbitrary session cwd creation."
     }
   ],
   "summary": {
@@ -69,7 +54,7 @@
       "DoS": 0,
       "ElevationOfPrivilege": 0
     },
-    "files_analyzed": 96
+    "files_analyzed": 15
   },
   "thresholds": {
     "block_merge": ["CRITICAL"],

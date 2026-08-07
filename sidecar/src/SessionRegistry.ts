@@ -1,4 +1,5 @@
 import { applyCachedSummary, type HistoricalSession, type HistoryIndex } from './history.js';
+import { isAbsolute, relative, resolve } from 'node:path';
 import type { BridgeFeature, SessionSummary } from './protocol.js';
 import { filterSessionListSummaries, type SessionListFilterOptions } from './sessionListFilter.js';
 import { uniqueStrings } from './sessionHelpers.js';
@@ -89,6 +90,38 @@ export class SessionRegistry<TLive extends RegisteredSession> {
     liveSession.summary = updated;
     this.publish(updated);
     return updated;
+  }
+
+  reanchorHistoricalCwd(fromCwd: string, toCwd: string): SessionSummary[] {
+    if (!isAbsolute(fromCwd) || !isAbsolute(toCwd)) {
+      throw new Error('Session cwd re-anchoring requires absolute paths.');
+    }
+
+    const from = resolve(fromCwd);
+    const summaries = [...this.mergeCanonicalSummaries().values()];
+    if (
+      summaries.some(
+        (summary) => this.sessions.has(summary.appSessionId) && isInside(from, summary.cwd),
+      )
+    ) {
+      throw new Error('A live session is still using this worktree.');
+    }
+    const affected = summaries.filter((summary) => isInside(from, summary.cwd));
+    const updated = affected.map((summary) =>
+      this.withPatch(
+        summary,
+        {
+          cwd: resolve(toCwd, relative(from, resolve(summary.cwd))),
+          workspaceKind: 'folder',
+        },
+        false,
+      ),
+    );
+    if (updated.length === 0) return [];
+
+    this.dependencies.history.syncSummaries(updated);
+    for (const summary of updated) this.publish(summary);
+    return updated.map(copySummary);
   }
 
   replaceProvider(
@@ -267,4 +300,10 @@ function copyFeature(feature: BridgeFeature): BridgeFeature {
     verificationSteps: [...feature.verificationSteps],
     ...(feature.fulfills ? { fulfills: [...feature.fulfills] } : {}),
   };
+}
+
+function isInside(parent: string, candidate: string): boolean {
+  if (!candidate || !isAbsolute(candidate)) return false;
+  const path = relative(parent, resolve(candidate));
+  return path === '' || (!path.startsWith('..') && !isAbsolute(path));
 }

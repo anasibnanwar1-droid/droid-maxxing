@@ -37,6 +37,7 @@ import { activeSessionCwds } from '../lib/sessions';
 import { utilityTerminalCwds } from '../lib/utilityPanel';
 import { workspaceName } from '../lib/workspaces';
 import { toast } from '../lib/toast';
+import { reanchorSessionsForWorktreeRemoval } from '../lib/commands';
 import { applyTheme, paletteForMode, UI_FONTS, PRESET_THEMES } from '../lib/theme';
 import { DiagnosticsSettings } from './DiagnosticsSettings';
 import { NotificationsSettings } from './NotificationsSettings';
@@ -1287,9 +1288,15 @@ function WorktreesSection() {
     removingRef.current = true;
     setRemoving(path);
     try {
+      const reanchored = await reanchorSessionsForWorktreeRemoval(path, root);
       const res = await removeGitWorktree(root, { path });
       if (res.ok) {
-        toast.success('Worktree removed');
+        const sessionsLabel = reanchored === 1 ? 'chat now uses' : 'chats now use';
+        const message =
+          reanchored > 0
+            ? `Worktree removed; ${String(reanchored)} historical ${sessionsLabel} the main checkout`
+            : 'Worktree removed';
+        toast.success(message);
         void load();
       } else if (
         res.reason === 'not_clean' ||
@@ -1299,6 +1306,8 @@ function WorktreesSection() {
       } else {
         toast.error(res.message ?? 'Could not remove worktree');
       }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not prepare worktree removal');
     } finally {
       removingRef.current = false;
       setRemoving(null);
