@@ -1,6 +1,6 @@
 {
   "scan_id": "scan-2026-08-07-repository-lifecycle",
-  "scan_date": "2026-08-07T11:28:23Z",
+  "scan_date": "2026-08-07T11:40:53Z",
   "scan_type": "working",
   "commit_range": "HEAD..working-tree",
   "pr_number": null,
@@ -8,34 +8,29 @@
   "findings": [],
   "reviewed_candidates": [
     {
-      "id": "session-cwd-path-traversal",
+      "id": "baseline-owner-spoofing",
       "disposition": "mitigated",
-      "reason": "Re-anchoring requires absolute paths, canonicalizes them, and uses path.relative containment checks that reject sibling-prefix collisions before preserving only the contained relative suffix."
+      "reason": "The provisional clientRef and final appSessionId are correlated by the sidecar's session.created event; adoption moves only an existing in-memory baseline within the same canonical Git root and does not grant repository or session access."
     },
     {
-      "id": "arbitrary-runtime-working-directory",
-      "disposition": "no-capability-expansion",
-      "reason": "The new resume cwd reaches the Droid process spawn, but it comes from the same persisted summary cwd already accepted for new sessions; the change does not expose a new filesystem privilege or shell interpolation sink."
-    },
-    {
-      "id": "stale-destructive-command-replay",
+      "id": "baseline-cache-resource-exhaustion",
       "disposition": "mitigated",
-      "reason": "Worktree-removal preparation uses connected-only sending, correlated request IDs, acknowledgement handling, waiter cleanup, and a bounded timeout, so it cannot be queued and replayed after reconnection."
+      "reason": "Provisional baselines use the existing 64-entry bounded cache, successful adoption deletes the provisional key before inserting the final key, and failed session creation therefore cannot cause unbounded memory growth."
     },
     {
-      "id": "live-session-state-tampering",
+      "id": "cross-session-baseline-tampering",
       "disposition": "mitigated",
-      "reason": "The authoritative sidecar registry refuses re-anchoring whenever any matching summary is live, independently of renderer-side active-session checks."
+      "reason": "First turns are keyed by unique clientRef values rather than a repository-wide fallback, and Last turn lookup accepts only the final appSessionId, preventing one concurrent first turn from replacing another's baseline."
     },
     {
-      "id": "partial-history-persistence",
+      "id": "baseline-adoption-review-race",
       "disposition": "mitigated",
-      "reason": "All affected summaries are persisted in one history synchronization call before canonical in-memory publication, preventing partial visible migration."
+      "reason": "The bridge issues baseline adoption before publishing session.created, but a resulting Review IPC can still race its asynchronous completion. A missing baseline safely falls back to HEAD, and subsequent reads use the adopted session baseline."
     },
     {
-      "id": "websocket-ingress-validation",
+      "id": "git-ipc-sender-authorization",
       "disposition": "pre-existing",
-      "reason": "ClientCommand ingress still relies on the existing bridge token and TypeScript-only command dispatch rather than runtime schemas; this change adds no authentication bypass and does not expand privileges beyond existing arbitrary session cwd creation."
+      "reason": "Git IPC handlers still lack assertMainRenderer, as documented in the threat model. The new adoption handler only renames bounded in-memory metadata and adds no filesystem mutation or repository access beyond the existing Git IPC surface."
     }
   ],
   "summary": {
@@ -54,7 +49,7 @@
       "DoS": 0,
       "ElevationOfPrivilege": 0
     },
-    "files_analyzed": 15
+    "files_analyzed": 8
   },
   "thresholds": {
     "block_merge": ["CRITICAL"],

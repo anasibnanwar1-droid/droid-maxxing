@@ -5,6 +5,14 @@ type Listener = (ev: ServerEvent) => void;
 
 type ReconnectScheduler = (callback: () => void, delayMs: number) => void;
 
+interface TurnBaselineAdopter {
+  gitAdoptTurnBaseline: (dir: string, clientRef: string, appSessionId: string) => Promise<unknown>;
+}
+
+function canAdoptTurnBaseline(api: object): api is TurnBaselineAdopter {
+  return 'gitAdoptTurnBaseline' in api && typeof api.gitAdoptTurnBaseline === 'function';
+}
+
 export class Bridge {
   private ws: WebSocket | null = null;
   private listeners = new Set<Listener>();
@@ -63,6 +71,16 @@ export class Bridge {
         ev = JSON.parse(e.data) as ServerEvent;
       } catch {
         return;
+      }
+      if (ev.type === 'session.created' && ev.session.cwd) {
+        const api = globalThis.window.droidControl;
+        if (api && canAdoptTurnBaseline(api)) {
+          void api
+            .gitAdoptTurnBaseline(ev.session.cwd, ev.clientRef, ev.session.appSessionId)
+            .catch(() => {
+              // Best effort: Review falls back to HEAD when no baseline exists.
+            });
+        }
       }
       this.listeners.forEach((listener) => {
         listener(ev);

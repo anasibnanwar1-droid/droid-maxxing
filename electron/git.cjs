@@ -1061,12 +1061,13 @@ const REVIEW_SCOPES = [
 
 // Per-worktree baseline captured at the start of an agent turn so the
 // "Last turn" scope can diff the working tree against that point in time.
-// Keyed by `${root}\u0000${appSessionId}` so two sessions sharing a repo don't
-// clobber each other's baseline.
+// A new session starts under its clientRef, then adopts the entry under its
+// appSessionId once creation succeeds. This keeps concurrent first turns in
+// the same worktree isolated without a shared repo-level fallback.
 const turnBaselines = new Map();
 
-function turnBaselineKey(root, appSessionId) {
-  return `${root}\u0000${appSessionId ?? ''}`;
+function turnBaselineKey(root, ownerId) {
+  return `${root}\u0000${ownerId}`;
 }
 
 function normalizeScope(value) {
@@ -1215,11 +1216,7 @@ async function scopeRange(root, scope, appSessionId) {
     return { args: [base || (hasHead ? 'HEAD' : EMPTY_TREE)], base, includeUntracked: true };
   }
   if (scope === 'last_turn') {
-    // Try the session-scoped baseline first, then fall back to the repo-level
-    // key (used by the first turn of a brand-new session before it has an ID).
-    const entry =
-      turnBaselines.get(turnBaselineKey(root, appSessionId)) ??
-      turnBaselines.get(turnBaselineKey(root, undefined));
+    const entry = appSessionId ? turnBaselines.get(turnBaselineKey(root, appSessionId)) : undefined;
     if (!entry) {
       // No turn baseline for this session (app restarted, session restored
       // from history): approximate with HEAD for tracked work only. Folding
@@ -1346,9 +1343,9 @@ async function fileSignature(root, rel) {
   }
 }
 
-async function markTurnStart(dir, appSessionId) {
+async function markTurnStart(dir, ownerId) {
   const root = await repoRootOf(dir);
-  if (!root) return { ok: false };
+  if (!root || !ownerId) return { ok: false };
   let baseline = await tryRun(root, ['stash', 'create']);
   if (!baseline) baseline = await tryRun(root, ['rev-parse', 'HEAD']);
   // Unborn repo (no commits yet): `stash create` and `rev-parse HEAD` both fail,
@@ -1390,13 +1387,24 @@ async function markTurnStart(dir, appSessionId) {
   );
   const priorUntracked = new Map(priorNames.map((rel, i) => [rel, sigs[i]]));
   if (baseline)
-    setRepoCache(turnBaselines, turnBaselineKey(root, appSessionId), {
+    setRepoCache(turnBaselines, turnBaselineKey(root, ownerId), {
       baseline,
       priorUntracked,
       untrackedTruncated,
       priorUntrackedNames,
     });
   return { ok: !!baseline, baseline: baseline || null };
+}
+
+async function adoptTurnBaseline(dir, clientRef, appSessionId) {
+  const root = await repoRootOf(dir);
+  if (!root || !clientRef || !appSessionId) return { ok: false };
+  const sourceKey = turnBaselineKey(root, clientRef);
+  const entry = turnBaselines.get(sourceKey);
+  if (!entry) return { ok: false };
+  turnBaselines.delete(sourceKey);
+  setRepoCache(turnBaselines, turnBaselineKey(root, appSessionId), entry);
+  return { ok: true };
 }
 
 module.exports = {
@@ -1414,6 +1422,7 @@ module.exports = {
   diffFiles,
   fileDiff,
   markTurnStart,
+  adoptTurnBaseline,
   createBranch,
   checkout,
   createWorktree,

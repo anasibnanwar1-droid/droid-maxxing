@@ -85,12 +85,17 @@ test('bridge refreshes sidecar identity before reconnecting', { concurrency: fal
 test('[R1] Renderer command round trip', { concurrency: false }, async () => {
   const oldWindow = globalThis.window;
   const OldWebSocket = globalThis.WebSocket;
+  const baselineAdoptions: unknown[][] = [];
   try {
     FakeWebSocket.instances = [];
     Object.assign(globalThis, {
       window: {
         droidControl: {
           bridgeInfo: async () => ({ port: 43123, token: 'r1-token' }),
+          gitAdoptTurnBaseline: async (...args: unknown[]) => {
+            baselineAdoptions.push(args);
+            return { ok: true };
+          },
         },
       },
       WebSocket: FakeWebSocket,
@@ -189,7 +194,7 @@ test('[R1] Renderer command round trip', { concurrency: false }, async () => {
       role: 'primary',
       title: 'R1',
       goal: 'hello',
-      cwd: '',
+      cwd: '/repo',
       autonomy: 'low',
       phase: 'intake',
       features: [],
@@ -201,6 +206,7 @@ test('[R1] Renderer command round trip', { concurrency: false }, async () => {
     } as const;
 
     socket.message({ type: 'session.created', clientRef: 'r1-create', session });
+    assert.deepEqual(baselineAdoptions, [['/repo', 'r1-create', 'r1']]);
     assert.equal(seen.length, 2);
     unsubscribe();
     socket.message({ type: 'session.updated', session });

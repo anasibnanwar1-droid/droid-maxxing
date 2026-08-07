@@ -5,7 +5,13 @@ const fsp = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 
-const { createWorktree, diffFiles, fileDiff, markTurnStart } = require('./git.cjs');
+const {
+  adoptTurnBaseline,
+  createWorktree,
+  diffFiles,
+  fileDiff,
+  markTurnStart,
+} = require('./git.cjs');
 
 // Integration tests for the last_turn review scope, driven through the module's
 // public API against real scratch repositories. Each scenario gets its own
@@ -102,26 +108,29 @@ test('last_turn follows the latest baseline once a newer turn begins', async () 
   assert.deepEqual(pathsOf(res), []);
 });
 
-test('the repo-level baseline is a fallback only for sessions without their own', async () => {
+test('concurrent first turns adopt separate client baselines', async () => {
   const dir = await makeRepo();
   await write(dir, 'seed.txt', 'seed\n');
   await commitAll(dir, 'init');
 
-  // First prompt of a brand-new session: no appSessionId exists yet, so the
-  // baseline is stored under the repo-level key.
-  await markTurnStart(dir);
-  await write(dir, 'created.txt', 'new\n');
+  await markTurnStart(dir, 'client-a');
+  await write(dir, 'a.txt', 'a\n');
+  await markTurnStart(dir, 'client-b');
+  await write(dir, 'b.txt', 'b\n');
 
-  // A session without its own baseline (the new session, once it has an ID)
-  // falls back to the repo-level mark and sees the turn's work.
-  let res = await diffFiles(dir, { mode: 'last_turn', appSessionId: 'brand-new-session' });
-  assert.ok(pathsOf(res).includes('created.txt'));
+  assert.deepEqual(await adoptTurnBaseline(dir, 'client-a', 'session-a'), { ok: true });
+  assert.deepEqual(await adoptTurnBaseline(dir, 'client-b', 'session-b'), { ok: true });
+  assert.deepEqual(
+    pathsOf(await diffFiles(dir, { mode: 'last_turn', appSessionId: 'session-a' })),
+    ['a.txt', 'b.txt'],
+  );
+  assert.deepEqual(
+    pathsOf(await diffFiles(dir, { mode: 'last_turn', appSessionId: 'session-b' })),
+    ['b.txt'],
+  );
 
-  // A session with its own baseline never reads the repo-level mark, so work
-  // that predates its first turn stays out of its last-turn view.
-  await markTurnStart(dir, 'session-b');
-  res = await diffFiles(dir, { mode: 'last_turn', appSessionId: 'session-b' });
-  assert.deepEqual(pathsOf(res), []);
+  // Adoption moves rather than copies the provisional entry.
+  assert.deepEqual(await adoptTurnBaseline(dir, 'client-a', 'session-c'), { ok: false });
 });
 
 test('last_turn fileDiff renders a file created during the turn', async () => {
