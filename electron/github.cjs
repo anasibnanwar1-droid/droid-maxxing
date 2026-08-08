@@ -39,7 +39,8 @@ function runFile(file, args, { cwd, timeout = DEFAULT_TIMEOUT } = {}) {
 
 async function resolveGhExecutable(options = {}) {
   const env = options.env || process.env;
-  const access = options.access || ((candidate) => fs.promises.access(candidate, fs.constants.X_OK));
+  const access =
+    options.access || ((candidate) => fs.promises.access(candidate, fs.constants.X_OK));
   const execute = options.runFile || runFile;
   const pathCandidates = String(env.PATH || '')
     .split(path.delimiter)
