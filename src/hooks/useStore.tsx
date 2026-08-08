@@ -2010,7 +2010,6 @@ function baseReducer(state: AppState, action: Action): AppState {
       let changed = false;
       for (const appSessionId of state.sessionOrder) {
         const session = state.sessions[appSessionId];
-        if (!session) continue;
         const seenAt = Math.max(action.seenAt, session.updatedAt);
         if (sessionLastSeen[appSessionId] === seenAt) continue;
         sessionLastSeen[appSessionId] = seenAt;
