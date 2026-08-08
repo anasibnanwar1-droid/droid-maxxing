@@ -5,6 +5,7 @@ const { execFile } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const githubSetup = require('./githubSetup.cjs');
 
 const DEFAULT_TIMEOUT = 15000;
 const MAX_BUFFER = 16 * 1024 * 1024;
@@ -77,6 +78,23 @@ async function cachedGhExecutable() {
   const executable = await cachedGhExecutablePromise;
   if (!executable) cachedGhExecutablePromise = undefined;
   return executable;
+}
+
+function install(options = {}) {
+  return githubSetup.install({
+    ...options,
+    resolveGh: options.resolveGh || cachedGhExecutable,
+    invalidateGh: () => {
+      cachedGhExecutablePromise = undefined;
+    },
+  });
+}
+
+function authenticate(openExternal, options = {}) {
+  return githubSetup.authenticate(openExternal, {
+    ...options,
+    resolveGh: options.resolveGh || cachedGhExecutable,
+  });
 }
 
 // Resolve with { code, stdout, stderr } and never reject, so callers can decide
@@ -359,6 +377,11 @@ async function postComment(dir, { prNumber, body } = {}) {
 
 module.exports = {
   available,
+  authenticate,
+  install,
+  cancelSetup: githubSetup.cancelSetup,
+  isGithubDeviceUrl: githubSetup.isGithubDeviceUrl,
+  resolveBrewExecutable: githubSetup.resolveBrewExecutable,
   resolveGhExecutable,
   // Exported for unit tests: the validation boundary for PR selectors.
   prSelector,

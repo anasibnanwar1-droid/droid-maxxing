@@ -1,9 +1,16 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { EventEmitter } = require('node:events');
+const { PassThrough } = require('node:stream');
 const {
+  authenticate,
+  cancelSetup,
+  install,
+  isGithubDeviceUrl,
   normalizePrComments,
   prComments,
   prSelector,
+  resolveBrewExecutable,
   resolveGhExecutable,
 } = require('./github.cjs');
 
@@ -14,6 +21,20 @@ const ghResult = (overrides = {}) => ({
   spawnFailed: false,
   ...overrides,
 });
+
+function fakeChild() {
+  const child = new EventEmitter();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.killed = false;
+  child.kill = () => {
+    if (child.killed) return true;
+    child.killed = true;
+    queueMicrotask(() => child.emit('close', null, 'SIGTERM'));
+    return true;
+  };
+  return child;
+}
 
 test('resolves Homebrew gh under a Finder-style PATH', async () => {
   const probes = [];
@@ -82,6 +103,272 @@ test('discovers gh from the configured login shell after common paths fail', asy
   });
 
   assert.equal(executable, '/custom/login/bin/gh');
+});
+
+test('resolves Apple Silicon Homebrew under a Finder-style PATH', async () => {
+  const executable = await resolveBrewExecutable({
+    env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', SHELL: '/bin/zsh' },
+    access: async (candidate) => {
+      if (candidate !== '/opt/homebrew/bin/brew') throw new Error('missing');
+    },
+    runFile: async (file, args) => {
+      assert.equal(file, '/opt/homebrew/bin/brew');
+      assert.deepEqual(args, ['--version']);
+      return ghResult({ stdout: 'Homebrew 4.6.0' });
+    },
+  });
+
+  assert.equal(executable, '/opt/homebrew/bin/brew');
+});
+
+test('resolves Intel Homebrew after the Apple Silicon location is absent', async () => {
+  const executable = await resolveBrewExecutable({
+    env: { PATH: '/usr/bin:/bin', SHELL: '/bin/zsh' },
+    access: async (candidate) => {
+      if (candidate !== '/usr/local/bin/brew') throw new Error('missing');
+    },
+    runFile: async () => ghResult({ stdout: 'Homebrew 4.6.0' }),
+  });
+
+  assert.equal(executable, '/usr/local/bin/brew');
+});
+
+test('installs gh with a fixed Homebrew argument vector and verifies gh', async () => {
+  const calls = [];
+  const result = await install({
+    resolveBrew: async () => '/opt/homebrew/bin/brew',
+    execute: async (file, args) => {
+      calls.push([file, args]);
+      return { code: 0, timedOut: false };
+    },
+    resolveGh: async () => '/opt/homebrew/bin/gh',
+  });
+
+  assert.deepEqual(result, { ok: true });
+  assert.deepEqual(calls, [['/opt/homebrew/bin/brew', ['install', 'gh']]]);
+});
+
+test('installation reports a missing supported package manager', async () => {
+  const result = await install({ resolveBrew: async () => null });
+
+  assert.deepEqual(result, {
+    ok: false,
+    reason: 'installer_missing',
+    message: 'Homebrew is not installed.',
+  });
+});
+
+test('installation verifies gh even when Homebrew exits successfully', async () => {
+  const result = await install({
+    resolveBrew: async () => '/opt/homebrew/bin/brew',
+    execute: async () => ({ code: 0, timedOut: false }),
+    resolveGh: async () => null,
+  });
+
+  assert.deepEqual(result, {
+    ok: false,
+    reason: 'verification_failed',
+    message: 'GitHub CLI was not found after installation.',
+  });
+});
+
+test('installation reports Homebrew failure and timeout without raw output', async () => {
+  const failed = await install({
+    resolveBrew: async () => '/opt/homebrew/bin/brew',
+    execute: async () => ({ code: 1, timedOut: false, stderr: 'private package details' }),
+  });
+  assert.deepEqual(failed, {
+    ok: false,
+    reason: 'install_failed',
+    message: 'Homebrew could not install GitHub CLI.',
+  });
+
+  const timedOut = await install({
+    resolveBrew: async () => '/opt/homebrew/bin/brew',
+    execute: async () => ({ code: 1, timedOut: true }),
+  });
+  assert.deepEqual(timedOut, {
+    ok: false,
+    reason: 'timeout',
+    message: 'GitHub CLI installation timed out.',
+  });
+});
+
+test('only one GitHub setup operation runs at a time', async () => {
+  let finishInstall;
+  const first = install({
+    resolveBrew: async () => '/opt/homebrew/bin/brew',
+    execute: async () =>
+      new Promise((resolve) => {
+        finishInstall = () => resolve({ code: 0, timedOut: false });
+      }),
+    resolveGh: async () => '/opt/homebrew/bin/gh',
+  });
+  await Promise.resolve();
+
+  const second = await install({ resolveBrew: async () => '/opt/homebrew/bin/brew' });
+  assert.deepEqual(second, {
+    ok: false,
+    reason: 'busy',
+    message: 'GitHub setup is already running.',
+  });
+
+  finishInstall();
+  assert.deepEqual(await first, { ok: true });
+});
+
+test('accepts only the exact GitHub device-login URL', () => {
+  assert.equal(isGithubDeviceUrl('https://github.com/login/device'), true);
+  assert.equal(isGithubDeviceUrl('https://github.com/login/device/extra'), false);
+  assert.equal(isGithubDeviceUrl('https://github.com.evil.test/login/device'), false);
+  assert.equal(isGithubDeviceUrl('http://github.com/login/device'), false);
+  assert.equal(isGithubDeviceUrl('not a URL'), false);
+});
+
+test('browser authentication uses fixed arguments and opens the emitted device URL', async () => {
+  const opened = [];
+  const child = fakeChild();
+  const pending = authenticate(async (url) => opened.push(url), {
+    resolveGh: async () => '/opt/homebrew/bin/gh',
+    spawnProcess: (file, args, options) => {
+      assert.equal(file, '/opt/homebrew/bin/gh');
+      assert.deepEqual(args, [
+        'auth',
+        'login',
+        '--hostname',
+        'github.com',
+        '--git-protocol',
+        'https',
+        '--web',
+        '--clipboard',
+        '--skip-ssh-key',
+      ]);
+      assert.deepEqual(options.stdio, ['ignore', 'pipe', 'pipe']);
+      queueMicrotask(() => {
+        child.stderr.write('Open this URL to continue: https://github.com/login/');
+        child.stderr.write('device\n');
+        child.emit('close', 0, null);
+      });
+      return child;
+    },
+    verifyAuth: async () => true,
+  });
+
+  assert.deepEqual(await pending, { ok: true });
+  assert.deepEqual(opened, ['https://github.com/login/device']);
+});
+
+test('browser authentication rejects a non-GitHub verification URL', async () => {
+  const child = fakeChild();
+  const result = await authenticate(async () => assert.fail('must not open browser'), {
+    resolveGh: async () => '/opt/homebrew/bin/gh',
+    spawnProcess: () => {
+      queueMicrotask(() => {
+        child.stderr.write('Open this URL: https://github.com.evil.test/login/device\n');
+        child.emit('close', 0, null);
+      });
+      return child;
+    },
+    verifyAuth: async () => true,
+  });
+
+  assert.deepEqual(result, {
+    ok: false,
+    reason: 'browser_failed',
+    message: 'GitHub CLI did not provide a trusted sign-in page.',
+  });
+});
+
+test('browser authentication reports browser-open failure without raw errors', async () => {
+  const child = fakeChild();
+  const result = await authenticate(
+    async () => {
+      throw new Error('private browser details');
+    },
+    {
+      resolveGh: async () => '/opt/homebrew/bin/gh',
+      spawnProcess: () => {
+        queueMicrotask(() => {
+          child.stderr.write('https://github.com/login/device\n');
+        });
+        return child;
+      },
+      verifyAuth: async () => true,
+    },
+  );
+
+  assert.deepEqual(result, {
+    ok: false,
+    reason: 'browser_failed',
+    message: 'DROIDEX could not open the GitHub sign-in page.',
+  });
+  assert.equal(child.killed, true);
+});
+
+test('browser authentication requires final gh auth verification', async () => {
+  const child = fakeChild();
+  const result = await authenticate(async () => undefined, {
+    resolveGh: async () => '/opt/homebrew/bin/gh',
+    spawnProcess: () => {
+      queueMicrotask(() => {
+        child.stderr.write('https://github.com/login/device\n');
+        child.emit('close', 0, null);
+      });
+      return child;
+    },
+    verifyAuth: async () => false,
+  });
+
+  assert.deepEqual(result, {
+    ok: false,
+    reason: 'auth_failed',
+    message: 'GitHub CLI could not verify the signed-in account.',
+  });
+});
+
+test('browser authentication times out and terminates its child', async () => {
+  const child = fakeChild();
+  const result = await authenticate(async () => undefined, {
+    resolveGh: async () => '/opt/homebrew/bin/gh',
+    spawnProcess: () => {
+      setImmediate(() => child.emit('close', 1, null));
+      return child;
+    },
+    verifyAuth: async () => true,
+    authTimeoutMs: 25,
+    setTimer: (callback, timeoutMs) => {
+      assert.equal(timeoutMs, 25);
+      callback();
+      return { unref() {} };
+    },
+    clearTimer: () => undefined,
+  });
+
+  assert.equal(child.killed, true);
+  assert.deepEqual(result, {
+    ok: false,
+    reason: 'timeout',
+    message: 'GitHub sign-in timed out.',
+  });
+});
+
+test('cancelling browser authentication terminates its child process', async () => {
+  const child = fakeChild();
+  const pending = authenticate(async () => undefined, {
+    resolveGh: async () => '/opt/homebrew/bin/gh',
+    spawnProcess: () => child,
+    verifyAuth: async () => true,
+  });
+  await Promise.resolve();
+
+  cancelSetup();
+
+  assert.equal(child.killed, true);
+  assert.deepEqual(await pending, {
+    ok: false,
+    reason: 'cancelled',
+    message: 'GitHub sign-in was cancelled.',
+  });
 });
 
 test('PR selectors accept only bare positive digit strings', () => {
