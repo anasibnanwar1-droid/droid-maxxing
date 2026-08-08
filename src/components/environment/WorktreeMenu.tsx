@@ -8,7 +8,21 @@ import { utilityTerminalCwds } from '../../lib/utilityPanel';
 import { useBusyAction } from '../../hooks/useBusyAction';
 import { toast } from '../../lib/toast';
 import { reanchorSessionsForWorktreeRemoval } from '../../lib/commands';
+import { removeWorktreeAndReanchor } from '../../lib/worktreeRemoval';
 import type { GitBranchList, GitEnvironment, GitWorktree } from '../../types/vcs';
+
+function notifyWorktreeRemoved(reanchored: number, reanchorFailed: boolean): void {
+  if (reanchorFailed) {
+    toast.error('Worktree removed, but linked chats could not be moved to main');
+    return;
+  }
+  const sessionsLabel = reanchored === 1 ? 'chat now uses' : 'chats now use';
+  const message =
+    reanchored > 0
+      ? `Worktree removed; ${String(reanchored)} historical ${sessionsLabel} the main checkout`
+      : 'Worktree removed';
+  toast.success(message);
+}
 
 export function WorktreeMenu({
   cwd,
@@ -89,19 +103,21 @@ export function WorktreeMenu({
     run(async () => {
       setRemoving(path);
       try {
-        if (!mainWorktree?.path) {
+        const mainPath = mainWorktree?.path;
+        if (!mainPath) {
           toast.error('Could not find the main checkout for this repository');
           return;
         }
-        const reanchored = await reanchorSessionsForWorktreeRemoval(path, mainWorktree.path);
-        const res = await removeGitWorktree(cwd, { path });
+        const {
+          result: res,
+          reanchored,
+          reanchorFailed,
+        } = await removeWorktreeAndReanchor(
+          () => removeGitWorktree(cwd, { path }),
+          () => reanchorSessionsForWorktreeRemoval(path, mainPath),
+        );
         if (res.ok) {
-          const sessionsLabel = reanchored === 1 ? 'chat now uses' : 'chats now use';
-          const message =
-            reanchored > 0
-              ? `Worktree removed; ${String(reanchored)} historical ${sessionsLabel} the main checkout`
-              : 'Worktree removed';
-          toast.success(message);
+          notifyWorktreeRemoved(reanchored, reanchorFailed);
           onChanged();
         } else if (
           res.reason === 'git_error' &&

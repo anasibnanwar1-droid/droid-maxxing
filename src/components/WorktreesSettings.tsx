@@ -15,6 +15,7 @@ import { activeSessionCwds } from '../lib/sessions';
 import { toast } from '../lib/toast';
 import { utilityTerminalCwds } from '../lib/utilityPanel';
 import { linkedSessionsForWorktree, uniqueWorktreeRepositories } from '../lib/worktreeSettings';
+import { removeWorktreeAndReanchor } from '../lib/worktreeRemoval';
 import { workspaceName } from '../lib/workspaces';
 import type { GitActionResult, GitBranchList, GitWorktree, PullRequest } from '../types/vcs';
 import { WorktreeRemovalDialog } from './WorktreeRemovalDialog';
@@ -44,6 +45,28 @@ interface RemovalConfirmation {
 
 function branchWasDeleted(result: GitActionResult): boolean {
   return 'branchDeleted' in result && result.branchDeleted === true;
+}
+
+function notifyWorktreeRemoved(
+  result: GitActionResult,
+  reanchored: number,
+  reanchorFailed: boolean,
+  branch: string | null,
+): void {
+  if (reanchorFailed) {
+    toast.error('Worktree removed, but linked chats could not be moved to main');
+  } else {
+    const outcomes = ['Worktree removed'];
+    if (reanchored > 0) {
+      const chats = reanchored === 1 ? 'chat' : 'chats';
+      outcomes.push(`${String(reanchored)} ${chats} moved to main`);
+    }
+    if (branchWasDeleted(result)) outcomes.push('merged branch deleted');
+    toast.success(outcomes.join('; '));
+  }
+  if (branch && !branchWasDeleted(result)) {
+    toast.info('Local branch kept because Git did not confirm it was safe to delete');
+  }
 }
 
 async function enrichPullRequests(
@@ -203,9 +226,11 @@ export function WorktreesSettings() {
     removingRef.current = true;
     setRemoving(path);
     try {
-      const reanchored = await reanchorSessionsForWorktreeRemoval(path, repository.root);
       const options = { path, deleteBranch: true, force: discardChanges };
-      const result = await removeGitWorktree(repository.root, options);
+      const { result, reanchored, reanchorFailed } = await removeWorktreeAndReanchor(
+        () => removeGitWorktree(repository.root, options),
+        () => reanchorSessionsForWorktreeRemoval(path, repository.root),
+      );
       if (!result.ok) {
         if (
           result.reason === 'not_clean' ||
@@ -217,16 +242,7 @@ export function WorktreesSettings() {
         }
         return false;
       }
-      const outcomes = ['Worktree removed'];
-      if (reanchored > 0) {
-        const chats = reanchored === 1 ? 'chat' : 'chats';
-        outcomes.push(`${String(reanchored)} ${chats} moved to main`);
-      }
-      if (branchWasDeleted(result)) outcomes.push('merged branch deleted');
-      toast.success(outcomes.join('; '));
-      if (details.worktree.branch && !branchWasDeleted(result)) {
-        toast.info('Local branch kept because Git did not confirm it was safe to delete');
-      }
+      notifyWorktreeRemoved(result, reanchored, reanchorFailed, details.worktree.branch);
       await load();
       return true;
     } catch (error) {
