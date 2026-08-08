@@ -59,6 +59,14 @@ export interface ChildSpawnLink {
   id: string;
 }
 
+// Live activity of an autonomous child, as observed by polling its background
+// task from the parent: the task's status ("Running", "Completed") and the last
+// line it had produced at that moment.
+export interface ChildActivity {
+  phase?: string;
+  preview?: string;
+}
+
 export interface ChildSessionSummary {
   parentAppSessionId: string;
   childSessionId: string;
@@ -75,6 +83,9 @@ export interface ChildSessionSummary {
   spawnLink?: ChildSpawnLink;
   transcriptAvailable: boolean;
   startedAt?: number;
+  // Live-only (never persisted) and absent unless the parent actually polled the
+  // child; autonomous children stream nothing to the parent themselves.
+  activity?: ChildActivity;
 }
 
 export interface SessionSummary {

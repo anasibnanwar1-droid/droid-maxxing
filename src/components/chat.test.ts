@@ -89,7 +89,7 @@ test('conversation timeline anchors one dot per user prompt', () => {
     todo('1. [in_progress] x'),
     asst('second answer'),
   ];
-  const anchors = conversationAnchors(events, true, false);
+  const anchors = conversationAnchors(events, false, { childSessionCards: true });
   assert.equal(anchors.length, 2);
   assert.deepEqual(
     anchors.map((a) => a.label),
@@ -99,7 +99,7 @@ test('conversation timeline anchors one dot per user prompt', () => {
 
 test('a leading model message before any prompt does not add a stray dot', () => {
   const events = [asst('restored summary'), userMsg('one'), asst('a'), userMsg('two'), asst('b')];
-  const anchors = conversationAnchors(events, true, false);
+  const anchors = conversationAnchors(events, false, { childSessionCards: true });
   assert.equal(anchors.length, 2);
   assert.deepEqual(
     anchors.map((a) => a.label),
@@ -426,7 +426,9 @@ test('#20 a tool result split from its call by a child session spawn still pairs
   });
   const grepResult = ev({ kind: 'tool_result', toolName: '', toolUseId: 'g', text: 'match' });
   const taskResult = ev({ kind: 'tool_result', toolName: '', toolUseId: 't', text: 'done' });
-  const items = buildFeed([grepCall, taskCall, grepResult, taskResult], true);
+  const items = buildFeed([grepCall, taskCall, grepResult, taskResult], {
+    childSessionCards: true,
+  });
   // The Grep call and its result live in the same tools group...
   const grepGroup = items.find(
     (it): it is Extract<FeedItem, { type: 'tools' }> =>
@@ -475,7 +477,9 @@ test('#20 a reclaimed result is not re-emitted as raw activity in a later group'
   const grepResult = ev({ kind: 'tool_result', toolName: '', toolUseId: 'g', text: 'match' });
   const readResult = ev({ kind: 'tool_result', toolName: '', toolUseId: 'r', text: 'contents' });
   const taskResult = ev({ kind: 'tool_result', toolName: '', toolUseId: 't', text: 'done' });
-  const items = buildFeed([grepCall, taskCall, readCall, grepResult, readResult, taskResult], true);
+  const items = buildFeed([grepCall, taskCall, readCall, grepResult, readResult, taskResult], {
+    childSessionCards: true,
+  });
   // result(g) appears in exactly one tools group, never duplicated.
   const occurrences = items
     .filter((it): it is Extract<FeedItem, { type: 'tools' }> => it.type === 'tools')
@@ -506,7 +510,9 @@ test('#20 a child session completion result is dropped group-wide even when batc
     text: 'child session done',
   });
   const grepResult = ev({ kind: 'tool_result', toolName: '', toolUseId: 'g', text: 'hit' });
-  const items = buildFeed([taskCall, grepCall, taskResult, grepResult], true);
+  const items = buildFeed([taskCall, grepCall, taskResult, grepResult], {
+    childSessionCards: true,
+  });
   assert.ok(items.some((it) => it.type === 'child_session'));
   const toolEvents = items
     .filter((it): it is Extract<FeedItem, { type: 'tools' }> => it.type === 'tools')
@@ -537,7 +543,7 @@ test('#20 a failed child session completion result still surfaces', () => {
     isError: true,
     text: 'spawn failed',
   });
-  const items = buildFeed([taskCall, failed], true);
+  const items = buildFeed([taskCall, failed], { childSessionCards: true });
   // A failed completion is never folded into the card; it surfaces as an error.
   assert.equal(
     items.some((it) => it.type === 'error' && it.event.toolUseId === 'tA'),
@@ -567,7 +573,7 @@ test('#20 a plan result does not leak when a child session spawn splits its call
     toolUseId: 't1',
     text: PLAN_RESULT_TEXT,
   });
-  const items = buildFeed([todoCall, taskCall, todoResult], true);
+  const items = buildFeed([todoCall, taskCall, todoResult], { childSessionCards: true });
   const toolEvents = items
     .filter((it): it is Extract<FeedItem, { type: 'tools' }> => it.type === 'tools')
     .flatMap((it) => it.events);
@@ -603,7 +609,7 @@ test('#20 a failed child session result batched after another tool call surfaces
     isError: true,
     text: 'spawn failed',
   });
-  const items = buildFeed([taskCall, grepCall, failed], true);
+  const items = buildFeed([taskCall, grepCall, failed], { childSessionCards: true });
   const toolEvents = items
     .filter((it): it is Extract<FeedItem, { type: 'tools' }> => it.type === 'tools')
     .flatMap((it) => it.events);
@@ -837,7 +843,9 @@ const editFile = (path: string, adds: number, id: string) =>
   });
 
 test('#27 collectTurnFiles folds repeated edits to one path with summed counts', () => {
-  const run = buildFeed([editFile('src/a.ts', 2, 'e1'), editFile('src/a.ts', 3, 'e2')], true);
+  const run = buildFeed([editFile('src/a.ts', 2, 'e1'), editFile('src/a.ts', 3, 'e2')], {
+    childSessionCards: true,
+  });
   const files = collectTurnFiles(run);
   assert.equal(files.length, 1);
   assert.equal(files[0].path, 'src/a.ts');
@@ -851,7 +859,12 @@ test('#27 a completed turn that edited files gets a top-level changes summary', 
     editFile('src/b.ts', 3, 'e2'),
     asst('done'),
   ];
-  const grouped = groupTurns(buildFeed(events, true), false, undefined, true);
+  const grouped = groupTurns(
+    buildFeed(events, { childSessionCards: true }),
+    false,
+    undefined,
+    true,
+  );
   const changes = grouped.find(
     (it): it is Extract<FeedItem, { type: 'turnChanges' }> => it.type === 'turnChanges',
   );
@@ -864,7 +877,7 @@ test('#27 a completed turn that edited files gets a top-level changes summary', 
 
 test('#27 a turn with no file edits gets no changes summary', () => {
   const grouped = groupTurns(
-    buildFeed([userMsg('q'), grep(), asst('answer')], true),
+    buildFeed([userMsg('q'), grep(), asst('answer')], { childSessionCards: true }),
     false,
     undefined,
     true,
@@ -874,13 +887,18 @@ test('#27 a turn with no file edits gets no changes summary', () => {
 
 test('#27 the in-flight turn gets no changes summary until it completes', () => {
   const events = [userMsg('q'), editFile('src/a.ts', 1, 'e1')];
-  const grouped = groupTurns(buildFeed(events, true), true, undefined, true);
+  const grouped = groupTurns(buildFeed(events, { childSessionCards: true }), true, undefined, true);
   assert.ok(!grouped.some((it) => it.type === 'turnChanges'));
 });
 
 test('#27 the changes summary is disabled unless the rich flag is set', () => {
   const events = [userMsg('edit'), editFile('src/a.ts', 1, 'e1'), asst('done')];
-  const grouped = groupTurns(buildFeed(events, true), false, undefined, false);
+  const grouped = groupTurns(
+    buildFeed(events, { childSessionCards: true }),
+    false,
+    undefined,
+    false,
+  );
   assert.ok(!grouped.some((it) => it.type === 'turnChanges'));
 });
 

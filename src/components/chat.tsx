@@ -19,6 +19,7 @@ import { SpecRenderer } from './SpecRenderer';
 import { JsonRender, splitJsonRender, hasJsonRender } from './JsonRender';
 import { extractFileChange, type FileChange } from '../lib/diff';
 import { DiffCard } from './DiffView';
+import { SubagentsDock, type SubagentsDockData } from './SubagentsDock';
 import {
   CAT_ICON,
   CAT_LABEL,
@@ -28,6 +29,7 @@ import {
   formatDuration,
   parseTruncatedTail,
   isChildSessionTool,
+  isSubagentBookkeepingTool,
   childSessionInfo,
   parseTodos,
   hasTodoPayload,
@@ -45,6 +47,7 @@ import { classifyEvent } from '../lib/transcript';
 import {
   mergeChildSessionSpawn,
   childSessionLatest,
+  resolveWaveSessions,
   type ChildSessionActivity,
   type ChildSessionTarget,
 } from '../lib/childSessions';
@@ -1113,6 +1116,9 @@ export type FeedItem =
   | { type: 'diff'; key: string; event: TranscriptEvent; change: FileChange }
   | { type: 'diffs'; key: string; changes: { event: TranscriptEvent; change: FileChange }[] }
   | { type: 'child_session'; key: string; event: TranscriptEvent }
+  // One contiguous run of Task spawns (a turn's subagent wave); rendered as a
+  // single subagents dock card scoped to just these spawns.
+  | { type: 'child_sessions'; key: string; events: TranscriptEvent[] }
   | { type: 'tools'; key: string; events: TranscriptEvent[] }
   | { type: 'worked'; key: string; items: FeedItem[]; durationMs: number }
   | { type: 'turnChanges'; key: string; files: TurnFile[]; added: number; removed: number };
@@ -1160,7 +1166,17 @@ export function isCancellationArtifact(e: TranscriptEvent): boolean {
   return false;
 }
 
-export function buildFeed(events: TranscriptEvent[], childSessionCards = false): FeedItem[] {
+export interface BuildFeedOptions {
+  // Render child-session spawns as cards/lines instead of plain tool calls.
+  childSessionCards?: boolean;
+  // Group each contiguous run of spawns into one wave item for the dock card.
+  groupChildSessions?: boolean;
+}
+
+export function buildFeed(
+  events: TranscriptEvent[],
+  { childSessionCards = false, groupChildSessions = false }: BuildFeedOptions = {},
+): FeedItem[] {
   events = events.filter((e) => !isCancellationArtifact(e));
   const items: FeedItem[] = [];
   // toolUseId → index of its spawn item, so streaming deltas collapse into one.
@@ -1177,7 +1193,13 @@ export function buildFeed(events: TranscriptEvent[], childSessionCards = false):
   const planResultIds = new Set<string>();
   for (const e of events) {
     if (e.kind !== 'tool_call' || !e.toolUseId) continue;
+    // Subagent polls (TaskOutput/TaskStop) belong to the wave card the same way a
+    // spawn's own result does: the card reports the status they carry, and their
+    // bodies are the subagent's output echoed back into the parent feed. Only the
+    // grouped card speaks for them, so views that keep per-spawn lines keep them.
     if (childSessionCards && isChildSessionTool(e.toolName, e.toolArgs))
+      childSessionResultIds.add(e.toolUseId);
+    else if (groupChildSessions && isSubagentBookkeepingTool(e.toolName))
       childSessionResultIds.add(e.toolUseId);
     else if (classifyEvent(e) === 'plan_update') planResultIds.add(e.toolUseId);
   }
@@ -1286,15 +1308,45 @@ export function buildFeed(events: TranscriptEvent[], childSessionCards = false):
         else items.push({ type: 'diffs', key: `diffs-${ev.id}`, changes });
         continue;
       }
+      // Polling or stopping an existing subagent is bookkeeping the wave card
+      // already speaks for, so it never becomes a row of its own.
+      if (groupChildSessions && isSubagentBookkeepingTool(ev.toolName)) {
+        i++;
+        if (isResultFor(ev, events[i])) i++;
+        continue;
+      }
       if (childSessionCards && isChildSessionTool(ev.toolName, ev.toolArgs)) {
         const key = ev.toolUseId ?? ev.id;
         const at = childSessionIndex.get(key);
         if (at == null) {
-          childSessionIndex.set(key, items.length);
-          items.push({ type: 'child_session', key: `child-session-${key}`, event: ev });
+          if (groupChildSessions) {
+            // Merge into the trailing wave item so a turn's spawns stay one
+            // card at the spot where the spawning happened.
+            const prevIdx = items.length - 1;
+            const prev: FeedItem | undefined = items.length > 0 ? items[prevIdx] : undefined;
+            if (prev?.type === 'child_sessions') {
+              childSessionIndex.set(key, prevIdx);
+              items[prevIdx] = { ...prev, events: [...prev.events, ev] };
+            } else {
+              childSessionIndex.set(key, items.length);
+              items.push({ type: 'child_sessions', key: `child-sessions-${key}`, events: [ev] });
+            }
+          } else {
+            childSessionIndex.set(key, items.length);
+            items.push({ type: 'child_session', key: `child-session-${key}`, event: ev });
+          }
         } else {
-          const cur = items[at] as Extract<FeedItem, { type: 'child_session' }>;
-          items[at] = { ...cur, event: mergeChildSessionSpawn(cur.event, ev) };
+          const cur = items[at];
+          if (cur.type === 'child_sessions') {
+            items[at] = {
+              ...cur,
+              events: cur.events.map((e) =>
+                (e.toolUseId ?? e.id) === key ? mergeChildSessionSpawn(e, ev) : e,
+              ),
+            };
+          } else if (cur.type === 'child_session') {
+            items[at] = { ...cur, event: mergeChildSessionSpawn(cur.event, ev) };
+          }
         }
         i++;
         // Advance past an adjacent successful completion result (the common live
@@ -1339,6 +1391,12 @@ export function buildFeed(events: TranscriptEvent[], childSessionCards = false):
           isChildSessionTool(t.toolName, t.toolArgs)
         )
           break;
+        // Skipped rather than breaking the group, so a poll landing between two
+        // real tool calls does not split them into two cards.
+        if (groupChildSessions && t.kind === 'tool_call' && isSubagentBookkeepingTool(t.toolName)) {
+          i++;
+          continue;
+        }
         if (t.kind === 'tool_call' && !extractFileChange(t.toolName, t.toolArgs)) {
           group.push(t);
           i++;
@@ -1466,24 +1524,26 @@ export function promptAnchorsFromItems(items: FeedItem[]): ConversationAnchor[] 
 // Build the grouped feed once so callers can share it (the chat view derives
 // timeline anchors from the same items it hands to MessageFeed, instead of
 // running buildFeed/groupTurns a second time on every render and switch).
+export type GroupedFeedOptions = BuildFeedOptions & {
+  specContent?: string;
+  changes?: boolean;
+};
+
 export function buildGroupedFeed(
   events: TranscriptEvent[],
-  rich: boolean,
   pending: boolean,
-  specContent?: string,
-  changes = false,
+  { specContent, changes = false, ...feedOptions }: GroupedFeedOptions = {},
 ): FeedItem[] {
-  return groupTurns(buildFeed(events, rich), pending, specContent, changes);
+  return groupTurns(buildFeed(events, feedOptions), pending, specContent, changes);
 }
 
 // Public helper so the chat view can derive the same anchors MessageFeed stamps.
 export function conversationAnchors(
   events: TranscriptEvent[],
-  rich: boolean,
   pending: boolean,
-  specContent?: string,
+  options?: GroupedFeedOptions,
 ): ConversationAnchor[] {
-  return promptAnchorsFromItems(buildGroupedFeed(events, rich, pending, specContent));
+  return promptAnchorsFromItems(buildGroupedFeed(events, pending, options));
 }
 
 // Best-effort end timestamp of a feed item, used to time the live working cue.
@@ -1497,6 +1557,10 @@ function tailTimestamp(item?: FeedItem): number | undefined {
   if (item.type === 'diffs') {
     const c = item.changes[item.changes.length - 1];
     return c?.event.endTs ?? c?.event.ts;
+  }
+  if (item.type === 'child_sessions') {
+    const e = item.events.at(-1);
+    return e?.endTs ?? e?.ts;
   }
   return item.event.endTs ?? item.event.ts;
 }
@@ -1513,6 +1577,10 @@ function spanOf(items: FeedItem[]): { start: number; end: number } {
   for (const it of items) {
     if (it.type === 'tools') it.events.forEach((e) => consider(e.ts, e.endTs));
     else if (it.type === 'diffs') it.changes.forEach((c) => consider(c.event.ts, c.event.endTs));
+    else if (it.type === 'child_sessions')
+      it.events.forEach((e) => {
+        consider(e.ts, e.endTs);
+      });
     else if (it.type !== 'worked' && it.type !== 'turnChanges')
       consider(it.event.ts, it.event.endTs);
   }
@@ -1573,8 +1641,10 @@ function collapseRun(run: FeedItem[], specContent?: string): FeedItem[] {
   // would defeat the match and render the spec body twice).
   const spec = specContent?.trim();
   const isSpecBody = (text: string | undefined) => !!spec && (text ?? '').trim() === spec;
-  // Fold contiguous work into "Worked for …" groups, but keep child session spawn
-  // cards at the top level so they stay visible (and navigable) after a turn.
+  // Fold contiguous work into "Worked for …" groups. Per-spawn child_session
+  // lines stay top-level so they remain visible (and navigable) after a turn,
+  // while child_sessions wave cards fold with the rest of the turn — they exist
+  // only in dock mode, where a finished wave's job is done.
   let buf: FeedItem[] = [];
   const flush = () => {
     if (buf.length === 0) return;
@@ -1860,12 +1930,22 @@ const MessageBody = memo(function MessageBody({ text }: { text: string }) {
 interface FeedItemViewProps {
   item: FeedItem;
   live: boolean;
+  // True while the whole turn is still streaming, regardless of where this item
+  // sits. Subagent waves need this rather than `live`: work continues after the
+  // wave stops being the last item (a plan update or assistant text follows it),
+  // and treating that as settled froze the card on "Never started".
+  sessionLive?: boolean;
   compacting?: boolean;
   cwd?: string;
   onOpenDiff?: (c: FileChange) => void;
   onOpenReviewFile?: (path: string) => void;
   onOpenChildSession?: (target: ChildSessionTarget) => void;
   childSessionActivity?: (target: ChildSessionTarget) => ChildSessionActivity | undefined;
+  // Store child sessions + models for the subagents dock. Every child_sessions
+  // wave item resolves its own subset from this list and renders one card per
+  // wave. Wave items only exist when this is set; views without it (Mission
+  // Control, child-session views) get per-spawn child_session lines instead.
+  subagentsDock?: SubagentsDockData;
   liveTiming?: boolean;
   specContent?: string;
   isFinalResponse?: boolean;
@@ -1891,17 +1971,28 @@ export function sameFeedEvents(a: FeedItem, b: FeedItem): boolean {
       a.changes.every((c, i) => c.event === b.changes[i].event)
     );
   }
+  if (a.type === 'child_sessions' && b.type === 'child_sessions') {
+    return a.events.length === b.events.length && a.events.every((e, i) => e === b.events[i]);
+  }
   // message | thinking | status | error | diff | child session each carry one event.
   return (a as { event: TranscriptEvent }).event === (b as { event: TranscriptEvent }).event;
 }
 
 // Lets memo skip the many static items while a response streams, re-rendering
-// only the growing tail. Child session and worked items surface live, cross-transcript
-// state (running timers, latest line), so they always re-render to stay current.
+// only the growing tail.
 function feedItemPropsEqual(prev: FeedItemViewProps, next: FeedItemViewProps): boolean {
-  if (next.item.type === 'child_session' || next.item.type === 'worked') return false;
+  // Live-updating items (spawn lines, dock wave cards, worked groups with
+  // ticking timers) always re-render. The static types never read
+  // subagentsDock, so it is intentionally absent from the comparison below.
+  if (
+    next.item.type === 'child_session' ||
+    next.item.type === 'child_sessions' ||
+    next.item.type === 'worked'
+  )
+    return false;
   return (
     prev.live === next.live &&
+    prev.sessionLive === next.sessionLive &&
     prev.compacting === next.compacting &&
     prev.liveTiming === next.liveTiming &&
     prev.specContent === next.specContent &&
@@ -1916,15 +2007,59 @@ function feedItemPropsEqual(prev: FeedItemViewProps, next: FeedItemViewProps): b
   );
 }
 
+// The feed rebuilds item objects on every streamed token, but an untouched
+// wave's events keep their identity, so settled waves bail out of per-token
+// re-renders. Live waves still update: the dock object changes identity when
+// the store's child sessions or models change.
+const ChildSessionsWave = memo(
+  function ChildSessionsWave({
+    item,
+    dock,
+    live,
+    onOpen,
+    activity,
+  }: {
+    item: Extract<FeedItem, { type: 'child_sessions' }>;
+    dock: SubagentsDockData;
+    live?: boolean;
+    onOpen?: (target: ChildSessionTarget) => void;
+    activity?: (target: ChildSessionTarget) => ChildSessionActivity | undefined;
+  }) {
+    // Wave-scoped: resolve only this run's spawns so the card shows this
+    // turn's agents, not the session's cumulative list.
+    const sessions = useMemo(
+      () => resolveWaveSessions(item.events, dock.sessions, live),
+      [item.events, dock.sessions, live],
+    );
+    return (
+      <SubagentsDock
+        sessions={sessions}
+        models={dock.models}
+        live={live}
+        onOpen={onOpen}
+        activity={activity}
+      />
+    );
+  },
+  (prev, next) =>
+    prev.dock === next.dock &&
+    prev.live === next.live &&
+    prev.onOpen === next.onOpen &&
+    prev.activity === next.activity &&
+    sameFeedEvents(prev.item, next.item),
+);
+
 const FeedItemView = memo(function FeedItemView({
   item,
   live,
+  sessionLive,
   compacting,
   cwd,
   onOpenDiff,
   onOpenReviewFile,
   onOpenChildSession,
   childSessionActivity,
+  subagentsDock,
   liveTiming,
   specContent,
   isFinalResponse,
@@ -1974,6 +2109,21 @@ const FeedItemView = memo(function FeedItemView({
           })}
         />
       );
+    case 'child_sessions': {
+      // Wave items are only built when dock data is passed (buildFeed gates on
+      // it), so a missing dock here is a wiring bug; views that keep per-spawn
+      // lines produce child_session items, never this case.
+      if (!subagentsDock) return null;
+      return (
+        <ChildSessionsWave
+          item={item}
+          dock={subagentsDock}
+          live={sessionLive}
+          onOpen={onOpenChildSession}
+          activity={childSessionActivity}
+        />
+      );
+    }
     case 'status': {
       const text = item.event.text ?? '';
       if (item.event.kind === 'compaction') return <CompactionDivider compactType="auto" />;
@@ -2012,6 +2162,7 @@ const FeedItemView = memo(function FeedItemView({
           onOpenDiff={onOpenDiff}
           onOpenChildSession={onOpenChildSession}
           childSessionActivity={childSessionActivity}
+          subagentsDock={subagentsDock}
           specContent={specContent}
         />
       );
@@ -2024,12 +2175,14 @@ function WorkedGroup({
   onOpenDiff,
   onOpenChildSession,
   childSessionActivity,
+  subagentsDock,
   specContent,
 }: {
   item: Extract<FeedItem, { type: 'worked' }>;
   onOpenDiff?: (c: FileChange) => void;
   onOpenChildSession?: (target: ChildSessionTarget) => void;
   childSessionActivity?: (target: ChildSessionTarget) => ChildSessionActivity | undefined;
+  subagentsDock?: SubagentsDockData;
   specContent?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -2054,6 +2207,7 @@ function WorkedGroup({
               onOpenDiff={onOpenDiff}
               onOpenChildSession={onOpenChildSession}
               childSessionActivity={childSessionActivity}
+              subagentsDock={subagentsDock}
               specContent={specContent}
               expandGroups
             />
@@ -2352,6 +2506,7 @@ export function MessageFeed({
   onOpenReviewFile,
   onOpenChildSession,
   childSessionActivity,
+  subagentsDock,
   specContent,
   onOpenSpecWiki,
 }: {
@@ -2363,6 +2518,9 @@ export function MessageFeed({
   onOpenReviewFile?: (path: string) => void;
   onOpenChildSession?: (target: ChildSessionTarget) => void;
   childSessionActivity?: (target: ChildSessionTarget) => ChildSessionActivity | undefined;
+  // When set (normal chat sessions only), the per-spawn child session lines are
+  // replaced by one grouping subagents dock at the first spawn's position.
+  subagentsDock?: SubagentsDockData;
   specContent?: string;
   onOpenSpecWiki?: () => void;
 }) {
@@ -2405,9 +2563,21 @@ export function MessageFeed({
     [hasChildSessionActivity],
   );
 
+  // With the subagents dock, each contiguous run of spawns becomes one wave
+  // item: the dock card renders right where that turn spawned its agents (live
+  // while the turn is in flight) and folds into the turn's Worked group once
+  // the turn completes.
+  const dockEnabled = !!subagentsDock;
   const items = useMemo(
-    () => providedItems ?? groupTurns(buildFeed(events, rich), pending, specContent, changes),
-    [providedItems, events, pending, rich, changes, specContent],
+    () =>
+      providedItems ??
+      groupTurns(
+        buildFeed(events, { childSessionCards: rich, groupChildSessions: dockEnabled }),
+        pending,
+        specContent,
+        changes,
+      ),
+    [providedItems, events, pending, rich, changes, specContent, dockEnabled],
   );
   const feedIdentity = `${events[0]?.appSessionId ?? ''}:${events[0]?.sourceSessionId ?? ''}`;
   const renderedFeedRef = useRef<{ identity: string; keys: Set<string> } | null>(null);
@@ -2436,28 +2606,40 @@ export function MessageFeed({
   );
 
   const lastIdx = items.length - 1;
-  const last = items[lastIdx];
+  // Empty feeds are real (a fresh session), so the tail is genuinely optional.
+  const last: FeedItem | undefined = items.length > 0 ? items[lastIdx] : undefined;
   const showSpecCard = (specContent?.length ?? 0) > 0;
 
   // Compaction is in progress when the latest status line announces it and no
   // completion marker has arrived yet. Drives the centered "Compacting…" shimmer.
   const compacting = last?.type === 'status' && isCompactingStatus(last.event.text);
 
-  // A child session line self-indicates only while it is still running (it shows its
-  // own "Running … <timer>"). Once it completes, the orchestrator may still be
-  // working, so let the global cue show instead of looking idle.
+  // A child session line or dock card self-indicates only while it is still
+  // running (it shows its own "Running … <timer>"). Once everything completes,
+  // the orchestrator may still be working, so let the global cue show instead
+  // of looking idle.
   const lastChildSessionRunning =
     last?.type === 'child_session' &&
     childSessionActivity?.({
       toolUseId: last.event.toolUseId,
       label: childSessionInfo(last.event.toolArgs).label,
     })?.status === 'running';
+  const lastDockRunning =
+    last?.type === 'child_sessions' &&
+    last.events.some(
+      (e) =>
+        childSessionActivity?.({
+          toolUseId: e.toolUseId,
+          label: childSessionInfo(e.toolArgs).label,
+        })?.status === 'running',
+    );
   // The tail already animates its own shimmer/caret for these; otherwise show an explicit cue.
   const tailSelfIndicates =
     !!last &&
     (last.type === 'thinking' ||
       last.type === 'status' ||
       (last.type === 'child_session' && lastChildSessionRunning) ||
+      (last.type === 'child_sessions' && lastDockRunning) ||
       (last.type === 'message' && last.event.author !== 'user'));
   const showWorking = pending && !tailSelfIndicates;
   const workingLabel =
@@ -2485,12 +2667,14 @@ export function MessageFeed({
             <FeedItemView
               item={item}
               live={pending && idx === lastIdx}
+              sessionLive={pending}
               compacting={compacting && idx === lastIdx}
               cwd={cwd}
               onOpenDiff={stableOnOpenDiff}
               onOpenReviewFile={stableOnOpenReviewFile}
               onOpenChildSession={stableOnOpenChildSession}
               childSessionActivity={stableChildSessionActivity}
+              subagentsDock={subagentsDock}
               liveTiming={rich}
               specContent={specContent}
               isFinalResponse={finalResponseKeys.has(item.key)}

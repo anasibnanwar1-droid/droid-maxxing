@@ -416,6 +416,40 @@ test('result-only completion admits the exact pending spawn as historical', () =
   assert.equal(h.history.childSessions(h.parentId)[0]?.providerSessionId, 'provider-child-current');
 });
 
+test('poll observations never rekey a child away from its spawn link', () => {
+  const h = createHarness([]);
+  h.owner.admitChildObservation({
+    parentAppSessionId: h.parentId,
+    role: 'worker',
+    spawnLink: { kind: 'tool-use', id: 'tool-spawn' },
+    label: 'worker',
+    prompt: 'Reply with hi',
+  });
+  h.owner.admitChildObservation({
+    parentAppSessionId: h.parentId,
+    providerSessionId: 'provider-child',
+    role: 'worker',
+    spawnLink: { kind: 'tool-use', id: 'tool-spawn' },
+  });
+
+  // A TaskOutput poll carries its own call's tool_use id and echoes the task's
+  // stored metadata; it must not rekey the child or restyle its label.
+  h.owner.admitChildObservation({
+    parentAppSessionId: h.parentId,
+    providerSessionId: 'provider-child',
+    role: 'worker',
+    spawnLink: { kind: 'tool-use', id: 'tool-poll' },
+    label: 'Worker',
+    prompt: 'Reply with hi',
+  });
+
+  const children = h.owner.list(h.parentId);
+  assert.equal(children.length, 1);
+  assert.deepEqual(children[0]?.spawnLink, { kind: 'tool-use', id: 'tool-spawn' });
+  assert.equal(children[0]?.label, 'worker');
+  assert.equal(children[0]?.status, 'running');
+});
+
 test('completed child under a live parent opens only as history', async () => {
   const record = { ...childRecord('child', 'provider'), status: 'completed' as const };
   const h = createHarness([record]);

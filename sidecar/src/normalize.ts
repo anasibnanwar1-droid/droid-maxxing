@@ -13,6 +13,7 @@ import type {
   PermissionRequest,
   ProgressEntry,
   TranscriptEvent,
+  ChildActivity,
 } from './protocol.js';
 
 let seq = 0;
@@ -86,6 +87,7 @@ export interface NormalizedEvent {
     label?: string;
     prompt?: string;
     done?: boolean;
+    activity?: ChildActivity;
   };
   tokens?: { tokensIn: number; tokensOut: number; contextTokens?: number };
   done?: boolean;
@@ -149,9 +151,81 @@ function slimChildSessionArgs(input: Record<string, unknown>): Record<string, un
   return out;
 }
 
-function taskResultProviderSessionId(content: unknown): string | undefined {
+interface TaskResultChildUpdate {
+  providerSessionId: string;
+  done: boolean;
+  // Spawn results (the foreground final result, or the background
+  // "Task launched" acknowledgement) are keyed by the spawning tool_use id, so
+  // the observation may carry it as the child's spawn link. Poll/notification
+  // results ("Task ID: … Status: …") belong to a *different* tool_use; their id
+  // must never become the child's spawn link.
+  isSpawnResult: boolean;
+  // What the subagent is doing right now, as reported by a poll. Autonomous
+  // children stream no transcript to the parent, so a poll's status line is the
+  // only live activity signal the parent ever sees.
+  activity?: ChildActivity;
+}
+
+// The report's own field lines describe the task, not what it is doing; a body
+// that is still empty must yield no preview rather than "Duration: 12.0s".
+const POLL_HEADER_FIELD =
+  /^(Task ID|Subagent Type|Description|Status|Duration|Output|Result|Error):/i;
+
+// The poll body is a header block followed by whatever the subagent has produced
+// so far. The last non-header line is the closest thing to "what it is doing".
+function pollActivity(content: string, status: string | undefined): ChildActivity | undefined {
+  const phase = status ? status[0].toUpperCase() + status.slice(1) : undefined;
+  const lines = content.split('\n');
+  let preview: string | undefined;
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i].trim();
+    if (!line || POLL_HEADER_FIELD.test(line)) continue;
+    preview = line.length > 160 ? `${line.slice(0, 159)}…` : line;
+    break;
+  }
+  if (!phase && !preview) return undefined;
+  return { ...(phase ? { phase } : {}), ...(preview ? { preview } : {}) };
+}
+
+const TERMINAL_POLL_STATUS = new Set(['completed', 'failed', 'stopped', 'cancelled']);
+
+const LAUNCH_ID_RE = /^(?:session_id|task_id):[ \t]*(\S+)[ \t]*\r?$/m;
+const SPAWN_FINAL_RE = /^session_id:[ \t]*(\S+)[ \t]*$/;
+const POLL_ID_RE = /^Task ID:[ \t]*(\S+)[ \t]*$/;
+const POLL_STATUS_RE = /^Status:[ \t]*(\w+)[ \t]*\r?$/im;
+
+// Subagent Task-family results arrive in three content shapes, told apart by
+// their FIRST line (the report body itself may mention task ids or statuses):
+//   foreground final:  "session_id: <id>\n\n<output>"
+//   background launch: "Task launched in background.\ntask_id: <id>\nsession_id: <id>\n…"
+//   poll/completion:   "Task ID: <id>\nSubagent Type: …\nStatus: running|completed|…\n…"
+function taskResultChildUpdate(content: unknown): TaskResultChildUpdate | undefined {
   if (typeof content !== 'string') return undefined;
-  return content.match(/^session_id:[ \t]*(\S+)(?:\r?\n|$)/)?.[1];
+  // The header is the field block before the first blank line. Bounding it by
+  // structure rather than a character budget keeps a long Description from
+  // pushing the Status line out of range and making a running task look done.
+  const blankLine = content.indexOf('\n\n');
+  const header = blankLine === -1 ? content : content.slice(0, blankLine);
+  const firstLine = header.split('\n', 1)[0].replace(/\r$/, '');
+  if (firstLine.startsWith('Task launched in background')) {
+    const providerSessionId = LAUNCH_ID_RE.exec(header)?.[1];
+    return providerSessionId ? { providerSessionId, done: false, isSpawnResult: true } : undefined;
+  }
+  const spawnFinal = SPAWN_FINAL_RE.exec(firstLine);
+  if (spawnFinal) return { providerSessionId: spawnFinal[1], done: true, isSpawnResult: true };
+  const poll = POLL_ID_RE.exec(firstLine);
+  if (!poll) return undefined;
+  const status = POLL_STATUS_RE.exec(header)?.[1]?.toLowerCase();
+  const activity = pollActivity(content, status);
+  return {
+    providerSessionId: poll[1],
+    // Only a reported terminal status settles the child: a poll that reports no
+    // status says nothing about completion, and assuming it finished would stop
+    // the clock on a subagent that is still working.
+    done: status ? TERMINAL_POLL_STATUS.has(status) : false,
+    isSpawnResult: false,
+    ...(activity ? { activity } : {}),
+  };
 }
 
 // Translate a single SDK stream event into zero-or-one normalized bridge updates.
@@ -210,10 +284,14 @@ export function normalizeStreamEvent(
     const label = str(params.subagent_type) ?? str(params.subagentType);
     const prompt = taskPrompt(params);
     if (!subagentSessionId && !label && !prompt) return null;
+    // Poll-style progress (e.g. TaskOutput's "Reading task output") carries the
+    // polling call's tool_use id, not the spawn's. Only spawn-style progress
+    // (identified by subagent params) may key the child by that id.
+    const isSpawnProgress = Boolean(label ?? prompt);
     return {
       childSession: {
         providerSessionId: subagentSessionId,
-        toolUseId: eventToolUseId,
+        ...(isSpawnProgress && eventToolUseId ? { toolUseId: eventToolUseId } : {}),
         label,
         prompt,
       },
@@ -260,38 +338,37 @@ export function normalizeStreamEvent(
     case 'tool_result': {
       const isTask = isTaskToolName(ev.toolName);
       const toolUseId = toolUseIdFrom((ev as { toolUseId?: string }).toolUseId, eventToolUseId);
-      const resultProviderSessionId =
-        subagentSessionId ??
-        (isTask && !ev.isError ? taskResultProviderSessionId(ev.content) : undefined);
-      // A successful subagent Task result is just the subagent's output, so it
-      // surfaces only as a completion signal and never leaks into the main feed.
-      // A *failed* spawn must stay visible, so keep its error transcript.
-      if (resultProviderSessionId || isTask) {
-        const done = {
-          childSession: {
-            providerSessionId: resultProviderSessionId,
-            toolUseId,
-            done: true,
-          },
-        };
-        if (!ev.isError) return done;
-        return {
-          ...done,
-          transcript: transcript(appSessionId, sourceProviderSessionId, role, 'tool_result', {
-            toolName: ev.toolName,
-            text: typeof ev.content === 'string' ? ev.content : JSON.stringify(ev.content),
-            isError: true,
-          }),
-        };
-      }
-      return {
-        transcript: transcript(appSessionId, sourceProviderSessionId, role, 'tool_result', {
+      const taskUpdate = ev.isError ? undefined : taskResultChildUpdate(ev.content);
+      const resultProviderSessionId = subagentSessionId ?? taskUpdate?.providerSessionId;
+      const resultTranscript = () =>
+        transcript(appSessionId, sourceProviderSessionId, role, 'tool_result', {
           toolName: ev.toolName,
           text: typeof ev.content === 'string' ? ev.content : JSON.stringify(ev.content),
           isError: ev.isError,
           ...(toolUseId ? { toolUseId } : {}),
-        }),
-      };
+        });
+      // A successful subagent Task result is just the subagent's output, so it
+      // surfaces only as a completion signal and never leaks into the main feed.
+      // A *failed* spawn must stay visible, so keep its error transcript.
+      if (resultProviderSessionId || isTask) {
+        const signal = {
+          childSession: {
+            providerSessionId: resultProviderSessionId,
+            // Only a Task tool's own result can be the spawn result; poll and
+            // notification results must never rekey the child's spawn link.
+            ...(isTask && taskUpdate?.isSpawnResult !== false && toolUseId ? { toolUseId } : {}),
+            done: taskUpdate?.done ?? true,
+            ...(taskUpdate?.activity ? { activity: taskUpdate.activity } : {}),
+          },
+        };
+        // A non-spawn result that merely *references* a subagent (a TaskOutput
+        // poll) keeps its transcript: it carries the child's status signal, and
+        // the feed, not the bridge, decides whether the body is worth showing.
+        if (!isTask) return { ...signal, transcript: resultTranscript() };
+        if (!ev.isError) return signal;
+        return { ...signal, transcript: resultTranscript() };
+      }
+      return { transcript: resultTranscript() };
     }
     case 'error':
       return {

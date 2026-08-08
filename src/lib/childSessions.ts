@@ -1,4 +1,4 @@
-import type { ProgressEntry, TranscriptEvent } from '../types/bridge';
+import type { ChildStatus, ProgressEntry, TranscriptEvent } from '../types/bridge';
 import type { ChildAccess, ChildSessionInfo } from '../hooks/useStore';
 import { childSessionInfo, toolMeta, CAT_LABEL } from './tools';
 
@@ -42,7 +42,9 @@ export type ChildSessionLatest = {
 export type ChildSessionTarget = { toolUseId?: string; label?: string };
 
 export type ChildSessionActivity = {
-  status?: 'running' | 'paused' | 'completed';
+  // The store's child status passes through verbatim; autonomous subagents
+  // never open a runtime, so nothing here demotes running to paused.
+  status?: ChildStatus;
   startedAt?: number;
   latest?: ChildSessionLatest;
 };
@@ -246,7 +248,7 @@ export function childSessionMeta(
 }
 
 export function findChildSessionForTarget(
-  childSessions: ChildSessionInfo[],
+  childSessions: readonly ChildSessionInfo[],
   target: ChildSessionTarget,
 ): ChildSessionInfo | undefined {
   if (!target.toolUseId) return undefined;
@@ -256,18 +258,67 @@ export function findChildSessionForTarget(
   );
 }
 
+// The spawn-event fields the dock needs to synthesize a placeholder session.
+type ChildSessionSpawnRef = Pick<
+  TranscriptEvent,
+  'id' | 'toolUseId' | 'appSessionId' | 'ts' | 'endTs' | 'toolArgs'
+>;
+
+// Resolve each spawn in a wave to its registered child session. A spawn whose
+// session hasn't reached the store yet gets a placeholder built from the spawn
+// event itself, so the dock card renders the instant the spawn streams in
+// instead of flashing per-spawn lines while the store catches up.
+export function resolveWaveSessions(
+  spawns: readonly ChildSessionSpawnRef[],
+  childSessions: readonly ChildSessionInfo[],
+  live = false,
+): ChildSessionInfo[] {
+  return spawns.map((spawn) => {
+    const registered = findChildSessionForTarget(childSessions, { toolUseId: spawn.toolUseId });
+    // The store stamps startedAt when the child session registers, which lags
+    // the actual spawn; the wave's spawn event carries the true start time.
+    if (registered?.startedAt != null && registered.startedAt > spawn.ts)
+      return { ...registered, startedAt: spawn.ts };
+    return registered ?? pendingChildSession(spawn, live);
+  });
+}
+
+// Placeholder ids carry this prefix; unresolved spawns can't be opened.
+export function isPendingChildPlaceholder(
+  child: Pick<ChildSessionInfo, 'childSessionId'>,
+): boolean {
+  return child.childSessionId.startsWith('pending-');
+}
+
+function pendingChildSession(spawn: ChildSessionSpawnRef, live: boolean): ChildSessionInfo {
+  const toolUseId = spawn.toolUseId ?? spawn.id;
+  const info = childSessionInfo(spawn.toolArgs);
+  return {
+    parentAppSessionId: spawn.appSessionId,
+    childSessionId: `pending-${toolUseId}`,
+    role: 'worker',
+    // An issued spawn is working: its store record can lag the entire run,
+    // because a background Task only registers once its provider session id is
+    // observed. The tool call's own end says nothing (a background Task
+    // acknowledges its launch immediately), so endTs only settles a replayed
+    // spawn, after its turn is over.
+    status: live ? 'running' : spawn.endTs ? 'completed' : 'pending',
+    label: info.label ?? 'Subagent',
+    prompt: info.description,
+    modelId: '',
+    spawnLink: { kind: 'tool-use', id: toolUseId },
+    transcriptAvailable: false,
+    startedAt: spawn.ts,
+  };
+}
+
 export function childSessionActivityForTarget(
   childSessions: ChildSessionInfo[],
   allTx: TranscriptEvent[],
-  childRuntime: Record<string, Record<string, { available: boolean }>>,
   target: ChildSessionTarget,
 ): ChildSessionActivity | undefined {
   const childSession = findChildSessionForTarget(childSessions, target);
   if (!childSession) return undefined;
-  const isLive = childSessionIsLive(
-    childSession,
-    childRuntime[childSession.parentAppSessionId]?.[childSession.childSessionId],
-  );
   let latest: ChildSessionLatest | undefined;
   for (let i = allTx.length - 1; i >= 0; i--) {
     const t = allTx[i];
@@ -288,10 +339,9 @@ export function childSessionActivityForTarget(
     break;
   }
   return {
-    status:
-      childSession.status === 'pending' || (childSession.status === 'running' && !isLive)
-        ? 'paused'
-        : childSession.status,
+    // Autonomous subagents never open a runtime, so runtime availability must
+    // not demote a running child to "paused"; the store status is authoritative.
+    status: childSession.status,
     startedAt: childSession.startedAt,
     latest,
   };

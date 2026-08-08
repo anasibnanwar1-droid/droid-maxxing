@@ -148,9 +148,17 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
     ? `${activeSession.appSessionId}:${selectedChildSessionId ?? 'primary'}`
     : null;
 
-  const childSessions = activeSession
-    ? orderedChildSessions(Object.values(state.childSessions[activeSession.appSessionId] ?? {}))
-    : [];
+  // Memoized so the subagents dock (and everything derived from it) keeps a
+  // stable identity across transcript-token renders; the store's childSessions
+  // record only changes when a child session actually updates.
+  const activeAppSessionId = activeSession?.appSessionId;
+  const childSessions = useMemo(
+    () =>
+      activeAppSessionId
+        ? orderedChildSessions(Object.values(state.childSessions[activeAppSessionId] ?? {}))
+        : [],
+    [activeAppSessionId, state.childSessions],
+  );
   const childSessionIndex = childSessions.findIndex(
     (childSession) => childSession.childSessionId === selectedChildSessionId,
   );
@@ -197,15 +205,17 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
   // start time (for the timer), and its newest meaningful transcript event.
   const childSessionActivity = useCallback(
     (target: { toolUseId?: string; label?: string }) => {
-      return childSessionActivityForTarget(
-        childSessions,
-        allTranscript,
-        state.childRuntime,
-        target,
-      );
+      return childSessionActivityForTarget(childSessions, allTranscript, target);
     },
-    [childSessions, allTranscript, state.childRuntime],
+    [childSessions, allTranscript],
   );
+
+  // Sessions may legitimately be empty right as a wave spawns; the feed renders
+  // pending placeholders from the spawn events until they register.
+  const subagentsDock = useMemo(() => {
+    if (viewingChildSession) return undefined;
+    return { sessions: childSessions, models: state.models };
+  }, [viewingChildSession, childSessions, state.models]);
 
   const transcript = useMemo(() => {
     return transcriptForVisibleSession(allTranscript, selectedChildSessionId ?? null);
@@ -356,22 +366,35 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
 
   // Persist the best spec we have so the card, wiki reader, and right-panel
   // button survive exiting spec mode and switching between sessions.
-  const appSessionId = activeSession?.appSessionId;
   useEffect(() => {
-    if (!appSessionId || !specContent) return;
+    if (!activeAppSessionId || !specContent) return;
     const title = specContent.match(/^#{1,3}\s+(.+)$/m)?.[1]?.trim() ?? 'Specification';
     // Preserve the existing file path when the current source is not file-backed
     // (e.g. a captured plan), so the store never loses a known path on refresh.
     const path = hasFileSpec ? fileSpec!.path : storedSpec?.path;
-    dispatch({ type: 'SPEC_SET', appSessionId, path, title, content: specContent });
-  }, [appSessionId, specContent, hasFileSpec, fileSpec, storedSpec?.path, dispatch]);
+    dispatch({
+      type: 'SPEC_SET',
+      appSessionId: activeAppSessionId,
+      path,
+      title,
+      content: specContent,
+    });
+  }, [activeAppSessionId, specContent, hasFileSpec, fileSpec, storedSpec?.path, dispatch]);
 
   // Build the grouped feed once and share it: MessageFeed renders it and the
   // timeline derives its anchors from the same items, so switching sessions
   // doesn't run buildFeed/groupTurns twice on every render.
   const feedItems = useMemo(
-    () => buildGroupedFeed(transcript, true, live, specContent, true),
-    [transcript, live, specContent],
+    // Primary view groups each turn's spawns into one subagents-dock wave item;
+    // child-session views keep the plain per-spawn lines.
+    () =>
+      buildGroupedFeed(transcript, live, {
+        childSessionCards: true,
+        specContent,
+        changes: true,
+        groupChildSessions: !viewingChildSession,
+      }),
+    [transcript, live, specContent, viewingChildSession],
   );
   // Dots for the conversation timeline: one per user prompt, derived from the
   // same feed the transcript renders so the rail stays in sync.
@@ -446,7 +469,7 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
         >
           {activeSession && transcript.length > 0 ? (
             <motion.div
-              key={`${appSessionId ?? 'none'}:${viewingChildSession ? selectedChildSessionId : 'primary'}`}
+              key={`${activeAppSessionId ?? 'none'}:${viewingChildSession ? String(selectedChildSessionId) : 'primary'}`}
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
@@ -471,10 +494,13 @@ export default function ChatView({ rightInset = false }: { rightInset?: boolean 
                 onOpenReviewFile={openReviewFile}
                 onOpenChildSession={openChildSession}
                 childSessionActivity={childSessionActivity}
+                subagentsDock={subagentsDock}
                 specContent={specContent}
                 onOpenSpecWiki={
-                  appSessionId
-                    ? () => dispatch({ type: 'SPEC_OPEN_WIKI', appSessionId })
+                  activeAppSessionId
+                    ? () => {
+                        dispatch({ type: 'SPEC_OPEN_WIKI', appSessionId: activeAppSessionId });
+                      }
                     : undefined
                 }
               />

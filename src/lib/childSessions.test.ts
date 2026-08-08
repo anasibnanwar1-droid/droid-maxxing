@@ -187,7 +187,7 @@ test('child ordering gives unlabeled siblings one stable label across surfaces',
   );
 });
 
-test('historical running child activity is paused without an authoritative runtime', () => {
+test('running child activity stays running even without an open runtime', () => {
   const child = {
     parentAppSessionId: 'parent-a',
     childSessionId: 'child-a',
@@ -198,18 +198,16 @@ test('historical running child activity is paused without an authoritative runti
     spawnLink: { kind: 'tool-use' as const, id: 'tool-a' },
   };
 
+  // Autonomous subagents never open a runtime; the store status is authoritative.
   assert.equal(
-    childSessionActivityForTarget([child], [], {}, { toolUseId: 'tool-a' })?.status,
-    'paused',
+    childSessionActivityForTarget([child], [], { toolUseId: 'tool-a' })?.status,
+    'running',
   );
   assert.equal(
-    childSessionActivityForTarget(
-      [child],
-      [],
-      { 'parent-a': { 'child-a': { available: true } } },
-      { toolUseId: 'tool-a' },
-    )?.status,
-    'running',
+    childSessionActivityForTarget([{ ...child, status: 'paused' as const }], [], {
+      toolUseId: 'tool-a',
+    })?.status,
+    'paused',
   );
 });
 

@@ -279,6 +279,152 @@ test('captures the current SDK child session id from a successful Task result', 
   assert.equal(normalized?.childSession?.toolUseId, 'tool-current');
 });
 
+test('registers a background subagent at launch instead of completion', () => {
+  const normalized = normalizeStreamEvent('app-session-1', 'app-session-1', 'primary', {
+    type: 'tool_result',
+    toolName: 'Task',
+    toolUseId: 'spawn-1',
+    content:
+      'Task launched in background.\ntask_id: 7d32cc8f-77d5\nsession_id: 7d32cc8f-77d5\n\nUse TaskOutput to read output.',
+    isError: false,
+  } as never);
+
+  assert.equal(normalized?.childSession?.providerSessionId, '7d32cc8f-77d5');
+  assert.equal(normalized?.childSession?.done, false);
+  // The launch acknowledgement is keyed by the spawning tool_use id.
+  assert.equal(normalized?.childSession?.toolUseId, 'spawn-1');
+  assert.equal(normalized?.transcript, undefined);
+});
+
+test('reads completion from TaskOutput poll results without stealing their link', () => {
+  const completed = normalizeStreamEvent('app-session-1', 'app-session-1', 'primary', {
+    type: 'tool_result',
+    toolName: 'TaskOutput',
+    toolUseId: 'poll-1',
+    content:
+      'Task ID: 7d32cc8f-77d5\nSubagent Type: Worker\nDescription: survey\nStatus: completed\nDuration: 208.3s\n\n<report>',
+    isError: false,
+  } as never);
+  const running = normalizeStreamEvent('app-session-1', 'app-session-1', 'primary', {
+    type: 'tool_result',
+    toolName: 'TaskOutput',
+    toolUseId: 'poll-2',
+    content: 'Task ID: 7d32cc8f-77d5\nSubagent Type: Worker\nStatus: running\nDuration: 12.0s',
+    isError: false,
+  } as never);
+
+  assert.equal(completed?.childSession?.providerSessionId, '7d32cc8f-77d5');
+  assert.equal(completed?.childSession?.done, true);
+  assert.equal(running?.childSession?.done, false);
+  // The polling call's tool_use id is not the spawn; forwarding it would rekey
+  // the child session away from its true spawn link.
+  assert.equal(completed?.childSession?.toolUseId, undefined);
+  assert.equal(running?.childSession?.toolUseId, undefined);
+  // Poll results stay visible in the feed; only the child signal is added.
+  assert.equal(completed?.transcript?.kind, 'tool_result');
+});
+
+test('a poll only completes a child when it reports a terminal status', () => {
+  const poll = (content: string) =>
+    normalizeStreamEvent('app-session-1', 'app-session-1', 'primary', {
+      type: 'tool_result',
+      toolName: 'TaskOutput',
+      toolUseId: 'poll-1',
+      content,
+      isError: false,
+    } as never);
+
+  // A long description must not push the status line out of the header window.
+  const long = poll(
+    `Task ID: 7d32cc8f-77d5\nSubagent Type: Worker\nDescription: ${'survey the sidecar '.repeat(40)}\nStatus: running\nDuration: 12.0s\n\nstill reading`,
+  );
+  assert.equal(long?.childSession?.done, false);
+
+  // Without a status the poll says nothing about completion, so the child keeps
+  // running instead of having its clock stopped on a guess.
+  const statusless = poll('Task ID: 7d32cc8f-77d5\nSubagent Type: Worker\n\nstill reading');
+  assert.equal(statusless?.childSession?.done, false);
+});
+
+test('a poll result carries the subagent activity it observed', () => {
+  const running = normalizeStreamEvent('app-session-1', 'app-session-1', 'primary', {
+    type: 'tool_result',
+    toolName: 'TaskOutput',
+    toolUseId: 'poll-1',
+    content:
+      'Task ID: 7d32cc8f-77d5\nSubagent Type: Worker\nStatus: running\nDuration: 12.0s\n\nSearching the sidecar for the admit path',
+    isError: false,
+  } as never);
+
+  // An autonomous child streams nothing to the parent, so this poll is the only
+  // place the UI can learn what it is doing.
+  assert.equal(running?.childSession?.activity?.phase, 'Running');
+  assert.equal(
+    running?.childSession?.activity?.preview,
+    'Searching the sidecar for the admit path',
+  );
+
+  // Header-only polls still report the phase, and never invent a preview from
+  // their own header lines.
+  const headerOnly = normalizeStreamEvent('app-session-1', 'app-session-1', 'primary', {
+    type: 'tool_result',
+    toolName: 'TaskOutput',
+    toolUseId: 'poll-2',
+    content: 'Task ID: 7d32cc8f-77d5\nStatus: running\n',
+    isError: false,
+  } as never);
+  assert.equal(headerOnly?.childSession?.activity?.phase, 'Running');
+  assert.equal(headerOnly?.childSession?.activity?.preview, undefined);
+
+  // Every report field is header, including the ones that trail the status.
+  const emptyBody = normalizeStreamEvent('app-session-1', 'app-session-1', 'primary', {
+    type: 'tool_result',
+    toolName: 'TaskOutput',
+    toolUseId: 'poll-3',
+    content:
+      'Task ID: 7d32cc8f-77d5\nSubagent Type: Worker\nDescription: survey the sidecar\nStatus: running\nDuration: 12.0s\n\n',
+    isError: false,
+  } as never);
+  assert.equal(emptyBody?.childSession?.activity?.preview, undefined);
+
+  // A spawn result is the child's report, not an activity observation.
+  const spawn = normalizeStreamEvent('app-session-1', 'app-session-1', 'primary', {
+    type: 'tool_result',
+    toolName: 'Task',
+    toolUseId: 'tool-1',
+    content: 'session_id: real-child\n\n<report>',
+    isError: false,
+  } as never);
+  assert.equal(spawn?.childSession?.activity, undefined);
+});
+
+test('a report body mentioning statuses or task ids is not misparsed', () => {
+  const normalized = normalizeStreamEvent('app-session-1', 'app-session-1', 'primary', {
+    type: 'tool_result',
+    toolName: 'Task',
+    toolUseId: 'tool-1',
+    content: 'session_id: real-child\n\nFindings:\nStatus: running\nTask ID: unrelated',
+    isError: false,
+  } as never);
+
+  assert.equal(normalized?.childSession?.providerSessionId, 'real-child');
+  assert.equal(normalized?.childSession?.done, true);
+  assert.equal(normalized?.childSession?.toolUseId, 'tool-1');
+});
+
+test('ignores TaskOutput poll progress that lacks spawn params', () => {
+  const normalized = normalizeStreamEvent('app-session-1', 'app-session-1', 'primary', {
+    type: 'tool_progress',
+    toolUseId: 'poll-1',
+    update: { subagentSessionId: 'worker-1' },
+  } as never);
+
+  // Provider id forwards for correlation, but the polling call's id must not
+  // become the child's spawn link.
+  assert.equal(normalized?.childSession?.providerSessionId, 'worker-1');
+  assert.equal(normalized?.childSession?.toolUseId, undefined);
+});
+
 test('does not treat child output or failed Task text as a provider session id', () => {
   const laterOutput = normalizeStreamEvent('app-session-1', 'app-session-1', 'primary', {
     type: 'tool_result',

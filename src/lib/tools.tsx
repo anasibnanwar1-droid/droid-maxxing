@@ -20,6 +20,7 @@ export type ToolCat =
   | 'web'
   | 'skill'
   | 'task'
+  | 'subagent'
   | 'other';
 
 export const CAT_ICON: Record<ToolCat, React.ElementType> = {
@@ -31,6 +32,7 @@ export const CAT_ICON: Record<ToolCat, React.ElementType> = {
   web: Globe,
   skill: Boxes,
   task: Bot,
+  subagent: Bot,
   other: FileText,
 };
 
@@ -43,6 +45,7 @@ export const CAT_LABEL: Record<ToolCat, string> = {
   web: 'Fetch',
   skill: 'Skill',
   task: 'Child session',
+  subagent: 'Subagent',
   other: 'Tool',
 };
 
@@ -63,7 +66,11 @@ export function toolMeta(name?: string, args?: unknown): { cat: ToolCat; detail:
   else if (/exec|run|bash|shell|command|terminal/.test(n)) cat = 'exec';
   else if (/grep|search|glob|find/.test(n)) cat = 'search';
   else if (/fetch|web|url|http/.test(n)) cat = 'web';
-  else if (/task|subagent|delegate/.test(n) || childSessionDetail) cat = 'task';
+  // Only a real spawn is a child session. The Task *family* (TaskOutput,
+  // TaskStop) merely inspects or ends an existing subagent, so it must not
+  // borrow the "Child session" label and read like a new spawn.
+  else if (isChildSessionTool(name, args)) cat = 'task';
+  else if (/^task/i.test(n)) cat = 'subagent';
   else if (n.includes('skill')) cat = 'skill';
   else if (/read|cat|view|open|list|ls/.test(n)) cat = 'read';
 
@@ -139,6 +146,13 @@ export function isChildSessionTool(name?: string, args?: unknown): boolean {
   if (/\b(task|subagent|delegate)\b/i.test(name ?? '')) return true;
   const a = args && typeof args === 'object' ? (args as Record<string, unknown>) : {};
   return typeof a.subagent_type === 'string' || typeof a.subagentType === 'string';
+}
+
+// TaskOutput/TaskStop are the harness polling and stopping subagents it already
+// spawned, not work of their own. The Subagents card reports that status, so
+// these calls and their echoed poll bodies are noise wherever the card renders.
+export function isSubagentBookkeepingTool(name?: string): boolean {
+  return /^task_?(output|stop)\b/i.test(name ?? '');
 }
 
 // The droid name and short description carried by a Task spawn's arguments.

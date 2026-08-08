@@ -12,6 +12,9 @@ import {
   toolArgStringArray,
   latestTodoSnapshot,
   activeTodoIndex,
+  isChildSessionTool,
+  toolMeta,
+  CAT_LABEL,
   type TodoItem,
 } from './tools';
 import type { TranscriptEvent } from '../types/bridge';
@@ -283,4 +286,21 @@ test('activeTodoIndex prefers the running step, then the next pending one', () =
   assert.equal(activeTodoIndex([steps[0], steps[2]]), 1);
   assert.equal(activeTodoIndex([steps[0]]), 0);
   assert.equal(activeTodoIndex([]), -1);
+});
+
+test('only a real spawn is labeled a child session', () => {
+  // A spawn: the label the model chose travels through untouched.
+  assert.equal(
+    CAT_LABEL[toolMeta('Task', { subagent_type: 'my-custom-droid' }).cat],
+    'Child session',
+  );
+  assert.ok(isChildSessionTool('Task', { subagent_type: 'my-custom-droid' }));
+
+  // Inspecting or stopping an existing subagent is not a spawn, so it must not
+  // read as "Child session <tool>" in the feed.
+  for (const name of ['TaskOutput', 'TaskStop']) {
+    assert.equal(toolMeta(name, { task_id: 'abc' }).cat, 'subagent');
+    assert.equal(CAT_LABEL[toolMeta(name, { task_id: 'abc' }).cat], 'Subagent');
+    assert.ok(!isChildSessionTool(name, { task_id: 'abc' }));
+  }
 });
