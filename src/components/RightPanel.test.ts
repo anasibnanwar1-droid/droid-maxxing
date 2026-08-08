@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -6,6 +7,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { initialState, StoreContext, type AppState } from '../hooks/useStore.js';
 import type { ModelInfo, ReasoningEffort, SessionSummary } from '../types/bridge.js';
 import RightPanel from './RightPanel.js';
+
+const rightPanelSource = readFileSync(new URL('./RightPanel.tsx', import.meta.url), 'utf8');
 
 const session = (overrides: Partial<SessionSummary>): SessionSummary => ({
   appSessionId: 's1',
@@ -89,4 +92,11 @@ test('model row hides the pill for a known model without reasoning support', () 
 test('model row keeps the pill while the model list has not loaded', () => {
   const html = renderPanel({ reasoningEffort: 'xhigh', modelId: 'unlisted' }, []);
   assert.match(html, />xhigh</);
+});
+
+test('PR detection and Context setup share authenticated GitHub readiness', () => {
+  assert.match(rightPanelSource, /useGithubSetup\(isGitHub,/);
+  assert.match(rightPanelSource, /enabled: isGitHub && githubSetup\.isReady/);
+  assert.match(rightPanelSource, /githubAvailability=\{githubSetup\.availability\}/);
+  assert.match(rightPanelSource, /onGithubSetupAction=\{githubSetup\.runPrimaryAction\}/);
 });

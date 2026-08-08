@@ -4,6 +4,7 @@ import { useSessionLive } from '../hooks/useSessionLive';
 import { useGitEnvironment } from '../hooks/useGitEnvironment';
 import { useSessionWorkingDirectory } from '../hooks/useSessionWorkingDirectory';
 import { usePullRequest } from '../hooks/usePullRequest';
+import { useGithubSetup } from '../hooks/useGithubSetup';
 import { resolveReasoningEffortDisplay } from '../lib/reasoningEffort';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Hash, Loader2, ChevronRight, FileText } from 'lucide-react';
@@ -30,15 +31,16 @@ export default function RightPanel() {
   const [view, setView] = useState<'context' | 'pr'>('context');
   const git = useGitEnvironment(cwd, diffMode);
   const isGitHub = !!git.env?.isGitHub;
+  const githubSetup = useGithubSetup(isGitHub, git.env?.repoRoot ?? cwd);
   const pr = usePullRequest(cwd, git.env?.branch ?? null, {
-    enabled: isGitHub,
+    enabled: isGitHub && githubSetup.isReady,
     active: view === 'pr',
   });
 
   // A PR view belongs to one session+branch; reset it when either changes.
   useEffect(() => {
     setView('context');
-  }, [activeSession?.appSessionId, git.env?.branch]);
+  }, [activeSession?.appSessionId, git.env?.branch, githubSetup.isReady]);
 
   const visibleTarget = visibleSessionTarget(
     activeSession?.appSessionId,
@@ -143,6 +145,12 @@ export default function RightPanel() {
                   onDiffModeChange={setDiffMode}
                   refresh={git.refresh}
                   live={working || childSessionsRunning}
+                  githubAvailability={githubSetup.availability}
+                  githubAction={githubSetup.action}
+                  githubError={githubSetup.error}
+                  githubManualGuideOpened={githubSetup.manualGuideOpened}
+                  githubReady={githubSetup.isReady}
+                  onGithubSetupAction={githubSetup.runPrimaryAction}
                   pr={pr.pr}
                   onOpenPr={() => {
                     setView('pr');
