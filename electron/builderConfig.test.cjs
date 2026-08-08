@@ -240,6 +240,8 @@ test('Sparkle checks in the background but never downloads updates automatically
 
 test('release automation publishes only verified unsigned Sparkle assets', () => {
   assert.match(releaseWorkflowSource, /DROIDEX_UNSIGNED_RELEASE_BUILD: '1'/);
+  assert.match(releaseWorkflowSource, /test -f "docs\/releases\/\$GITHUB_REF_NAME\.md"/);
+  assert.match(releaseWorkflowSource, /--notes-file "docs\/releases\/\$GITHUB_REF_NAME\.md"/);
   assert.match(
     releaseWorkflowSource,
     /SPARKLE_PRIVATE_KEY: \$\{\{ secrets\.SPARKLE_PRIVATE_KEY \}\}/,
