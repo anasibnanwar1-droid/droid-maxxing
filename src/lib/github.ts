@@ -1,8 +1,9 @@
-import { isDesktop } from './desktop';
 import type {
   CreatePrOptions,
   CreatePrResult,
   DetectPrResult,
+  GithubAvailability,
+  GithubSetupResult,
   PostCommentResult,
   PrCheck,
   PrChecksResult,
@@ -10,28 +11,81 @@ import type {
   PullRequest,
 } from '../types/vcs';
 
-export async function detectPullRequest(dir: string, branch?: string): Promise<DetectPrResult> {
-  if (!isDesktop() || !dir) return { ok: true, pr: null };
+function githubApi() {
+  return typeof window === 'undefined' ? undefined : window.droidControl;
+}
+
+const unavailableSetup = (): GithubSetupResult => ({
+  ok: false,
+  reason: 'not_desktop',
+  message: 'GitHub setup is available in the desktop app.',
+});
+
+export async function getGithubAvailability(): Promise<GithubAvailability> {
+  const api = githubApi();
+  if (!api) {
+    return { installed: false, authenticated: false, installMethod: 'manual' };
+  }
   try {
-    return await window.droidControl!.githubDetectPr(dir, { branch });
+    return await api.githubAvailable();
+  } catch {
+    return { installed: false, authenticated: false, installMethod: 'manual' };
+  }
+}
+
+export async function installGithubCli(): Promise<GithubSetupResult> {
+  const api = githubApi();
+  if (!api) return unavailableSetup();
+  try {
+    return await api.githubInstall();
+  } catch {
+    return {
+      ok: false,
+      reason: 'install_failed',
+      message: 'DROIDEX could not start GitHub CLI installation.',
+    };
+  }
+}
+
+export async function authenticateGithubCli(): Promise<GithubSetupResult> {
+  const api = githubApi();
+  if (!api) return unavailableSetup();
+  try {
+    return await api.githubAuthenticate();
+  } catch {
+    return {
+      ok: false,
+      reason: 'auth_failed',
+      message: 'DROIDEX could not start GitHub sign-in.',
+    };
+  }
+}
+
+export async function detectPullRequest(dir: string, branch?: string): Promise<DetectPrResult> {
+  const api = githubApi();
+  if (!api || !dir) return { ok: true, pr: null };
+  try {
+    return await api.githubDetectPr(dir, { branch });
   } catch {
     return { ok: false, pr: null };
   }
 }
 
 export async function getPrChecks(dir: string, prNumber: number): Promise<PrChecksResult> {
-  if (!isDesktop()) return { ok: false, reason: 'not_desktop', checks: [] };
+  const api = githubApi();
+  if (!api) return { ok: false, reason: 'not_desktop', checks: [] };
   try {
-    return await window.droidControl!.githubPrChecks(dir, { prNumber });
+    return await api.githubPrChecks(dir, { prNumber });
   } catch {
     return { ok: false, reason: 'error', checks: [] };
   }
 }
 
 export async function getPrComments(dir: string, prNumber: number): Promise<PrCommentsResult> {
-  if (!isDesktop()) return { ok: false, reason: 'not_desktop', comments: [] };
+  const api = githubApi();
+  if (!api) return { ok: false, reason: 'not_desktop', comments: [] };
   try {
-    return await window.droidControl!.githubPrComments(dir, { prNumber });
+    return await api.githubPrComments(dir, { prNumber });
   } catch {
     return { ok: false, reason: 'error', comments: [] };
   }
@@ -41,9 +95,10 @@ export async function createPullRequest(
   dir: string,
   options: CreatePrOptions,
 ): Promise<CreatePrResult> {
-  if (!isDesktop()) return { ok: false, reason: 'not_desktop' };
+  const api = githubApi();
+  if (!api) return { ok: false, reason: 'not_desktop' };
   try {
-    return await window.droidControl!.githubCreatePr(dir, options);
+    return await api.githubCreatePr(dir, options);
   } catch {
     return { ok: false, reason: 'error' };
   }
@@ -54,9 +109,10 @@ export async function postPrComment(
   prNumber: number,
   body: string,
 ): Promise<PostCommentResult> {
-  if (!isDesktop()) return { ok: false, reason: 'not_desktop' };
+  const api = githubApi();
+  if (!api) return { ok: false, reason: 'not_desktop' };
   try {
-    return await window.droidControl!.githubPostComment(dir, { prNumber, body });
+    return await api.githubPostComment(dir, { prNumber, body });
   } catch {
     return { ok: false, reason: 'error' };
   }

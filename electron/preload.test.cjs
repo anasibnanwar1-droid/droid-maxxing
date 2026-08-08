@@ -110,3 +110,13 @@ test('automatic diagnostics preference uses closed IPC payloads', async () => {
   assert.equal(calls[1].channel, 'diagnostics-preference-set');
   assert.equal(calls[1].payload.enabled, false);
 });
+
+test('GitHub setup IPC accepts no renderer-controlled command payload', async () => {
+  const expected = { ok: true };
+  const { api, calls } = loadApi(expected);
+
+  assert.deepEqual(await api.githubInstall(), expected);
+  assert.deepEqual(await api.githubAuthenticate(), expected);
+  assert.deepEqual(calls[0], { channel: 'github-install', payload: undefined });
+  assert.deepEqual(calls[1], { channel: 'github-authenticate', payload: undefined });
+});

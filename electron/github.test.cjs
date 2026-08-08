@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const { PassThrough } = require('node:stream');
 const {
+  available,
   authenticate,
   cancelSetup,
   install,
@@ -103,6 +104,28 @@ test('discovers gh from the configured login shell after common paths fail', asy
   });
 
   assert.equal(executable, '/custom/login/bin/gh');
+});
+
+test('availability reports the supported recovery path when gh is missing', async () => {
+  const homebrew = await available({
+    runGh: async () => ghResult({ code: 1, spawnFailed: true }),
+    resolveBrew: async () => '/opt/homebrew/bin/brew',
+  });
+  assert.deepEqual(homebrew, {
+    installed: false,
+    authenticated: false,
+    installMethod: 'homebrew',
+  });
+
+  const manual = await available({
+    runGh: async () => ghResult({ code: 1, spawnFailed: true }),
+    resolveBrew: async () => null,
+  });
+  assert.deepEqual(manual, {
+    installed: false,
+    authenticated: false,
+    installMethod: 'manual',
+  });
 });
 
 test('resolves Apple Silicon Homebrew under a Finder-style PATH', async () => {

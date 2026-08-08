@@ -128,13 +128,19 @@ function prSelector(value) {
   return /^[0-9]+$/.test(s) ? s : null;
 }
 
-async function available() {
-  const version = await gh(process.cwd(), ['--version']);
+async function available(options = {}) {
+  const runGh = options.runGh || gh;
+  const resolveBrew = options.resolveBrew || githubSetup.resolveBrewExecutable;
+  const version = await runGh(process.cwd(), ['--version']);
   if (version.spawnFailed || version.code !== 0) {
-    return { installed: false, authenticated: false };
+    return {
+      installed: false,
+      authenticated: false,
+      installMethod: (await resolveBrew()) ? 'homebrew' : 'manual',
+    };
   }
-  const auth = await gh(process.cwd(), ['auth', 'status']);
-  return { installed: true, authenticated: auth.code === 0 };
+  const auth = await runGh(process.cwd(), ['auth', 'status', '--hostname', 'github.com']);
+  return { installed: true, authenticated: auth.code === 0, installMethod: null };
 }
 
 const PR_FIELDS = [

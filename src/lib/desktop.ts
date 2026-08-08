@@ -35,6 +35,7 @@ import type {
   GitEnvironment,
   GitWorktree,
   GithubAvailability,
+  GithubSetupResult,
   PostCommentResult,
   PrChecksResult,
   PrCommentsResult,
@@ -199,6 +200,8 @@ interface DroidControlApi {
   gitPush: (dir: string, options: PushOptions) => Promise<GitActionResult>;
   gitFetch: (dir: string) => Promise<GitActionResult>;
   githubAvailable: () => Promise<GithubAvailability>;
+  githubInstall: () => Promise<GithubSetupResult>;
+  githubAuthenticate: () => Promise<GithubSetupResult>;
   githubDetectPr: (dir: string, options: { branch?: string }) => Promise<DetectPrResult>;
   githubPrChecks: (dir: string, options: { prNumber: number }) => Promise<PrChecksResult>;
   githubPrComments: (dir: string, options: { prNumber: number }) => Promise<PrCommentsResult>;

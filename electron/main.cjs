@@ -123,6 +123,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   sidecarSupervisor.stop();
+  githubVcs.cancelSetup();
   terminalManager.closeAll();
   terminalSubscriptions.clear();
   filesRootAccess.clear();
@@ -298,7 +299,18 @@ function registerIpc() {
   ipcMain.handle('git-push', (_event, { dir, options }) => gitVcs.push(dir, options));
   ipcMain.handle('git-fetch', (_event, { dir }) => gitVcs.fetchRemotes(dir));
 
-  ipcMain.handle('github-available', () => githubVcs.available());
+  ipcMain.handle('github-available', (event) => {
+    assertMainRenderer(event);
+    return githubVcs.available();
+  });
+  ipcMain.handle('github-install', (event) => {
+    assertMainRenderer(event);
+    return githubVcs.install();
+  });
+  ipcMain.handle('github-authenticate', (event) => {
+    assertMainRenderer(event);
+    return githubVcs.authenticate(openExternal);
+  });
   ipcMain.handle('github-detect-pr', (_event, { dir, options }) =>
     githubVcs.detectPr(dir, options),
   );
@@ -610,6 +622,7 @@ function installMainRendererLifecycle(contents) {
   const cleanupForRendererReplacement = () => {
     if (!hasLoadedMainFrame || cleanedForNavigation) return;
     cleanedForNavigation = true;
+    githubVcs.cancelSetup();
     closeRendererOwnedTerminals();
   };
 
