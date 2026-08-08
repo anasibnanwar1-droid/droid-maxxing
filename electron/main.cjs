@@ -309,7 +309,16 @@ function registerIpc() {
   });
   ipcMain.handle('github-authenticate', (event) => {
     assertMainRenderer(event);
-    return githubVcs.authenticate(openExternal);
+    return githubVcs.authenticate(openExternal, {
+      onDeviceCode: (code) => {
+        if (!event.sender.isDestroyed()) event.sender.send('github-auth-code', { code });
+      },
+    });
+  });
+  ipcMain.handle('github-cancel-setup', (event) => {
+    assertMainRenderer(event);
+    githubVcs.cancelSetup();
+    return { ok: true };
   });
   ipcMain.handle('github-detect-pr', (_event, { dir, options }) =>
     githubVcs.detectPr(dir, options),

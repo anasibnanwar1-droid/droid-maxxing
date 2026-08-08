@@ -6,14 +6,20 @@ const vm = require('node:vm');
 
 function loadApi(invokeResult) {
   const calls = [];
+  const listeners = [];
+  const removedListeners = [];
   let api;
   const ipcRenderer = {
     invoke(channel, payload) {
       calls.push({ channel, payload });
       return Promise.resolve(invokeResult);
     },
-    on() {},
-    removeListener() {},
+    on(channel, listener) {
+      listeners.push({ channel, listener });
+    },
+    removeListener(channel, listener) {
+      removedListeners.push({ channel, listener });
+    },
   };
   const source = readFileSync(path.join(__dirname, 'preload.cjs'), 'utf8');
   vm.runInNewContext(source, {
@@ -29,7 +35,7 @@ function loadApi(invokeResult) {
       };
     },
   });
-  return { api, calls };
+  return { api, calls, listeners, removedListeners };
 }
 
 test('notification IPC returns the main-process delivery result unchanged', async () => {
@@ -117,6 +123,25 @@ test('GitHub setup IPC accepts no renderer-controlled command payload', async ()
 
   assert.deepEqual(await api.githubInstall(), expected);
   assert.deepEqual(await api.githubAuthenticate(), expected);
+  assert.deepEqual(await api.githubCancelSetup(), expected);
   assert.deepEqual(calls[0], { channel: 'github-install', payload: undefined });
   assert.deepEqual(calls[1], { channel: 'github-authenticate', payload: undefined });
+  assert.deepEqual(calls[2], { channel: 'github-cancel-setup', payload: undefined });
+});
+
+test('GitHub device codes use a removable trusted event subscription', () => {
+  const received = [];
+  const { api, listeners, removedListeners } = loadApi();
+
+  const unsubscribe = api.onGithubAuthCode((payload) => received.push(payload));
+  assert.equal(listeners.length, 1);
+  assert.equal(listeners[0].channel, 'github-auth-code');
+
+  listeners[0].listener({}, { code: 'ABCD-7HJK' });
+  assert.deepEqual(received, [{ code: 'ABCD-7HJK' }]);
+
+  unsubscribe();
+  assert.equal(removedListeners.length, 1);
+  assert.equal(removedListeners[0].channel, 'github-auth-code');
+  assert.equal(removedListeners[0].listener, listeners[0].listener);
 });

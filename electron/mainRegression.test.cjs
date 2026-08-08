@@ -85,7 +85,12 @@ test('manual feedback reports require the trusted renderer', () => {
 });
 
 test('GitHub setup handlers require the trusted renderer and teardown their process', () => {
-  for (const channel of ['github-available', 'github-install', 'github-authenticate']) {
+  for (const channel of [
+    'github-available',
+    'github-install',
+    'github-authenticate',
+    'github-cancel-setup',
+  ]) {
     const handlerStart = mainSource.indexOf(`ipcMain.handle('${channel}'`);
     const handlerEnd = mainSource.indexOf('\n  ipcMain.handle(', handlerStart + 1);
     assert.notEqual(handlerStart, -1, `missing ${channel} handler`);
@@ -95,6 +100,12 @@ test('GitHub setup handlers require the trusted renderer and teardown their proc
       `${channel} must authorize its sender`,
     );
   }
+
+  const authenticateStart = mainSource.indexOf("ipcMain.handle('github-authenticate'");
+  const authenticateEnd = mainSource.indexOf('\n  ipcMain.handle(', authenticateStart + 1);
+  const authenticateHandler = mainSource.slice(authenticateStart, authenticateEnd);
+  assert.match(authenticateHandler, /onDeviceCode/);
+  assert.match(authenticateHandler, /event\.sender\.send\('github-auth-code', \{ code \}\)/);
 
   assert.match(mainSource, /app\.on\('before-quit',[\s\S]*?githubVcs\.cancelSetup\(\)/);
   assert.match(

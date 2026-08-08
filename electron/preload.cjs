@@ -52,6 +52,8 @@ contextBridge.exposeInMainWorld('droidControl', {
   githubAvailable: () => ipcRenderer.invoke('github-available'),
   githubInstall: () => ipcRenderer.invoke('github-install'),
   githubAuthenticate: () => ipcRenderer.invoke('github-authenticate'),
+  githubCancelSetup: () => ipcRenderer.invoke('github-cancel-setup'),
+  onGithubAuthCode: (handler) => on('github-auth-code', handler),
   githubDetectPr: (dir, options) => ipcRenderer.invoke('github-detect-pr', { dir, options }),
   githubPrChecks: (dir, options) => ipcRenderer.invoke('github-pr-checks', { dir, options }),
   githubPrComments: (dir, options) => ipcRenderer.invoke('github-pr-comments', { dir, options }),

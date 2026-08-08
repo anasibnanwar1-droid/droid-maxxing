@@ -202,6 +202,8 @@ interface DroidControlApi {
   githubAvailable: () => Promise<GithubAvailability>;
   githubInstall: () => Promise<GithubSetupResult>;
   githubAuthenticate: () => Promise<GithubSetupResult>;
+  githubCancelSetup: () => Promise<{ ok: true }>;
+  onGithubAuthCode: (handler: (payload: { code: string }) => void) => () => void;
   githubDetectPr: (dir: string, options: { branch?: string }) => Promise<DetectPrResult>;
   githubPrChecks: (dir: string, options: { prNumber: number }) => Promise<PrChecksResult>;
   githubPrComments: (dir: string, options: { prNumber: number }) => Promise<PrCommentsResult>;

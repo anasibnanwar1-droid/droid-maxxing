@@ -149,8 +149,13 @@ export default function RightPanel() {
                   githubAction={githubSetup.action}
                   githubError={githubSetup.error}
                   githubManualGuideOpened={githubSetup.manualGuideOpened}
+                  githubAuthCode={githubSetup.authCode}
+                  githubAuthPopoverOpen={githubSetup.isAuthPopoverOpen}
                   githubReady={githubSetup.isReady}
                   onGithubSetupAction={githubSetup.runPrimaryAction}
+                  onShowGithubAuthPrompt={githubSetup.showAuthPrompt}
+                  onCloseGithubAuthPrompt={githubSetup.closeAuthPrompt}
+                  onCancelGithubAuthentication={githubSetup.cancelAuthentication}
                   pr={pr.pr}
                   onOpenPr={() => {
                     setView('pr');

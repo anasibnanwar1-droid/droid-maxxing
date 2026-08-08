@@ -37,8 +37,13 @@ export function EnvironmentSection({
   githubAction,
   githubError,
   githubManualGuideOpened,
+  githubAuthCode,
+  githubAuthPopoverOpen,
   githubReady,
   onGithubSetupAction,
+  onShowGithubAuthPrompt,
+  onCloseGithubAuthPrompt,
+  onCancelGithubAuthentication,
   pr,
   onOpenPr,
   onOpenReview,
@@ -57,8 +62,13 @@ export function EnvironmentSection({
   githubAction: GithubSetupAction;
   githubError: string | null;
   githubManualGuideOpened: boolean;
+  githubAuthCode: string | null;
+  githubAuthPopoverOpen: boolean;
   githubReady: boolean;
   onGithubSetupAction: () => void;
+  onShowGithubAuthPrompt: () => void;
+  onCloseGithubAuthPrompt: () => void;
+  onCancelGithubAuthentication: () => void;
   pr: PullRequest | null;
   onOpenPr: () => void;
   onOpenReview: () => void;
@@ -120,7 +130,12 @@ export function EnvironmentSection({
               action={githubAction}
               error={githubError}
               manualGuideOpened={githubManualGuideOpened}
+              authCode={githubAuthCode}
+              isAuthPopoverOpen={githubAuthPopoverOpen}
               onPrimaryAction={onGithubSetupAction}
+              onShowAuthPrompt={onShowGithubAuthPrompt}
+              onCloseAuthPrompt={onCloseGithubAuthPrompt}
+              onCancelAuthentication={onCancelGithubAuthentication}
             />
           )}
 

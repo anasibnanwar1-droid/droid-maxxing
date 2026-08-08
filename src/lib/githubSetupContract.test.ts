@@ -8,6 +8,8 @@ interface SetupExports {
   getGithubAvailability?: () => Promise<GithubAvailability>;
   installGithubCli?: () => Promise<GithubSetupResult>;
   authenticateGithubCli?: () => Promise<GithubSetupResult>;
+  cancelGithubSetup?: () => Promise<void>;
+  onGithubAuthCode?: (handler: (code: string) => void) => () => void;
 }
 
 const setup = github as SetupExports;
@@ -16,14 +18,18 @@ function requireSetupFunctions() {
   assert.equal(typeof setup.getGithubAvailability, 'function');
   assert.equal(typeof setup.installGithubCli, 'function');
   assert.equal(typeof setup.authenticateGithubCli, 'function');
+  assert.equal(typeof setup.cancelGithubSetup, 'function');
+  assert.equal(typeof setup.onGithubAuthCode, 'function');
   return {
     getAvailability: setup.getGithubAvailability,
     install: setup.installGithubCli,
     authenticate: setup.authenticateGithubCli,
+    cancel: setup.cancelGithubSetup,
+    onAuthCode: setup.onGithubAuthCode,
   };
 }
 
-function setDesktopApi(api: Record<string, () => Promise<unknown>>) {
+function setDesktopApi(api: Record<string, unknown>) {
   Object.defineProperty(globalThis, 'window', {
     value: { droidControl: api },
     configurable: true,
@@ -45,12 +51,37 @@ test('GitHub setup wrappers preserve closed desktop results', async () => {
     githubAvailable: async () => expectedAvailability,
     githubInstall: async () => ({ ok: true }),
     githubAuthenticate: async () => ({ ok: true }),
+    githubCancelSetup: async () => ({ ok: true }),
+    onGithubAuthCode: () => () => undefined,
   });
   const functions = requireSetupFunctions();
 
   assert.deepEqual(await functions.getAvailability!(), expectedAvailability);
   assert.deepEqual(await functions.install!(), { ok: true });
   assert.deepEqual(await functions.authenticate!(), { ok: true });
+  await functions.cancel!();
+});
+
+test('GitHub setup wrapper exposes only the validated device-code string', () => {
+  let desktopHandler: ((payload: { code: string }) => void) | undefined;
+  let unsubscribed = false;
+  setDesktopApi({
+    onGithubAuthCode: (handler: (payload: { code: string }) => void) => {
+      desktopHandler = handler;
+      return () => {
+        unsubscribed = true;
+      };
+    },
+  });
+  const functions = requireSetupFunctions();
+  const received: string[] = [];
+
+  const unsubscribe = functions.onAuthCode!((code) => received.push(code));
+  desktopHandler?.({ code: 'ABCD-7HJK' });
+  assert.deepEqual(received, ['ABCD-7HJK']);
+
+  unsubscribe();
+  assert.equal(unsubscribed, true);
 });
 
 test('GitHub setup wrappers return fixed transport failures', async () => {

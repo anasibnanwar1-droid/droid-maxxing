@@ -40,6 +40,8 @@ async function render(
     action: 'idle' | 'installing' | 'authenticating';
     error: string | null;
     manualGuideOpened: boolean;
+    authCode: string | null;
+    isAuthPopoverOpen: boolean;
   }> = {},
 ): Promise<string> {
   const { GithubSetupCard } = await loadCard();
@@ -49,7 +51,12 @@ async function render(
       action: overrides.action ?? 'idle',
       error: overrides.error ?? null,
       manualGuideOpened: overrides.manualGuideOpened ?? false,
+      authCode: overrides.authCode ?? null,
+      isAuthPopoverOpen: overrides.isAuthPopoverOpen ?? false,
       onPrimaryAction: () => undefined,
+      onShowAuthPrompt: () => undefined,
+      onCloseAuthPrompt: () => undefined,
+      onCancelAuthentication: () => undefined,
     }),
   );
 }
@@ -91,6 +98,34 @@ test('busy setup states are disabled and explicit', async () => {
   assert.match(installing, /disabled=""/);
   assert.match(authenticating, /Waiting for GitHub…/);
   assert.match(authenticating, /disabled=""/);
+});
+
+test('authentication with a device code keeps a button to reopen the popover', async () => {
+  const html = await render(signedOut, {
+    action: 'authenticating',
+    authCode: 'ABCD-7HJK',
+    isAuthPopoverOpen: true,
+  });
+
+  assert.match(html, /Show sign-in code/);
+  assert.match(html, /aria-haspopup="dialog"/);
+  assert.doesNotMatch(html, /disabled=""/);
+});
+
+test('device-code popover content shows copy and cancellation actions', async () => {
+  const { GithubAuthPromptContent } = await loadCard();
+  const html = renderToStaticMarkup(
+    createElement(GithubAuthPromptContent, {
+      code: 'ABCD-7HJK',
+      onCopy: () => undefined,
+      onCancel: () => undefined,
+    }),
+  );
+
+  assert.match(html, /ABCD-7HJK/);
+  assert.match(html, /Copy code/);
+  assert.match(html, /Cancel sign-in/);
+  assert.match(html, /Paste this code into GitHub/);
 });
 
 test('setup failures use accessible live text in addition to color', async () => {

@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useReducer, useRef } from 'react';
 
-import { authenticateGithubCli, getGithubAvailability, installGithubCli } from '../lib/github';
+import {
+  authenticateGithubCli,
+  cancelGithubSetup,
+  getGithubAvailability,
+  installGithubCli,
+  onGithubAuthCode,
+} from '../lib/github';
 import { openExternal } from '../lib/onboarding';
 import type { GithubAvailability, GithubSetupResult } from '../types/vcs';
 
@@ -14,6 +20,8 @@ export interface GithubSetupState {
   action: GithubSetupAction;
   error: string | null;
   manualGuideOpened: boolean;
+  authCode: string | null;
+  isAuthPopoverOpen: boolean;
 }
 
 type GithubSetupEvent =
@@ -26,7 +34,10 @@ type GithubSetupEvent =
       action: Exclude<GithubSetupAction, 'idle'>;
     }
   | { type: 'action-failed'; requestId: number; message: string }
-  | { type: 'guide-opened'; requestId: number };
+  | { type: 'guide-opened'; requestId: number }
+  | { type: 'auth-code-received'; requestId: number; code: string }
+  | { type: 'auth-popover-opened'; requestId: number }
+  | { type: 'auth-popover-closed'; requestId: number };
 
 export const initialGithubSetupState: GithubSetupState = {
   requestId: 0,
@@ -34,6 +45,8 @@ export const initialGithubSetupState: GithubSetupState = {
   action: 'idle',
   error: null,
   manualGuideOpened: false,
+  authCode: null,
+  isAuthPopoverOpen: false,
 };
 
 export function githubSetupReducer(
@@ -47,7 +60,14 @@ export function githubSetupReducer(
     return { ...state, requestId: event.requestId, error: null };
   }
   if (event.type === 'action-started') {
-    return { ...state, requestId: event.requestId, action: event.action, error: null };
+    return {
+      ...state,
+      requestId: event.requestId,
+      action: event.action,
+      error: null,
+      authCode: null,
+      isAuthPopoverOpen: false,
+    };
   }
   if (event.requestId !== state.requestId) return state;
 
@@ -59,11 +79,26 @@ export function githubSetupReducer(
         action: 'idle',
         error: null,
         manualGuideOpened: event.availability.installed ? false : state.manualGuideOpened,
+        authCode: null,
+        isAuthPopoverOpen: false,
       };
     case 'action-failed':
-      return { ...state, action: 'idle', error: event.message };
+      return {
+        ...state,
+        action: 'idle',
+        error: event.message,
+        authCode: null,
+        isAuthPopoverOpen: false,
+      };
     case 'guide-opened':
       return { ...state, action: 'idle', error: null, manualGuideOpened: true };
+    case 'auth-code-received':
+      if (state.action !== 'authenticating') return state;
+      return { ...state, authCode: event.code, isAuthPopoverOpen: true };
+    case 'auth-popover-opened':
+      return state.authCode ? { ...state, isAuthPopoverOpen: true } : state;
+    case 'auth-popover-closed':
+      return { ...state, isAuthPopoverOpen: false };
     default:
       return state;
   }
@@ -92,9 +127,14 @@ export interface GithubSetupController {
   action: GithubSetupAction;
   error: string | null;
   manualGuideOpened: boolean;
+  authCode: string | null;
+  isAuthPopoverOpen: boolean;
   isReady: boolean;
   refresh: () => void;
   runPrimaryAction: () => void;
+  showAuthPrompt: () => void;
+  closeAuthPrompt: () => void;
+  cancelAuthentication: () => void;
 }
 
 export function useGithubSetup(enabled: boolean, repositoryKey: string): GithubSetupController {
@@ -124,6 +164,15 @@ export function useGithubSetup(enabled: boolean, repositoryKey: string): GithubS
     dispatch({ type: 'reset', requestId });
     probe(requestId);
   }, [enabled, repositoryKey, probe]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    return onGithubAuthCode((code) => {
+      const current = stateRef.current;
+      if (current.action !== 'authenticating') return;
+      dispatch({ type: 'auth-code-received', requestId: current.requestId, code });
+    });
+  }, [enabled]);
 
   const finishOperation = useCallback(
     (requestId: number, result: GithubSetupResult) => {
@@ -185,13 +234,32 @@ export function useGithubSetup(enabled: boolean, repositoryKey: string): GithubS
     };
   }, [refresh, state.manualGuideOpened]);
 
+  const showAuthPrompt = useCallback(() => {
+    const current = stateRef.current;
+    dispatch({ type: 'auth-popover-opened', requestId: current.requestId });
+  }, []);
+
+  const closeAuthPrompt = useCallback(() => {
+    const current = stateRef.current;
+    dispatch({ type: 'auth-popover-closed', requestId: current.requestId });
+  }, []);
+
+  const cancelAuthentication = useCallback(() => {
+    void cancelGithubSetup();
+  }, []);
+
   return {
     availability: state.availability,
     action: state.action,
     error: state.error,
     manualGuideOpened: state.manualGuideOpened,
+    authCode: state.authCode,
+    isAuthPopoverOpen: state.isAuthPopoverOpen,
     isReady: state.availability?.installed === true && state.availability.authenticated,
     refresh,
     runPrimaryAction,
+    showAuthPrompt,
+    closeAuthPrompt,
+    cancelAuthentication,
   };
 }

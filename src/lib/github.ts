@@ -61,6 +61,24 @@ export async function authenticateGithubCli(): Promise<GithubSetupResult> {
   }
 }
 
+export async function cancelGithubSetup(): Promise<void> {
+  const api = githubApi();
+  if (!api) return;
+  try {
+    await api.githubCancelSetup();
+  } catch {
+    // The in-flight authentication result owns the user-visible failure state.
+  }
+}
+
+export function onGithubAuthCode(handler: (code: string) => void): () => void {
+  const api = githubApi();
+  if (!api) return () => undefined;
+  return api.onGithubAuthCode(({ code }) => {
+    if (/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code)) handler(code);
+  });
+}
+
 export async function detectPullRequest(dir: string, branch?: string): Promise<DetectPrResult> {
   const api = githubApi();
   if (!api || !dir) return { ok: true, pr: null };

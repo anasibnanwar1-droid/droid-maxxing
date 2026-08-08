@@ -181,6 +181,11 @@ function isGithubDeviceUrl(value) {
   }
 }
 
+function githubDeviceCode(value) {
+  const match = String(value).match(/one-time code:\s*([A-Z0-9]{4}-[A-Z0-9]{4})\b/i);
+  return match ? match[1].toUpperCase() : null;
+}
+
 async function verifyGithubAuth(executable, execute = runFile) {
   const result = await execute(executable, ['auth', 'status', '--hostname', 'github.com'], {
     timeout: DEFAULT_TIMEOUT,
@@ -199,6 +204,7 @@ function runAuthenticationProcess(executable, openExternal, operation, options =
     let child;
     let output = '';
     let browserPromise = null;
+    let deviceCode = null;
     let rejectedUrl = false;
     let timedOut = false;
     let settled = false;
@@ -223,7 +229,18 @@ function runAuthenticationProcess(executable, openExternal, operation, options =
       finish({ ok: false, reason: 'browser_failed', message });
     };
     const inspectOutput = (text) => {
-      if (settled || browserPromise || rejectedUrl) return;
+      if (settled || rejectedUrl) return;
+      if (!deviceCode) {
+        deviceCode = githubDeviceCode(text);
+        if (deviceCode) {
+          try {
+            options.onDeviceCode?.(deviceCode);
+          } catch {
+            // Renderer replacement must not interrupt the CLI-owned auth flow.
+          }
+        }
+      }
+      if (browserPromise) return;
       const match = text.match(/https?:\/\/[^\s"'<>]+/i);
       if (!match) return;
       const url = match[0];
@@ -240,7 +257,7 @@ function runAuthenticationProcess(executable, openExternal, operation, options =
         });
     };
     const onOutput = (chunk) => {
-      if (settled || browserPromise || rejectedUrl) return;
+      if (settled || rejectedUrl) return;
       output = `${output}${String(chunk)}`.slice(-MAX_AUTH_OUTPUT);
       const lastLineBreak = Math.max(output.lastIndexOf('\n'), output.lastIndexOf('\r'));
       if (lastLineBreak < 0) return;

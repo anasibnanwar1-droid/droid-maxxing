@@ -98,6 +98,41 @@ test('current probe and action events produce explicit setup states', async () =
   assert.equal(failed.error, 'Homebrew failed.');
 });
 
+test('device code keeps authentication visible until the operation settles', async () => {
+  const { githubSetupReducer, initialGithubSetupState } = await loadSetupModule();
+  const signedOutState = { ...initialGithubSetupState, requestId: 1, availability: signedOut };
+  const authenticating = githubSetupReducer(signedOutState, {
+    type: 'action-started',
+    requestId: 2,
+    action: 'authenticating',
+  });
+  const withCode = githubSetupReducer(authenticating, {
+    type: 'auth-code-received',
+    requestId: 2,
+    code: 'ABCD-7HJK',
+  });
+
+  assert.equal(withCode.action, 'authenticating');
+  assert.equal(withCode.authCode, 'ABCD-7HJK');
+  assert.equal(withCode.isAuthPopoverOpen, true);
+
+  const closed = githubSetupReducer(withCode, { type: 'auth-popover-closed', requestId: 2 });
+  assert.equal(closed.authCode, 'ABCD-7HJK');
+  assert.equal(closed.isAuthPopoverOpen, false);
+
+  const reopened = githubSetupReducer(closed, { type: 'auth-popover-opened', requestId: 2 });
+  assert.equal(reopened.isAuthPopoverOpen, true);
+
+  const failed = githubSetupReducer(reopened, {
+    type: 'action-failed',
+    requestId: 2,
+    message: 'GitHub sign-in was cancelled.',
+  });
+  assert.equal(failed.action, 'idle');
+  assert.equal(failed.authCode, null);
+  assert.equal(failed.isAuthPopoverOpen, false);
+});
+
 test('primary action matches the next user-visible operation', async () => {
   const { primaryActionFor, initialGithubSetupState } = await loadSetupModule();
 

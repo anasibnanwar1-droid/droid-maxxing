@@ -250,6 +250,7 @@ test('accepts only the exact GitHub device-login URL', () => {
 
 test('browser authentication uses fixed arguments and opens the emitted device URL', async () => {
   const opened = [];
+  const deviceCodes = [];
   const child = fakeChild();
   const pending = authenticate(async (url) => opened.push(url), {
     resolveGh: async () => '/opt/homebrew/bin/gh',
@@ -268,17 +269,41 @@ test('browser authentication uses fixed arguments and opens the emitted device U
       ]);
       assert.deepEqual(options.stdio, ['ignore', 'pipe', 'pipe']);
       queueMicrotask(() => {
+        child.stderr.write('First copy your one-time code: ABCD-7HJK\n');
         child.stderr.write('Open this URL to continue: https://github.com/login/');
         child.stderr.write('device\n');
         child.emit('close', 0, null);
       });
       return child;
     },
+    onDeviceCode: (code) => deviceCodes.push(code),
     verifyAuth: async () => true,
   });
 
   assert.deepEqual(await pending, { ok: true });
   assert.deepEqual(opened, ['https://github.com/login/device']);
+  assert.deepEqual(deviceCodes, ['ABCD-7HJK']);
+});
+
+test('browser authentication never exposes malformed device codes', async () => {
+  const deviceCodes = [];
+  const child = fakeChild();
+  const result = await authenticate(async () => undefined, {
+    resolveGh: async () => '/opt/homebrew/bin/gh',
+    spawnProcess: () => {
+      queueMicrotask(() => {
+        child.stderr.write('First copy your one-time code: not-a-code\n');
+        child.stderr.write('https://github.com/login/device\n');
+        child.emit('close', 0, null);
+      });
+      return child;
+    },
+    onDeviceCode: (code) => deviceCodes.push(code),
+    verifyAuth: async () => true,
+  });
+
+  assert.deepEqual(result, { ok: true });
+  assert.deepEqual(deviceCodes, []);
 });
 
 test('browser authentication rejects a non-GitHub verification URL', async () => {
