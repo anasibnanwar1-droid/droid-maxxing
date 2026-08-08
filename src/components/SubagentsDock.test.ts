@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { buildFeed, groupTurns, MessageFeed } from './chat';
+import { buildFeed, groupTurns, MessageFeed, trailingSubagentPoll } from './chat';
 import { SubagentsDock } from './SubagentsDock';
 import { isPendingChildPlaceholder, resolveWaveSessions } from '../lib/childSessions';
 import { childSessionInfo } from '../lib/tools';
@@ -57,6 +57,11 @@ const dockData = {
 // Adjacent text expressions render with comment separators; strip them so text
 // assertions match what a user reads.
 const textOf = (html: string) => html.replace(/<!--.*?-->/g, '');
+
+// A tool group shimmers its summary only while the step is still running.
+const LIVE_SUMMARY_CLASS = 'shimmer-text text-[13px] font-medium';
+const SETTLED_SUMMARY_CLASS =
+  'text-[13px] text-droid-text-muted group-hover:text-droid-text-secondary transition-colors';
 
 test('live runtime activity outranks the stored status', () => {
   const text = textOf(
@@ -297,6 +302,78 @@ test('polling and stopping subagents never renders rows beside the card', () => 
   assert.ok(!text.includes('TaskOutput'));
   assert.ok(!text.includes('TaskStop'));
   assert.ok(!text.includes('reading the sidecar'));
+});
+
+test('a poll after a finished step reads as checking subagents, not a stuck step', () => {
+  // The parent finished a search and is now polling its subagents. The poll is
+  // suppressed, so the search group is the feed's last item: it must read as
+  // settled while the cue reports what the parent is actually doing.
+  const events = [
+    userMsg('go'),
+    spawn('t1', 'explorer'),
+    ev({ kind: 'tool_call', toolName: 'Grep', toolUseId: 'g1', toolArgs: { pattern: 'foo' } }),
+    ev({ kind: 'tool_result', toolUseId: 'g1', text: 'src/a.ts:1: foo' }),
+    ev({
+      kind: 'tool_call',
+      toolName: 'TaskOutput',
+      toolUseId: 'p1',
+      toolArgs: { task_id: 'abc' },
+    }),
+  ];
+  const html = renderToStaticMarkup(
+    createElement(MessageFeed, {
+      events,
+      pending: true,
+      onOpenChildSession: () => {},
+      subagentsDock: dockData,
+    }),
+  );
+  assert.ok(textOf(html).includes('Checking subagents'));
+  assert.ok(html.includes(`${SETTLED_SUMMARY_CLASS}">Explored 1 search`));
+  assert.ok(!html.includes(`${LIVE_SUMMARY_CLASS}">Explored 1 search`));
+});
+
+test('a poll after the parent stopped talking still shows the parent working', () => {
+  // An assistant message self-indicates with a caret, so a settled one at the
+  // tail would leave the whole feed looking stopped while the parent polls.
+  const events = [
+    userMsg('go'),
+    spawn('t1', 'explorer'),
+    assistantMsg('spawned the explorer'),
+    ev({
+      kind: 'tool_call',
+      toolName: 'TaskOutput',
+      toolUseId: 'p1',
+      toolArgs: { task_id: 'abc' },
+    }),
+    ev({ kind: 'tool_result', toolUseId: 'p1', text: 'Task ID: abc\nStatus: running\n\nworking' }),
+  ];
+  const text = textOf(
+    renderToStaticMarkup(
+      createElement(MessageFeed, {
+        events,
+        pending: true,
+        onOpenChildSession: () => {},
+        subagentsDock: dockData,
+      }),
+    ),
+  );
+  assert.ok(text.includes('Checking subagents'));
+});
+
+test('only a suppressed poll at the tail redirects the working cue', () => {
+  const poll = ev({ kind: 'tool_call', toolName: 'TaskOutput', toolUseId: 'p1', toolArgs: {} });
+  const pollResult = ev({ kind: 'tool_result', toolUseId: 'p1', text: 'Status: running' });
+  const read = ev({ kind: 'tool_call', toolName: 'Read', toolUseId: 'r1', toolArgs: {} });
+
+  // The poll call is returned so the cue can time the check from it.
+  assert.equal(trailingSubagentPoll([userMsg('go'), poll], true), poll);
+  // Replayed results carry no toolName, so the tail resolves through its call.
+  assert.equal(trailingSubagentPoll([userMsg('go'), poll, pollResult], true), poll);
+  assert.equal(trailingSubagentPoll([userMsg('go'), poll, read], true), undefined);
+  assert.equal(trailingSubagentPoll([userMsg('go'), assistantMsg('done')], true), undefined);
+  // Views that keep the poll rows render them, so their tail is honest already.
+  assert.equal(trailingSubagentPoll([userMsg('go'), poll], false), undefined);
 });
 
 test('a poll between two tools does not split them into separate groups', () => {

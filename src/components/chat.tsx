@@ -1521,6 +1521,28 @@ export function promptAnchorsFromItems(items: FeedItem[]): ConversationAnchor[] 
   return out;
 }
 
+// The subagent poll call the transcript currently ends on, if any. The dock
+// suppresses these calls (the wave card speaks for them), so the tail the user
+// sees is an earlier, already-finished step: without this the feed shimmers a
+// settled row while the parent's real work — checking on its subagents — goes
+// unannounced. Returning the call also lets the cue time the check itself.
+export function trailingSubagentPoll(
+  events: TranscriptEvent[],
+  grouped: boolean,
+): TranscriptEvent | undefined {
+  if (!grouped) return undefined;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (isCancellationArtifact(e)) continue;
+    if (e.kind === 'tool_call') return isSubagentBookkeepingTool(e.toolName) ? e : undefined;
+    if (e.kind !== 'tool_result' || !e.toolUseId) return undefined;
+    // A replayed result carries no toolName, so correlate it back to its call.
+    const call = events.find((c) => c.kind === 'tool_call' && c.toolUseId === e.toolUseId);
+    return call && isSubagentBookkeepingTool(call.toolName) ? call : undefined;
+  }
+  return undefined;
+}
+
 // Build the grouped feed once so callers can share it (the chat view derives
 // timeline anchors from the same items it hands to MessageFeed, instead of
 // running buildFeed/groupTurns a second time on every render and switch).
@@ -2641,14 +2663,19 @@ export function MessageFeed({
       (last.type === 'child_session' && lastChildSessionRunning) ||
       (last.type === 'child_sessions' && lastDockRunning) ||
       (last.type === 'message' && last.event.author !== 'user'));
-  const showWorking = pending && !tailSelfIndicates;
-  const workingLabel =
-    last?.type === 'tools'
+  // While the parent polls its subagents nothing in the feed represents that
+  // work, so the cue speaks for it and the settled tail stops animating.
+  const subagentPoll = trailingSubagentPoll(events, dockEnabled);
+  const showWorking = pending && (!!subagentPoll || !tailSelfIndicates);
+  const workingLabel = subagentPoll
+    ? 'Checking subagents'
+    : last?.type === 'tools'
       ? 'Running'
       : last?.type === 'diff' || last?.type === 'diffs'
         ? 'Updating files'
         : 'Working';
-  const workingStart = rich ? tailTimestamp(last) : undefined;
+  // Time the check from the poll itself; the visible tail can be minutes old.
+  const workingStart = rich ? (subagentPoll?.ts ?? tailTimestamp(last)) : undefined;
 
   return (
     <div className="space-y-4">
@@ -2666,7 +2693,7 @@ export function MessageFeed({
           >
             <FeedItemView
               item={item}
-              live={pending && idx === lastIdx}
+              live={pending && idx === lastIdx && !subagentPoll}
               sessionLive={pending}
               compacting={compacting && idx === lastIdx}
               cwd={cwd}
