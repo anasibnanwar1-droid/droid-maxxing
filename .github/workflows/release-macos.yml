@@ -149,7 +149,16 @@ jobs:
           done
 
           gh release edit "$GITHUB_REF_NAME" --repo "$RELEASE_REPOSITORY" --draft=false
-          gh release verify "$GITHUB_REF_NAME" --repo "$RELEASE_REPOSITORY"
+          for attempt in {1..13}; do
+            if gh release verify "$GITHUB_REF_NAME" --repo "$RELEASE_REPOSITORY"; then
+              break
+            fi
+            if test "$attempt" -eq 13; then
+              echo "Release attestation was not available after 60 seconds" >&2
+              exit 1
+            fi
+            sleep 5
+          done
           for asset in \
             release/droidex-arm64.dmg \
             release/droidex-arm64.zip \

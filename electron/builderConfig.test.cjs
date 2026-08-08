@@ -248,6 +248,8 @@ test('release automation publishes only verified unsigned Sparkle assets', () =>
   );
   assert.match(releaseWorkflowSource, /release:preflight:unsigned/);
   assert.match(releaseWorkflowSource, /test "sha256:\$LOCAL_DIGEST" = "\$REMOTE_DIGEST"/);
+  assert.match(releaseWorkflowSource, /for attempt in \{1\.\.13\}/);
+  assert.match(releaseWorkflowSource, /Release attestation was not available after 60 seconds/);
   assert.doesNotMatch(releaseWorkflowSource, /release\/latest-mac\.yml/);
   assert.doesNotMatch(releaseWorkflowSource, /release\/.*\.blockmap/);
 });
