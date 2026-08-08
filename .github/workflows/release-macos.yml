@@ -40,6 +40,7 @@ jobs:
         run: |
           PACKAGE_VERSION="$(node -p "require('./package.json').version")"
           test "$GITHUB_REF_NAME" = "v$PACKAGE_VERSION"
+          test -f "docs/releases/$GITHUB_REF_NAME.md"
           git tag --points-at HEAD --list "$GITHUB_REF_NAME" | grep -Fx "$GITHUB_REF_NAME"
           git fetch origin main
           git merge-base --is-ancestor HEAD origin/main
@@ -118,7 +119,7 @@ jobs:
             --repo "$RELEASE_REPOSITORY" \
             --target main \
             --title "DROIDEX $GITHUB_REF_NAME" \
-            --notes "Ad-hoc-signed DROIDEX macOS release for Apple silicon and Intel Macs. First launch requires approval in Privacy & Security. Download the DMG matching your Mac."
+            --notes-file "docs/releases/$GITHUB_REF_NAME.md"
           touch "$RUNNER_TEMP/droidex-draft-created"
           gh release upload "$GITHUB_REF_NAME" \
             release/droidex-arm64.dmg \

@@ -110,6 +110,43 @@ test('reconcile populates the cache and the cached list matches the uncached sca
   }
 });
 
+test('opening a 1.0.3 session index adds the file cache without losing persisted sessions', () => {
+  const upgradeHome = mkdtempSync(join(tmpdir(), 'droid-history-cache-upgrade-'));
+  const previousHome = process.env.HOME;
+  process.env.HOME = upgradeHome;
+  try {
+    const existing = new HistoryIndex();
+    existing.syncSummaries([patchFor('existing-session', '/workspace/existing')]);
+    existing.close();
+
+    const databasePath = join(upgradeHome, '.factory', 'droidex', SESSION_INDEX_FILENAME);
+    const beforeUpgrade = new DatabaseSync(databasePath);
+    beforeUpgrade.exec('DROP TABLE session_file_cache');
+    beforeUpgrade.close();
+
+    const upgraded = new HistoryIndex();
+    upgraded.close();
+
+    const verified = new DatabaseSync(databasePath);
+    const session = verified
+      .prepare('SELECT app_session_id, cwd FROM app_sessions WHERE app_session_id = ?')
+      .get('existing-session') as { app_session_id: string; cwd: string } | undefined;
+    const cacheTable = verified
+      .prepare(
+        "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'session_file_cache'",
+      )
+      .get() as { name: string } | undefined;
+    verified.close();
+
+    assert.equal(session?.app_session_id, 'existing-session');
+    assert.equal(session?.cwd, '/workspace/existing');
+    assert.equal(cacheTable?.name, 'session_file_cache');
+  } finally {
+    process.env.HOME = previousHome;
+    rmSync(upgradeHome, { recursive: true, force: true });
+  }
+});
+
 test('a second boot with unchanged files reconciles nothing', () => {
   const index = new HistoryIndex();
   try {
