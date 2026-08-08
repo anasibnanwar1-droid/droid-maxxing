@@ -2,7 +2,7 @@
 // session with a pixel-creature identity, a quiet status readout, and a
 // "Show N more" fold so long waves don't flood the panel. Working agents are
 // ordered first, so the fold only ever hides agents that have stopped.
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { Check } from 'lucide-react';
 import type { ChildSessionInfo } from '../hooks/useStore';
@@ -11,6 +11,7 @@ import {
   childSessionMeta,
   isPendingChildPlaceholder,
   workingFirstChildSessions,
+  type NamedChildSession,
 } from '../lib/childSessions';
 import { AgentAvatar } from './AgentAvatar';
 import { SectionHeader } from './environment/primitives';
@@ -90,6 +91,19 @@ function SubagentRow({
   );
 }
 
+// The rows in front of the fold: the first few, plus the agent whose transcript
+// is open, because hiding that row leaves the panel's selection unexplained.
+function unfoldedRows(
+  ordered: readonly NamedChildSession[],
+  selectedChildSessionId: string | null,
+): NamedChildSession[] {
+  const head = ordered.slice(0, VISIBLE_LIMIT);
+  const selected = ordered.findIndex(
+    ({ child }) => child.childSessionId === selectedChildSessionId,
+  );
+  return selected < VISIBLE_LIMIT ? head : [...head, ordered[selected]];
+}
+
 export function SubagentsSection({
   childSessions,
   models,
@@ -104,16 +118,7 @@ export function SubagentsSection({
   const [showAll, setShowAll] = useState(false);
   const reduceMotion = useReducedMotion();
   const ordered = workingFirstChildSessions(childSessions);
-  const visible = useMemo(() => {
-    if (showAll) return ordered;
-    const head = ordered.slice(0, VISIBLE_LIMIT);
-    // The agent whose transcript the app is currently showing must stay on
-    // screen; hiding its row behind the fold leaves the selection unexplained.
-    const selected = ordered.findIndex(
-      ({ child }) => child.childSessionId === selectedChildSessionId,
-    );
-    return selected < VISIBLE_LIMIT ? head : [...head, ordered[selected]];
-  }, [ordered, showAll, selectedChildSessionId]);
+  const visible = showAll ? ordered : unfoldedRows(ordered, selectedChildSessionId);
   const hidden = ordered.length - visible.length;
 
   return (

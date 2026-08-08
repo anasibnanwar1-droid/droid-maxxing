@@ -14,15 +14,20 @@ export function mergeChildSessionSpawn(
   const n = childSessionInfo(next.toolArgs);
   const label = n.label ?? e.label;
   const description = n.description ?? e.description;
+  // The spawn happened when its first event arrived; later deltas only refine
+  // the args, so the earliest identity and timestamp stay authoritative — a row
+  // timed from the last delta would start a beat late.
+  const origin = { id: existing.id, ts: existing.ts };
   // The latest delta is the freshest base; only rebuild its args when an earlier
   // delta carried a label/description this one is missing.
-  if (label === n.label && description === n.description) return next;
+  if (label === n.label && description === n.description) return { ...next, ...origin };
   const base =
     next.toolArgs && typeof next.toolArgs === 'object'
       ? (next.toolArgs as Record<string, unknown>)
       : {};
   return {
     ...next,
+    ...origin,
     toolArgs: {
       ...base,
       ...(label ? { subagent_type: label } : {}),

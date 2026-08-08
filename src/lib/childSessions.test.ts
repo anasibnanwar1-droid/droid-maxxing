@@ -66,9 +66,25 @@ test('mergeChildSessionSpawn merges a description-only delta with a later label-
   });
 });
 
-test('mergeChildSessionSpawn returns the latest event untouched when it already carries both fields', () => {
+test('mergeChildSessionSpawn keeps the latest args when they already carry both fields', () => {
   const next = spawn({ subagent_type: 'worker', description: 'do X' });
-  assert.equal(mergeChildSessionSpawn(spawn({ subagent_type: 'worker' }), next), next);
+  assert.deepEqual(
+    childSessionInfo(mergeChildSessionSpawn(spawn({ subagent_type: 'worker' }), next).toolArgs),
+    { label: 'worker', description: 'do X' },
+  );
+});
+
+test('a spawn is timed from its first delta, not from the last one to stream in', () => {
+  const first = spawn({ subagent_type: 'worker' });
+  // Deltas of one spawn can stream over a second or more; timing the row from
+  // the last of them would start it late and shorten the card's total.
+  const late = { ...spawn({ description: 'do X' }), id: 'late', ts: 4_000 };
+  assert.equal(mergeChildSessionSpawn(first, late).ts, first.ts);
+  // Both merge paths preserve it: this one needs no arg rebuild at all.
+  assert.equal(
+    mergeChildSessionSpawn(first, { ...late, toolArgs: { subagent_type: 'worker' } }).ts,
+    first.ts,
+  );
 });
 
 test('childSessionLatest surfaces a failed tool result as a failure, not stale activity', () => {
