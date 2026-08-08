@@ -2010,6 +2010,10 @@ function baseReducer(state: AppState, action: Action): AppState {
       let changed = false;
       for (const appSessionId of state.sessionOrder) {
         const session = state.sessions[appSessionId];
+        // Persisted renderer state can briefly contain an order entry whose
+        // session was already removed.
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+        if (!session) continue;
         const seenAt = Math.max(action.seenAt, session.updatedAt);
         if (sessionLastSeen[appSessionId] === seenAt) continue;
         sessionLastSeen[appSessionId] = seenAt;

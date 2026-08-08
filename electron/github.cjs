@@ -90,8 +90,8 @@ function install(options = {}) {
   });
 }
 
-function authenticate(openExternal, options = {}) {
-  return githubSetup.authenticate(openExternal, {
+function authenticate(options = {}) {
+  return githubSetup.authenticate({
     ...options,
     resolveGh: options.resolveGh || cachedGhExecutable,
   });

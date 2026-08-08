@@ -70,36 +70,52 @@ async function cachedBrewExecutable() {
   return executable;
 }
 
-function runSetupFile(file, args, { timeout, operation }) {
+function runSetupFile(
+  file,
+  args,
+  {
+    timeout,
+    operation,
+    spawnProcess = spawn,
+    setTimer = setTimeout,
+    clearTimer = clearTimeout,
+    terminationGraceMs = 5_000,
+  },
+) {
   return new Promise((resolve) => {
     let child;
     let timer;
+    let forceKillTimer;
+    let timedOut = false;
     let settled = false;
 
     const finish = (result) => {
       if (settled) return;
       settled = true;
-      if (timer) clearTimeout(timer);
+      if (timer) clearTimer(timer);
+      if (forceKillTimer) clearTimer(forceKillTimer);
       if (operation.child === child) operation.child = null;
       child?.removeAllListeners();
       resolve(result);
     };
 
     try {
-      child = spawn(file, args, { stdio: ['ignore', 'ignore', 'ignore'] });
+      child = spawnProcess(file, args, { stdio: ['ignore', 'ignore', 'ignore'] });
     } catch {
       finish({ code: 1, timedOut: false });
       return;
     }
 
     operation.child = child;
-    child.once('error', () => finish({ code: 1, timedOut: false }));
-    child.once('close', (code) =>
-      finish({ code: typeof code === 'number' ? code : 1, timedOut: false }),
-    );
-    timer = setTimeout(() => {
+    child.once('error', () => finish({ code: 1, timedOut }));
+    child.once('close', (code) => finish({ code: typeof code === 'number' ? code : 1, timedOut }));
+    timer = setTimer(() => {
+      timedOut = true;
       child.kill();
-      finish({ code: 1, timedOut: true });
+      forceKillTimer = setTimer(() => {
+        if (!settled) child.kill('SIGKILL');
+      }, terminationGraceMs);
+      forceKillTimer.unref?.();
     }, timeout);
     timer.unref?.();
     if (operation.cancelled) child.kill();
@@ -193,7 +209,7 @@ async function verifyGithubAuth(executable, execute = runFile) {
   return result.code === 0;
 }
 
-function runAuthenticationProcess(executable, openExternal, operation, options = {}) {
+function runAuthenticationProcess(executable, operation, options = {}) {
   const spawnProcess = options.spawnProcess || spawn;
   const verifyAuth = options.verifyAuth || (() => verifyGithubAuth(executable));
   const scheduleTimeout = options.setTimer || setTimeout;
@@ -203,7 +219,7 @@ function runAuthenticationProcess(executable, openExternal, operation, options =
   return new Promise((resolve) => {
     let child;
     let output = '';
-    let browserPromise = null;
+    let sawDeviceUrl = false;
     let deviceCode = null;
     let rejectedUrl = false;
     let timedOut = false;
@@ -240,7 +256,7 @@ function runAuthenticationProcess(executable, openExternal, operation, options =
           }
         }
       }
-      if (browserPromise) return;
+      if (sawDeviceUrl) return;
       const match = text.match(/https?:\/\/[^\s"'<>]+/i);
       if (!match) return;
       const url = match[0];
@@ -249,12 +265,7 @@ function runAuthenticationProcess(executable, openExternal, operation, options =
         failBrowser('GitHub CLI did not provide a trusted sign-in page.');
         return;
       }
-      browserPromise = Promise.resolve()
-        .then(() => openExternal(url))
-        .catch(() => {
-          failBrowser('DROIDEX could not open the GitHub sign-in page.');
-          return false;
-        });
+      sawDeviceUrl = true;
     };
     const onOutput = (chunk) => {
       if (settled || rejectedUrl) return;
@@ -270,7 +281,7 @@ function runAuthenticationProcess(executable, openExternal, operation, options =
     };
     const onClose = async (code) => {
       if (settled) return;
-      if (!browserPromise && !rejectedUrl && output) inspectOutput(output);
+      if (!sawDeviceUrl && !rejectedUrl && output) inspectOutput(output);
       if (settled) return;
       if (operation.cancelled) {
         finish({ ok: false, reason: 'cancelled', message: 'GitHub sign-in was cancelled.' });
@@ -284,7 +295,7 @@ function runAuthenticationProcess(executable, openExternal, operation, options =
         finish({ ok: false, reason: 'auth_failed', message: 'GitHub sign-in did not finish.' });
         return;
       }
-      if (!browserPromise) {
+      if (!sawDeviceUrl) {
         finish({
           ok: false,
           reason: 'browser_failed',
@@ -292,8 +303,6 @@ function runAuthenticationProcess(executable, openExternal, operation, options =
         });
         return;
       }
-      await browserPromise;
-      if (settled) return;
       const authenticated = await verifyAuth();
       if (!authenticated) {
         finish({
@@ -341,7 +350,7 @@ function runAuthenticationProcess(executable, openExternal, operation, options =
   });
 }
 
-async function authenticate(openExternal, options = {}) {
+async function authenticate(options = {}) {
   if (activeSetup) {
     return { ok: false, reason: 'busy', message: 'GitHub setup is already running.' };
   }
@@ -357,7 +366,7 @@ async function authenticate(openExternal, options = {}) {
     if (!executable) {
       return { ok: false, reason: 'auth_failed', message: 'GitHub CLI is not installed.' };
     }
-    return await runAuthenticationProcess(executable, openExternal, operation, options);
+    return await runAuthenticationProcess(executable, operation, options);
   } finally {
     if (activeSetup === operation) activeSetup = null;
   }
@@ -368,5 +377,6 @@ module.exports = {
   cancelSetup,
   install,
   isGithubDeviceUrl,
+  runSetupFile,
   resolveBrewExecutable,
 };

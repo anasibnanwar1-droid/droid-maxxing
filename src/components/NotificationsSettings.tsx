@@ -1,5 +1,10 @@
 import { useState } from 'react';
-import { notify, requestNotificationPermission, type NotifyResult } from '../lib/desktop';
+import {
+  notify,
+  requestNotificationPermission,
+  type NotificationPermissionResult,
+  type NotifyResult,
+} from '../lib/desktop';
 import {
   FINISH_NOTIFICATION_TEST_ACTION,
   FINISH_NOTIFICATION_TOGGLES,
@@ -35,6 +40,18 @@ function notificationFailureMessage(result: Exclude<NotifyResult, { shown: true 
   return result.message ?? 'macOS could not show the notification. Check notification settings.';
 }
 
+function notificationPermissionFailureMessage(
+  permission: Exclude<NotificationPermissionResult, 'granted'>,
+): string {
+  if (permission === 'denied') {
+    return 'Notifications are disabled for DROIDEX. Enable them in macOS System Settings.';
+  }
+  if (permission === 'default') {
+    return 'Notification permission was not granted. Try again when you are ready.';
+  }
+  return 'Desktop notifications are unavailable in this DROIDEX environment.';
+}
+
 export function NotificationsSettings({ highlightQuery = '' }: { highlightQuery?: string }) {
   const [settings, setSettings] = useState<FinishNotificationSettings>(() =>
     loadFinishNotificationSettings(),
@@ -48,11 +65,7 @@ export function NotificationsSettings({ highlightQuery = '' }: { highlightQuery?
   const enableNotifications = async () => {
     const permission = await requestNotificationPermission();
     if (permission !== 'granted') {
-      toast.error(
-        permission === 'denied'
-          ? 'Notifications are disabled for DROIDEX. Enable them in macOS System Settings.'
-          : 'Desktop notifications are unavailable in this DROIDEX environment.',
-      );
+      toast.error(notificationPermissionFailureMessage(permission));
       return;
     }
     update('enabled', true);
@@ -63,11 +76,7 @@ export function NotificationsSettings({ highlightQuery = '' }: { highlightQuery?
     try {
       const permission = await requestNotificationPermission();
       if (permission !== 'granted') {
-        toast.error(
-          permission === 'denied'
-            ? 'Notifications are disabled for DROIDEX. Enable them in macOS System Settings.'
-            : 'Desktop notifications are unavailable in this DROIDEX environment.',
-        );
+        toast.error(notificationPermissionFailureMessage(permission));
         return;
       }
       const result = await notify(

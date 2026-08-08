@@ -35,6 +35,18 @@ test('requestNotificationPermission returns denied from the browser permission p
   }
 });
 
+test('requestNotificationPermission preserves a dismissed browser permission prompt', async () => {
+  const restore = replaceGlobal('Notification', {
+    permission: 'default',
+    requestPermission: async () => 'default',
+  });
+  try {
+    assert.equal(await requestNotificationPermission(), 'default');
+  } finally {
+    restore();
+  }
+});
+
 test('requestNotificationPermission reports unsupported when the API is absent', async () => {
   const restore = replaceGlobal('Notification', undefined);
   try {

@@ -42,3 +42,16 @@ test('mark all sessions read advances every current session without changing ses
   assert.equal(next.sessions, state.sessions);
   assert.equal(next.sessionOrder, state.sessionOrder);
 });
+
+test('mark all sessions read ignores stale IDs in session order', () => {
+  const state: AppState = {
+    ...initialState,
+    sessions: { 'sess-a': session('sess-a', 3_000) },
+    sessionOrder: ['removed-session', 'sess-a'],
+    sessionLastSeen: {},
+  };
+
+  const next = reducer(state, { type: 'MARK_ALL_SESSIONS_READ', seenAt: 5_000 });
+
+  assert.deepEqual(next.sessionLastSeen, { 'sess-a': 5_000 });
+});

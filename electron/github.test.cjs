@@ -14,6 +14,7 @@ const {
   resolveBrewExecutable,
   resolveGhExecutable,
 } = require('./github.cjs');
+const { runSetupFile } = require('./githubSetup.cjs');
 
 const ghResult = (overrides = {}) => ({
   code: 0,
@@ -217,6 +218,50 @@ test('installation reports Homebrew failure and timeout without raw output', asy
   });
 });
 
+test('timed-out installation stays active until the child exits and escalates termination', async () => {
+  const child = new EventEmitter();
+  const killSignals = [];
+  const timers = [];
+  child.kill = (signal) => {
+    killSignals.push(signal ?? 'SIGTERM');
+    return true;
+  };
+  const operation = { child: null };
+  let settled = false;
+
+  const pending = runSetupFile('/opt/homebrew/bin/brew', ['install', 'gh'], {
+    timeout: 100,
+    terminationGraceMs: 25,
+    operation,
+    spawnProcess: () => child,
+    setTimer: (callback, timeoutMs) => {
+      const timer = { callback, timeoutMs, unref() {} };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimer: () => undefined,
+  }).then((result) => {
+    settled = true;
+    return result;
+  });
+
+  assert.equal(operation.child, child);
+  assert.equal(timers[0].timeoutMs, 100);
+  timers[0].callback();
+  await Promise.resolve();
+  assert.equal(settled, false);
+  assert.equal(operation.child, child);
+  assert.deepEqual(killSignals, ['SIGTERM']);
+
+  assert.equal(timers[1].timeoutMs, 25);
+  timers[1].callback();
+  assert.deepEqual(killSignals, ['SIGTERM', 'SIGKILL']);
+  child.emit('close', null, 'SIGKILL');
+
+  assert.deepEqual(await pending, { code: 1, timedOut: true });
+  assert.equal(operation.child, null);
+});
+
 test('only one GitHub setup operation runs at a time', async () => {
   let finishInstall;
   const first = install({
@@ -248,11 +293,10 @@ test('accepts only the exact GitHub device-login URL', () => {
   assert.equal(isGithubDeviceUrl('not a URL'), false);
 });
 
-test('browser authentication uses fixed arguments and opens the emitted device URL', async () => {
-  const opened = [];
+test('browser authentication lets gh open its emitted device URL exactly once', async () => {
   const deviceCodes = [];
   const child = fakeChild();
-  const pending = authenticate(async (url) => opened.push(url), {
+  const pending = authenticate({
     resolveGh: async () => '/opt/homebrew/bin/gh',
     spawnProcess: (file, args, options) => {
       assert.equal(file, '/opt/homebrew/bin/gh');
@@ -281,14 +325,13 @@ test('browser authentication uses fixed arguments and opens the emitted device U
   });
 
   assert.deepEqual(await pending, { ok: true });
-  assert.deepEqual(opened, ['https://github.com/login/device']);
   assert.deepEqual(deviceCodes, ['ABCD-7HJK']);
 });
 
 test('browser authentication never exposes malformed device codes', async () => {
   const deviceCodes = [];
   const child = fakeChild();
-  const result = await authenticate(async () => undefined, {
+  const result = await authenticate({
     resolveGh: async () => '/opt/homebrew/bin/gh',
     spawnProcess: () => {
       queueMicrotask(() => {
@@ -308,7 +351,7 @@ test('browser authentication never exposes malformed device codes', async () => 
 
 test('browser authentication rejects a non-GitHub verification URL', async () => {
   const child = fakeChild();
-  const result = await authenticate(async () => assert.fail('must not open browser'), {
+  const result = await authenticate({
     resolveGh: async () => '/opt/homebrew/bin/gh',
     spawnProcess: () => {
       queueMicrotask(() => {
@@ -327,35 +370,9 @@ test('browser authentication rejects a non-GitHub verification URL', async () =>
   });
 });
 
-test('browser authentication reports browser-open failure without raw errors', async () => {
-  const child = fakeChild();
-  const result = await authenticate(
-    async () => {
-      throw new Error('private browser details');
-    },
-    {
-      resolveGh: async () => '/opt/homebrew/bin/gh',
-      spawnProcess: () => {
-        queueMicrotask(() => {
-          child.stderr.write('https://github.com/login/device\n');
-        });
-        return child;
-      },
-      verifyAuth: async () => true,
-    },
-  );
-
-  assert.deepEqual(result, {
-    ok: false,
-    reason: 'browser_failed',
-    message: 'DROIDEX could not open the GitHub sign-in page.',
-  });
-  assert.equal(child.killed, true);
-});
-
 test('browser authentication requires final gh auth verification', async () => {
   const child = fakeChild();
-  const result = await authenticate(async () => undefined, {
+  const result = await authenticate({
     resolveGh: async () => '/opt/homebrew/bin/gh',
     spawnProcess: () => {
       queueMicrotask(() => {
@@ -376,7 +393,7 @@ test('browser authentication requires final gh auth verification', async () => {
 
 test('browser authentication times out and terminates its child', async () => {
   const child = fakeChild();
-  const result = await authenticate(async () => undefined, {
+  const result = await authenticate({
     resolveGh: async () => '/opt/homebrew/bin/gh',
     spawnProcess: () => {
       setImmediate(() => child.emit('close', 1, null));
@@ -402,7 +419,7 @@ test('browser authentication times out and terminates its child', async () => {
 
 test('cancelling browser authentication terminates its child process', async () => {
   const child = fakeChild();
-  const pending = authenticate(async () => undefined, {
+  const pending = authenticate({
     resolveGh: async () => '/opt/homebrew/bin/gh',
     spawnProcess: () => child,
     verifyAuth: async () => true,

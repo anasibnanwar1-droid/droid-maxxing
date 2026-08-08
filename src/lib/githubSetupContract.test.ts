@@ -63,10 +63,10 @@ test('GitHub setup wrappers preserve closed desktop results', async () => {
 });
 
 test('GitHub setup wrapper exposes only the validated device-code string', () => {
-  let desktopHandler: ((payload: { code: string }) => void) | undefined;
+  let desktopHandler: ((payload: unknown) => void) | undefined;
   let unsubscribed = false;
   setDesktopApi({
-    onGithubAuthCode: (handler: (payload: { code: string }) => void) => {
+    onGithubAuthCode: (handler: (payload: unknown) => void) => {
       desktopHandler = handler;
       return () => {
         unsubscribed = true;
@@ -77,6 +77,10 @@ test('GitHub setup wrapper exposes only the validated device-code string', () =>
   const received: string[] = [];
 
   const unsubscribe = functions.onAuthCode!((code) => received.push(code));
+  desktopHandler?.(null);
+  desktopHandler?.({});
+  desktopHandler?.({ code: 42 });
+  desktopHandler?.({ code: 'not-a-device-code' });
   desktopHandler?.({ code: 'ABCD-7HJK' });
   assert.deepEqual(received, ['ABCD-7HJK']);
 

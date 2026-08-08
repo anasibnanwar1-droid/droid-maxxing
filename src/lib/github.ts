@@ -74,7 +74,10 @@ export async function cancelGithubSetup(): Promise<void> {
 export function onGithubAuthCode(handler: (code: string) => void): () => void {
   const api = githubApi();
   if (!api) return () => undefined;
-  return api.onGithubAuthCode(({ code }) => {
+  return api.onGithubAuthCode((payload) => {
+    if (typeof payload !== 'object' || payload === null) return;
+    const code: unknown = Reflect.get(payload, 'code');
+    if (typeof code !== 'string') return;
     if (/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code)) handler(code);
   });
 }

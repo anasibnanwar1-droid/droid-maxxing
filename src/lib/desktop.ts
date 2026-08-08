@@ -150,7 +150,7 @@ export type NotifyResult =
       message?: string;
     };
 
-export type NotificationPermissionResult = 'granted' | 'denied' | 'unsupported';
+export type NotificationPermissionResult = 'granted' | 'denied' | 'default' | 'unsupported';
 
 interface DroidControlApi {
   bridgeInfo: () => Promise<BridgeInfo>;
@@ -203,7 +203,7 @@ interface DroidControlApi {
   githubInstall: () => Promise<GithubSetupResult>;
   githubAuthenticate: () => Promise<GithubSetupResult>;
   githubCancelSetup: () => Promise<{ ok: true }>;
-  onGithubAuthCode: (handler: (payload: { code: string }) => void) => () => void;
+  onGithubAuthCode: (handler: (payload: unknown) => void) => () => void;
   githubDetectPr: (dir: string, options: { branch?: string }) => Promise<DetectPrResult>;
   githubPrChecks: (dir: string, options: { prNumber: number }) => Promise<PrChecksResult>;
   githubPrComments: (dir: string, options: { prNumber: number }) => Promise<PrCommentsResult>;
@@ -346,7 +346,8 @@ export async function requestNotificationPermission(): Promise<NotificationPermi
   if (Notification.permission === 'denied') return 'denied';
   try {
     const permission = await Notification.requestPermission();
-    return permission === 'granted' ? 'granted' : 'denied';
+    if (permission === 'granted' || permission === 'denied') return permission;
+    return 'default';
   } catch {
     return 'unsupported';
   }

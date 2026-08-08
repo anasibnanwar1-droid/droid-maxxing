@@ -309,7 +309,7 @@ function registerIpc() {
   });
   ipcMain.handle('github-authenticate', (event) => {
     assertMainRenderer(event);
-    return githubVcs.authenticate(openExternal, {
+    return githubVcs.authenticate({
       onDeviceCode: (code) => {
         if (!event.sender.isDestroyed()) event.sender.send('github-auth-code', { code });
       },
