@@ -63,7 +63,11 @@ Reducer tests prove all current sessions become read without changing unrelated 
 
 ## Sentry user-report delivery
 
-The report identifier is traced through each boundary before changing code:
+The trace confirmed that the current success state is weaker than the UI claims. DROIDEX creates the `RPT-...` receipt locally, sends a raw `info` message event, treats any HTTP 2xx as success, and ignores Sentry's response body and event ID. The receipt therefore proves only that the envelope endpoint accepted the request; it does not prove that the report became a discoverable Sentry Issue.
+
+The hotfix preserves the local receipt for user support correlation but restores an error/exception-shaped manual-report event so reports enter the Sentry Issues workflow. Delivery parses Sentry's JSON acknowledgment and requires its event ID to match the submitted event ID before the UI reports success. A missing, malformed, or mismatched acknowledgment is a failed submission and keeps the report available for retry.
+
+The report path remains verified across each boundary:
 
 1. Renderer form validation and submit result.
 2. Preload/IPC serialization.
@@ -71,9 +75,7 @@ The report identifier is traced through each boundary before changing code:
 4. HTTP response status and response body handling.
 5. The receipt shown to the user and any Sentry event identifier available from ingestion.
 
-The investigation must distinguish a local DROIDEX receipt from Sentry's event identity. A local receipt is not proof of ingestion. The implementation change is limited to the first boundary shown to lose, reject, or misrepresent the report. The regression test reproduces that exact failure and proves the UI cannot claim success unless the transport receives an accepted Sentry response.
-
-If repository evidence cannot identify the failing boundary, this hotfix adds safe diagnostic correlation without payload contents or secrets and reports the Sentry item as pending rather than guessing. No authenticated Sentry query or production test report is sent without separate authorization.
+Tests cover a matching acknowledgment, missing response ID, malformed response, mismatched ID, non-2xx response, and the error/exception payload contract. Documentation calls this result “accepted by Sentry,” not durable storage or indexing confirmation. The release configuration also validates the expected public DSN host and project identifier so a build cannot silently target another project. No authenticated Sentry query or production test report is sent without separate authorization.
 
 ## Compatibility and release safety
 
