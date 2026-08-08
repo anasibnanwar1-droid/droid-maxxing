@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { notify } from '../lib/desktop';
+import { notify, requestNotificationPermission, type NotifyResult } from '../lib/desktop';
 import {
   FINISH_NOTIFICATION_TEST_ACTION,
   FINISH_NOTIFICATION_TOGGLES,
@@ -22,6 +22,19 @@ function rowMatches(label: string, description: string, query: string): boolean 
   return `${label} ${description}`.toLowerCase().includes(q);
 }
 
+function notificationFailureMessage(result: Exclude<NotifyResult, { shown: true }>): string {
+  if (result.reason === 'permission_denied') {
+    return 'Notifications are disabled for DROIDEX. Enable them in macOS System Settings.';
+  }
+  if (result.reason === 'unsupported') {
+    return 'Desktop notifications are unavailable in this DROIDEX environment.';
+  }
+  if (result.reason === 'timeout') {
+    return 'DROIDEX could not confirm the notification. Check macOS notification settings.';
+  }
+  return result.message ?? 'macOS could not show the notification. Check notification settings.';
+}
+
 export function NotificationsSettings({ highlightQuery = '' }: { highlightQuery?: string }) {
   const [settings, setSettings] = useState<FinishNotificationSettings>(() =>
     loadFinishNotificationSettings(),
@@ -32,13 +45,43 @@ export function NotificationsSettings({ highlightQuery = '' }: { highlightQuery?
     setSettings((prev) => saveFinishNotificationSettings({ ...prev, [key]: value }));
   };
 
+  const enableNotifications = async () => {
+    const permission = await requestNotificationPermission();
+    if (permission !== 'granted') {
+      toast.error(
+        permission === 'denied'
+          ? 'Notifications are disabled for DROIDEX. Enable them in macOS System Settings.'
+          : 'Desktop notifications are unavailable in this DROIDEX environment.',
+      );
+      return;
+    }
+    update('enabled', true);
+  };
+
   const sendTest = async () => {
     setTesting(true);
     try {
-      await notify('DROIDEX', 'Test notification — turn finished snippet looks like this.', {
-        silent: !settings.playSound,
-      });
-      toast.info('Test notification sent. Check Notification Center if you missed it.');
+      const permission = await requestNotificationPermission();
+      if (permission !== 'granted') {
+        toast.error(
+          permission === 'denied'
+            ? 'Notifications are disabled for DROIDEX. Enable them in macOS System Settings.'
+            : 'Desktop notifications are unavailable in this DROIDEX environment.',
+        );
+        return;
+      }
+      const result = await notify(
+        'DROIDEX',
+        'Test notification — turn finished snippet looks like this.',
+        {
+          silent: !settings.playSound,
+        },
+      );
+      if (result.shown) {
+        toast.info('Test notification shown.');
+      } else {
+        toast.error(notificationFailureMessage(result));
+      }
     } catch {
       toast.error(
         'Could not show a notification. Check system notification permissions for Electron/DROIDEX.',
@@ -89,7 +132,11 @@ export function NotificationsSettings({ highlightQuery = '' }: { highlightQuery?
                 checked={settings[key]}
                 disabled={needsMaster && !settings.enabled}
                 onChange={(value) => {
-                  update(key, value);
+                  if (key === 'enabled' && value) {
+                    void enableNotifications();
+                  } else {
+                    update(key, value);
+                  }
                 }}
               />
             </div>

@@ -4,13 +4,13 @@ const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 
-function loadApi() {
+function loadApi(invokeResult) {
   const calls = [];
   let api;
   const ipcRenderer = {
     invoke(channel, payload) {
       calls.push({ channel, payload });
-      return Promise.resolve();
+      return Promise.resolve(invokeResult);
     },
     on() {},
     removeListener() {},
@@ -31,6 +31,21 @@ function loadApi() {
   });
   return { api, calls };
 }
+
+test('notification IPC returns the main-process delivery result unchanged', async () => {
+  const expected = { shown: false, reason: 'failed', message: 'disabled' };
+  const { api, calls } = loadApi(expected);
+
+  assert.deepEqual(
+    await api.notify('DROIDEX', 'Finished', { silent: true, appSessionId: 'app-1' }),
+    expected,
+  );
+  assert.equal(calls[0].channel, 'notify');
+  assert.equal(calls[0].payload.title, 'DROIDEX');
+  assert.equal(calls[0].payload.body, 'Finished');
+  assert.equal(calls[0].payload.silent, true);
+  assert.equal(calls[0].payload.appSessionId, 'app-1');
+});
 
 test('native browser IPC carries browserSessionId', async () => {
   const { api, calls } = loadApi();

@@ -141,13 +141,23 @@ export interface NotifyOptions {
   appSessionId?: string;
 }
 
+export type NotifyResult =
+  | { shown: true }
+  | {
+      shown: false;
+      reason: 'unsupported' | 'permission_denied' | 'failed' | 'timeout';
+      message?: string;
+    };
+
+export type NotificationPermissionResult = 'granted' | 'denied' | 'unsupported';
+
 interface DroidControlApi {
   bridgeInfo: () => Promise<BridgeInfo>;
   pickDirectory: () => Promise<string | null>;
   pickFiles: () => Promise<string[]>;
   saveImage: (dataUrl: string) => Promise<string>;
   discardImage: (path: string) => Promise<void>;
-  notify: (title: string, body: string, options?: NotifyOptions) => Promise<void>;
+  notify: (title: string, body: string, options?: NotifyOptions) => Promise<NotifyResult>;
   onNotificationActivate: (handler: (payload: { appSessionId: string }) => void) => () => void;
   takePendingNotificationSession: () => Promise<{ appSessionId: string } | null>;
   ackNotificationActivate: (appSessionId: string) => Promise<{ ok: boolean }>;
@@ -319,10 +329,22 @@ export async function notify(
   title: string,
   body: string,
   options: NotifyOptions = {},
-): Promise<void> {
+): Promise<NotifyResult> {
   const api = desktopApi();
-  if (!api) return;
-  await api.notify(title, body, options);
+  if (!api) return { shown: false, reason: 'unsupported' };
+  return api.notify(title, body, options);
+}
+
+export async function requestNotificationPermission(): Promise<NotificationPermissionResult> {
+  if (typeof Notification === 'undefined') return 'unsupported';
+  if (Notification.permission === 'granted') return 'granted';
+  if (Notification.permission === 'denied') return 'denied';
+  try {
+    const permission = await Notification.requestPermission();
+    return permission === 'granted' ? 'granted' : 'denied';
+  } catch {
+    return 'unsupported';
+  }
 }
 
 /** Subscribe to notification clicks that should open a specific chat. */
