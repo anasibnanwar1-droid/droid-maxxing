@@ -412,6 +412,49 @@ test('a report body mentioning statuses or task ids is not misparsed', () => {
   assert.equal(normalized?.childSession?.toolUseId, 'tool-1');
 });
 
+test('a CRLF poll body cannot settle a child that reported no status', () => {
+  const normalized = normalizeStreamEvent('app-session-1', 'app-session-1', 'primary', {
+    type: 'tool_result',
+    toolName: 'TaskOutput',
+    toolUseId: 'poll-1',
+    // The header ends at the blank line, CRLF or not; the body's own
+    // "Status: completed" line belongs to the subagent's report.
+    content:
+      'Task ID: 7d32cc8f-77d5\r\nSubagent Type: Worker\r\nDuration: 12.0s\r\n\r\nStatus: completed\r\nstill reading',
+    isError: false,
+  } as never);
+
+  assert.equal(normalized?.childSession?.providerSessionId, '7d32cc8f-77d5');
+  assert.equal(normalized?.childSession?.done, false);
+  assert.equal(normalized?.childSession?.activity?.preview, 'still reading');
+});
+
+test('only Task-family results can describe a subagent', () => {
+  const shellOutput = normalizeStreamEvent('app-session-1', 'app-session-1', 'primary', {
+    type: 'tool_result',
+    toolName: 'Bash',
+    toolUseId: 'bash-1',
+    // A log, a paste, or a grep hit can open with these exact lines; treating it
+    // as a poll would mint a phantom running subagent nobody spawned.
+    content: 'Task ID: not-a-subagent\nStatus: running\n',
+    isError: false,
+  } as never);
+
+  assert.equal(shellOutput?.childSession, undefined);
+  assert.equal(shellOutput?.transcript?.kind, 'tool_result');
+
+  // A result whose tool name never made it through still parses: dropping those
+  // would lose real subagent completions.
+  const unnamed = normalizeStreamEvent('app-session-1', 'app-session-1', 'primary', {
+    type: 'tool_result',
+    toolUseId: 'poll-1',
+    content: 'Task ID: 7d32cc8f-77d5\nStatus: completed\n',
+    isError: false,
+  } as never);
+  assert.equal(unnamed?.childSession?.providerSessionId, '7d32cc8f-77d5');
+  assert.equal(unnamed?.childSession?.done, true);
+});
+
 test('ignores TaskOutput poll progress that lacks spawn params', () => {
   const normalized = normalizeStreamEvent('app-session-1', 'app-session-1', 'primary', {
     type: 'tool_progress',

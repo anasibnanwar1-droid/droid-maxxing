@@ -8,6 +8,12 @@ export function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
+// Untyped JSON carries "absent" as both a missing key and a blank string; this
+// collapses the two so callers can treat any result as real content.
+export function trimmedString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
 export function numberValue(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }

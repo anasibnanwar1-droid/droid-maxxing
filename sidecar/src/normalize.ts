@@ -13,8 +13,16 @@ import type {
   PermissionRequest,
   ProgressEntry,
   TranscriptEvent,
-  ChildActivity,
 } from './protocol.js';
+import { trimmedString as str } from './values.js';
+import {
+  detectChildSession,
+  isTaskToolName,
+  slimChildSessionArgs,
+  taskPrompt,
+  taskResultChildUpdate,
+  type ChildSessionSignal,
+} from './subagentSignals.js';
 
 let seq = 0;
 const nextId = () => `${Date.now().toString(36)}-${(seq++).toString(36)}`;
@@ -81,28 +89,9 @@ export interface NormalizedEvent {
     providerSessionId: string;
     exitCode?: number;
   };
-  childSession?: {
-    providerSessionId?: string;
-    toolUseId?: string;
-    label?: string;
-    prompt?: string;
-    done?: boolean;
-    activity?: ChildActivity;
-  };
+  childSession?: ChildSessionSignal;
   tokens?: { tokensIn: number; tokensOut: number; contextTokens?: number };
   done?: boolean;
-}
-
-function str(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
-}
-
-function taskPrompt(input: Record<string, unknown>): string | undefined {
-  for (const key of ['prompt', 'task', 'instructions', 'message', 'description', 'input']) {
-    const value = str(input[key]);
-    if (value) return value;
-  }
-  return undefined;
 }
 
 function toolUseIdFrom(...values: unknown[]): string | undefined {
@@ -111,121 +100,6 @@ function toolUseIdFrom(...values: unknown[]): string | undefined {
     if (id) return id;
   }
   return undefined;
-}
-
-// The SDK subagent spawn is the `Task` tool. Match it as a whole word so
-// unrelated tools whose names merely contain "task" (e.g. `create_task`) are
-// never mistaken for a subagent.
-const isTaskToolName = (name: unknown): boolean =>
-  typeof name === 'string' && /\btask\b/i.test(name);
-
-// A standard chat can spawn Factory subagents via the Task tool; those surface
-// as ToolProgress events carrying raw `subagentSessionId` metadata.
-function detectChildSession(
-  toolName: unknown,
-  input: Record<string, unknown>,
-  providerSessionId: string | undefined,
-  toolUseId: string | undefined,
-): NormalizedEvent['childSession'] | undefined {
-  const isTask =
-    isTaskToolName(toolName) ||
-    typeof input.subagent_type === 'string' ||
-    typeof input.subagentType === 'string';
-  if (!isTask && !providerSessionId) return undefined;
-  const label =
-    str(input.subagent_type) ??
-    str(input.subagentType) ??
-    str(input.description) ??
-    (typeof toolName === 'string' ? toolName : undefined);
-  return { providerSessionId, toolUseId, label, prompt: taskPrompt(input) };
-}
-
-// The primary session's Task tool_call carries the entire subagent prompt in its
-// input. That prompt belongs in the subagent's own pane, not the main feed, so
-// we keep only the lightweight label fields on the transcript copy.
-function slimChildSessionArgs(input: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const key of ['subagent_type', 'subagentType', 'description']) {
-    if (typeof input[key] === 'string') out[key] = input[key];
-  }
-  return out;
-}
-
-interface TaskResultChildUpdate {
-  providerSessionId: string;
-  done: boolean;
-  // Spawn results (the foreground final result, or the background
-  // "Task launched" acknowledgement) are keyed by the spawning tool_use id, so
-  // the observation may carry it as the child's spawn link. Poll/notification
-  // results ("Task ID: … Status: …") belong to a *different* tool_use; their id
-  // must never become the child's spawn link.
-  isSpawnResult: boolean;
-  // What the subagent is doing right now, as reported by a poll. Autonomous
-  // children stream no transcript to the parent, so a poll's status line is the
-  // only live activity signal the parent ever sees.
-  activity?: ChildActivity;
-}
-
-// The report's own field lines describe the task, not what it is doing; a body
-// that is still empty must yield no preview rather than "Duration: 12.0s".
-const POLL_HEADER_FIELD =
-  /^(Task ID|Subagent Type|Description|Status|Duration|Output|Result|Error):/i;
-
-// The poll body is a header block followed by whatever the subagent has produced
-// so far. The last non-header line is the closest thing to "what it is doing".
-function pollActivity(content: string, status: string | undefined): ChildActivity | undefined {
-  const phase = status ? status[0].toUpperCase() + status.slice(1) : undefined;
-  const lines = content.split('\n');
-  let preview: string | undefined;
-  for (let i = lines.length - 1; i >= 0; i -= 1) {
-    const line = lines[i].trim();
-    if (!line || POLL_HEADER_FIELD.test(line)) continue;
-    preview = line.length > 160 ? `${line.slice(0, 159)}…` : line;
-    break;
-  }
-  if (!phase && !preview) return undefined;
-  return { ...(phase ? { phase } : {}), ...(preview ? { preview } : {}) };
-}
-
-const TERMINAL_POLL_STATUS = new Set(['completed', 'failed', 'stopped', 'cancelled']);
-
-const LAUNCH_ID_RE = /^(?:session_id|task_id):[ \t]*(\S+)[ \t]*\r?$/m;
-const SPAWN_FINAL_RE = /^session_id:[ \t]*(\S+)[ \t]*$/;
-const POLL_ID_RE = /^Task ID:[ \t]*(\S+)[ \t]*$/;
-const POLL_STATUS_RE = /^Status:[ \t]*(\w+)[ \t]*\r?$/im;
-
-// Subagent Task-family results arrive in three content shapes, told apart by
-// their FIRST line (the report body itself may mention task ids or statuses):
-//   foreground final:  "session_id: <id>\n\n<output>"
-//   background launch: "Task launched in background.\ntask_id: <id>\nsession_id: <id>\n…"
-//   poll/completion:   "Task ID: <id>\nSubagent Type: …\nStatus: running|completed|…\n…"
-function taskResultChildUpdate(content: unknown): TaskResultChildUpdate | undefined {
-  if (typeof content !== 'string') return undefined;
-  // The header is the field block before the first blank line. Bounding it by
-  // structure rather than a character budget keeps a long Description from
-  // pushing the Status line out of range and making a running task look done.
-  const blankLine = content.indexOf('\n\n');
-  const header = blankLine === -1 ? content : content.slice(0, blankLine);
-  const firstLine = header.split('\n', 1)[0].replace(/\r$/, '');
-  if (firstLine.startsWith('Task launched in background')) {
-    const providerSessionId = LAUNCH_ID_RE.exec(header)?.[1];
-    return providerSessionId ? { providerSessionId, done: false, isSpawnResult: true } : undefined;
-  }
-  const spawnFinal = SPAWN_FINAL_RE.exec(firstLine);
-  if (spawnFinal) return { providerSessionId: spawnFinal[1], done: true, isSpawnResult: true };
-  const poll = POLL_ID_RE.exec(firstLine);
-  if (!poll) return undefined;
-  const status = POLL_STATUS_RE.exec(header)?.[1]?.toLowerCase();
-  const activity = pollActivity(content, status);
-  return {
-    providerSessionId: poll[1],
-    // Only a reported terminal status settles the child: a poll that reports no
-    // status says nothing about completion, and assuming it finished would stop
-    // the clock on a subagent that is still working.
-    done: status ? TERMINAL_POLL_STATUS.has(status) : false,
-    isSpawnResult: false,
-    ...(activity ? { activity } : {}),
-  };
 }
 
 // Translate a single SDK stream event into zero-or-one normalized bridge updates.
@@ -338,7 +212,7 @@ export function normalizeStreamEvent(
     case 'tool_result': {
       const isTask = isTaskToolName(ev.toolName);
       const toolUseId = toolUseIdFrom((ev as { toolUseId?: string }).toolUseId, eventToolUseId);
-      const taskUpdate = ev.isError ? undefined : taskResultChildUpdate(ev.content);
+      const taskUpdate = ev.isError ? undefined : taskResultChildUpdate(ev.toolName, ev.content);
       const resultProviderSessionId = subagentSessionId ?? taskUpdate?.providerSessionId;
       const resultTranscript = () =>
         transcript(appSessionId, sourceProviderSessionId, role, 'tool_result', {
