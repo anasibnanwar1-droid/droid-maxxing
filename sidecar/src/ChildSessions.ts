@@ -20,6 +20,7 @@ import {
   findChildByProvider,
   findChildBySpawn,
   persistedChild,
+  restoredChildStatus,
   type ChildIdentity,
   type ChildOpenAttempt,
   type ChildRuntimeState,
@@ -70,8 +71,10 @@ export class ChildSessions {
 
   list(parentAppSessionId: string): ChildSessionSummary[] {
     const parent = this.parents.get(parentAppSessionId);
-    const children = parent?.children.values() ?? this.d.history.childSessions(parentAppSessionId);
-    return [...children].map(childSummary);
+    if (parent) return [...parent.children.values()].map(childSummary);
+    return this.d.history
+      .childSessions(parentAppSessionId)
+      .map((record) => childSummary({ ...record, status: restoredChildStatus(record.status) }));
   }
 
   admitChildObservation(observation: ChildSpawnObservation): ChildIdentity | undefined {
@@ -477,7 +480,11 @@ export class ChildSessions {
       child.modelId = settings.modelId;
       child.reasoningEffort = settings.reasoningEffort;
       child.autonomy = actual.autonomy;
-      child.status = 'paused';
+      // Opening a runtime is how the app *watches* a child. A child the harness
+      // is still driving (a background Task) keeps working while we mirror it,
+      // so observing it must not report it as idle; only a turn we drive, an
+      // interrupt, or a settlement may settle its status.
+      if (child.status !== 'running') child.status = 'paused';
       child.transcriptAvailable = true;
       let active: ChildAutomaticCompactionTarget | undefined;
       runtime.unsubscribe = loaded.onNotification((note: Record<string, unknown>) => {

@@ -107,11 +107,21 @@ export function childSettingsFromInit(init: SessionInitResult): ChildSettings {
   };
 }
 
+/** Nothing in this process is driving a child that comes back from history: the
+    session that was streaming it died with the lease that persisted it, so a
+    stored 'running' would read as work in flight forever. */
+export function restoredChildStatus(
+  status: PersistedChildSession['status'],
+): PersistedChildSession['status'] {
+  return status === 'running' ? 'paused' : status;
+}
+
 export function childStateFromRecord(record: PersistedChildSession): ChildSessionState {
   const { parentAppSessionId, childSessionId, updatedAt: _updatedAt, ...persisted } = record;
   return {
     identity: childIdentity(parentAppSessionId, childSessionId),
     ...persisted,
+    status: restoredChildStatus(persisted.status),
     runtimeGeneration: 1,
     configurationGeneration: 1,
     retiredProviderSessionIds: new Set(),

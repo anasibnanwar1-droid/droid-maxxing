@@ -450,6 +450,56 @@ test('poll observations never rekey a child away from its spawn link', () => {
   assert.equal(children[0]?.status, 'running');
 });
 
+test('opening a child the harness is still driving keeps it running', async () => {
+  const record = childRecord('child', 'provider');
+  const h = createHarness([record]);
+  // The parent spawned this child through Task, so the harness drives it; the
+  // app has no runtime for it until someone opens it to watch.
+  h.owner.admitChildObservation({
+    parentAppSessionId: h.parentId,
+    providerSessionId: record.providerSessionId,
+    role: 'worker',
+    spawnLink: record.spawnLink,
+    label: 'worker',
+  });
+  assert.equal(h.owner.list(h.parentId)[0]?.status, 'running');
+
+  await h.open(record);
+
+  assert.equal(
+    h.events.some(
+      (event) =>
+        event.type === 'child.updated' &&
+        event.requestId === 'open-child' &&
+        event.access === 'ready',
+    ),
+    true,
+  );
+  assert.equal(h.owner.list(h.parentId)[0]?.status, 'running');
+});
+
+test('a child restored as running reports idle until work is observed again', async () => {
+  const attached = { ...childRecord('child', 'provider'), status: 'running' as const };
+  const detached = {
+    ...childRecord('other-child', 'other-provider'),
+    parentAppSessionId: 'other-parent',
+    status: 'running' as const,
+  };
+  const h = createHarness([attached, detached]);
+
+  assert.equal(h.owner.list(h.parentId)[0]?.status, 'paused');
+  assert.equal(h.owner.list('other-parent')[0]?.status, 'paused');
+
+  h.owner.admitChildObservation({
+    parentAppSessionId: h.parentId,
+    providerSessionId: attached.providerSessionId,
+    role: 'worker',
+    spawnLink: attached.spawnLink,
+  });
+
+  assert.equal(h.owner.list(h.parentId)[0]?.status, 'running');
+});
+
 test('completed child under a live parent opens only as history', async () => {
   const record = { ...childRecord('child', 'provider'), status: 'completed' as const };
   const h = createHarness([record]);
