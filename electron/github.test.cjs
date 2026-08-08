@@ -1,6 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { normalizePrComments, prComments, prSelector } = require('./github.cjs');
+const {
+  normalizePrComments,
+  prComments,
+  prSelector,
+  resolveGhExecutable,
+} = require('./github.cjs');
 
 const ghResult = (overrides = {}) => ({
   code: 0,
@@ -8,6 +13,75 @@ const ghResult = (overrides = {}) => ({
   stderr: '',
   spawnFailed: false,
   ...overrides,
+});
+
+test('resolves Homebrew gh under a Finder-style PATH', async () => {
+  const probes = [];
+  const executable = await resolveGhExecutable({
+    env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', SHELL: '/bin/zsh' },
+    access: async (candidate) => {
+      if (candidate !== '/opt/homebrew/bin/gh') {
+        throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+      }
+    },
+    runFile: async (file, args) => {
+      probes.push([file, args]);
+      return ghResult({ stdout: 'gh version 2.78.0' });
+    },
+  });
+
+  assert.equal(executable, '/opt/homebrew/bin/gh');
+  assert.deepEqual(probes, [['/opt/homebrew/bin/gh', ['--version']]]);
+});
+
+test('prefers PATH and validates the executable before common locations', async () => {
+  const candidates = [];
+  const executable = await resolveGhExecutable({
+    env: { PATH: '/custom/bin:/usr/bin', SHELL: '/bin/zsh' },
+    access: async (candidate) => {
+      candidates.push(candidate);
+      if (candidate !== '/custom/bin/gh') throw new Error('unexpected candidate');
+    },
+    runFile: async () => ghResult({ stdout: 'gh version 2.78.0' }),
+  });
+
+  assert.equal(executable, '/custom/bin/gh');
+  assert.deepEqual(candidates, ['/custom/bin/gh']);
+});
+
+test('uses the fixed login-shell lookup last and returns null when it is invalid', async () => {
+  const shellCalls = [];
+  const executable = await resolveGhExecutable({
+    env: { PATH: '/usr/bin:/bin', SHELL: '/bin/zsh' },
+    access: async () => {
+      throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+    },
+    runFile: async (file, args) => {
+      shellCalls.push([file, args]);
+      return ghResult({ stdout: '/custom/login/bin/gh\n' });
+    },
+  });
+
+  assert.equal(executable, null);
+  assert.deepEqual(shellCalls, [['/bin/zsh', ['-lc', 'command -v gh']]]);
+});
+
+test('discovers gh from the configured login shell after common paths fail', async () => {
+  const executable = await resolveGhExecutable({
+    env: { PATH: '/usr/bin:/bin', SHELL: '/bin/zsh' },
+    access: async (candidate) => {
+      if (candidate !== '/custom/login/bin/gh') throw new Error('missing');
+    },
+    runFile: async (file, args) => {
+      if (file === '/bin/zsh') {
+        assert.deepEqual(args, ['-lc', 'command -v gh']);
+        return ghResult({ stdout: '/custom/login/bin/gh\n' });
+      }
+      return ghResult({ stdout: 'gh version 2.78.0' });
+    },
+  });
+
+  assert.equal(executable, '/custom/login/bin/gh');
 });
 
 test('PR selectors accept only bare positive digit strings', () => {
