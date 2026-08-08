@@ -106,7 +106,8 @@ function createDiagnostics(options) {
       event_id: eventId,
       timestamp: (options.now?.() ?? new Date()).toISOString(),
       message: normalized.description,
-      level: 'info',
+      level: 'error',
+      exception: manualFeedbackException(normalized.description),
       platform: 'javascript',
       release: `droidex@${options.app.getVersion()}`,
       environment: options.app.isPackaged ? 'production' : 'development',
@@ -304,6 +305,9 @@ function scrubManualFeedbackEvent(event) {
     tags,
     user: event.user?.id ? { id: event.user.id } : undefined,
   };
+  if (event.level === 'error' && typeof event.message === 'string') {
+    sanitized.exception = manualFeedbackException(event.message);
+  }
   if (event.extra && typeof event.extra === 'object') {
     const filtered = Object.fromEntries(
       Object.entries(event.extra).filter(([key]) => MANUAL_FEEDBACK_EXTRA_KEYS.has(key)),
@@ -317,6 +321,18 @@ function scrubManualFeedbackEvent(event) {
     if (Object.keys(filtered).length > 0) sanitized.contexts = sanitizeAttachmentData(filtered);
   }
   return sanitized;
+}
+
+function manualFeedbackException(description) {
+  return {
+    values: [
+      {
+        type: 'UserSubmittedReport',
+        value: description,
+        mechanism: { type: 'droidex.feedback', handled: true },
+      },
+    ],
+  };
 }
 
 function sanitizeAttachmentData(data) {
@@ -436,6 +452,22 @@ async function deliverFeedbackEvent(event, options) {
       `Feedback delivery was rejected by Sentry (${String(response.status)}). Try again.`,
     );
   }
+
+  let acknowledgment;
+  try {
+    acknowledgment = await response.json();
+  } catch {
+    throw new Error('Sentry did not acknowledge this report. Try again.');
+  }
+  const acknowledgedEventId = acknowledgment?.id;
+  if (
+    typeof acknowledgedEventId !== 'string' ||
+    !/^[a-f0-9]{32}$/.test(acknowledgedEventId) ||
+    acknowledgedEventId !== event.event_id
+  ) {
+    throw new Error('Sentry did not acknowledge this report. Try again.');
+  }
+  return { eventId: acknowledgedEventId };
 }
 
 module.exports = {

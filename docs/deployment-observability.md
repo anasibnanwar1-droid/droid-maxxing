@@ -166,8 +166,11 @@ Sentry captures uncaught main/renderer/native crashes and sidecar exits. The
 `/bug` and `/feedback` composer commands open the private feedback form. A
 successful submission creates a sortable `RPT-…` report ID that remains visible
 and copyable until the user dismisses the receipt. DROIDEX shows that receipt
-only after Sentry ingestion returns HTTP 2xx; network failures, timeouts, rate
-limits, and server errors keep the form open with its entered details for retry.
+only after Sentry returns the same event ID that DROIDEX submitted. This confirms
+that Sentry accepted the envelope, not that it has already been indexed or shown
+in a particular Issues filter. Missing or mismatched acknowledgments, network
+failures, timeouts, rate limits, and server errors keep the form open with its
+entered details for retry.
 
 Manual reports use an explicit payload allowlist. They contain the details and
 category selected by the user, the report ID, a stable pseudonymous `USR-…`

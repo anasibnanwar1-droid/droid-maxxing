@@ -16,6 +16,7 @@ const unsignedPreflightSource = require('node:fs').readFileSync(
   join(__dirname, '..', 'tools', 'check-unsigned-release.mjs'),
   'utf8',
 );
+const canonicalSentryDsn = 'https://public@o4511166732304384.ingest.de.sentry.io/4511850999185488';
 
 const configPath = require.resolve('../electron-builder.config.cjs');
 const appleEnvironmentKeys = [
@@ -127,7 +128,7 @@ test('release builds emit canonical update artifacts', () => {
     APPLE_API_KEY: '/tmp/AuthKey.p8',
     APPLE_API_KEY_ID: 'KEYID',
     APPLE_API_ISSUER: 'ISSUER',
-    SENTRY_DSN: 'https://public@example.invalid/1',
+    SENTRY_DSN: canonicalSentryDsn,
   });
 
   assert.equal(config.forceCodeSigning, true);
@@ -158,17 +159,36 @@ test('release builds require crash reporting configuration', () => {
   );
 });
 
+test('release builds reject a Sentry DSN for another host or project', () => {
+  const releaseEnvironment = {
+    DROIDEX_RELEASE_BUILD: '1',
+    CSC_LINK: 'base64-certificate',
+    APPLE_API_KEY: '/tmp/AuthKey.p8',
+    APPLE_API_KEY_ID: 'KEYID',
+    APPLE_API_ISSUER: 'ISSUER',
+  };
+  for (const dsn of [
+    'https://public@example.invalid/4511850999185488',
+    'https://public@o4511166732304384.ingest.de.sentry.io/999',
+  ]) {
+    assert.throws(
+      () => loadConfig({ ...releaseEnvironment, SENTRY_DSN: dsn }),
+      /canonical Sentry project/,
+    );
+  }
+});
+
 test('unsigned release builds load crash reporting configuration from a protected file', () => {
   const directory = mkdtempSync(join(tmpdir(), 'droidex-builder-config-'));
   const dsnPath = join(directory, 'sentry-dsn');
-  writeFileSync(dsnPath, 'https://public@example.invalid/1\n', { mode: 0o600 });
+  writeFileSync(dsnPath, `${canonicalSentryDsn}\n`, { mode: 0o600 });
 
   try {
     const config = loadConfig({
       DROIDEX_UNSIGNED_RELEASE_BUILD: '1',
       SENTRY_DSN_FILE: dsnPath,
     });
-    assert.equal(config.extraMetadata.sentryDsn, 'https://public@example.invalid/1');
+    assert.equal(config.extraMetadata.sentryDsn, canonicalSentryDsn);
     assert.equal(config.extraMetadata.updateInstallMode, 'sparkle');
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -196,7 +216,7 @@ test('notarization rejects API key data instead of an absolute key path', () => 
         APPLE_API_KEY: 'base64-api-key',
         APPLE_API_KEY_ID: 'KEYID',
         APPLE_API_ISSUER: 'ISSUER',
-        SENTRY_DSN: 'https://public@example.invalid/1',
+        SENTRY_DSN: canonicalSentryDsn,
       }),
     /APPLE_API_KEY must be an absolute .p8 path/,
   );
