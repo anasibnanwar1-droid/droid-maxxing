@@ -220,10 +220,24 @@ export interface PrCommentsResult {
   comments: PrComment[];
 }
 
-export interface GithubAvailability {
-  installed: boolean;
-  authenticated: boolean;
-}
+export type GithubAvailability =
+  | { installed: false; authenticated: false; installMethod: 'homebrew' | 'manual' }
+  | { installed: true; authenticated: boolean; installMethod: null };
+
+export type GithubSetupFailureReason =
+  | 'busy'
+  | 'installer_missing'
+  | 'install_failed'
+  | 'verification_failed'
+  | 'browser_failed'
+  | 'auth_failed'
+  | 'timeout'
+  | 'cancelled'
+  | 'not_desktop';
+
+export type GithubSetupResult =
+  | { ok: true }
+  | { ok: false; reason: GithubSetupFailureReason; message: string };
 
 export interface CreatePrOptions {
   title: string;

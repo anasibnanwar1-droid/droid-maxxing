@@ -385,6 +385,7 @@ type Action =
 
   // UI
   | { type: 'SET_ACTIVE_SESSION'; id: string | null }
+  | { type: 'MARK_ALL_SESSIONS_READ'; seenAt: number }
   | { type: 'SET_RIGHT_PANEL'; open: boolean }
   | {
       type: 'OPEN_UTILITY_TOOL';
@@ -2002,6 +2003,23 @@ function baseReducer(state: AppState, action: Action): AppState {
         // it; never let it fire in another session's panel after a switch.
         reviewFocusPath: action.id === state.activeAppSessionId ? state.reviewFocusPath : null,
       };
+    }
+
+    case 'MARK_ALL_SESSIONS_READ': {
+      const sessionLastSeen = { ...state.sessionLastSeen };
+      let changed = false;
+      for (const appSessionId of state.sessionOrder) {
+        const session = state.sessions[appSessionId];
+        // Persisted renderer state can briefly contain an order entry whose
+        // session was already removed.
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+        if (!session) continue;
+        const seenAt = Math.max(action.seenAt, session.updatedAt);
+        if (sessionLastSeen[appSessionId] === seenAt) continue;
+        sessionLastSeen[appSessionId] = seenAt;
+        changed = true;
+      }
+      return changed ? { ...state, sessionLastSeen } : state;
     }
 
     case 'SET_RIGHT_PANEL':

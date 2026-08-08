@@ -4,6 +4,7 @@ import { DiffStat } from './DiffStat';
 import { BranchMenu } from './BranchMenu';
 import { WorktreeMenu } from './WorktreeMenu';
 import { GitActionsBar } from './GitActionsBar';
+import { GithubSetupCard } from './GithubSetupCard';
 import { PrStateIcon } from './GithubIcons';
 import { openCodebase } from '../EditorOpenMenu';
 import { prKind } from '../../lib/github';
@@ -13,8 +14,10 @@ import type {
   GitDiffStat,
   GitEnvironment,
   GitWorktree,
+  GithubAvailability,
   PullRequest,
 } from '../../types/vcs';
+import type { GithubSetupAction } from '../../hooks/useGithubSetup';
 
 function basename(value: string): string {
   return value.split(/[\\/]/).filter(Boolean).pop() ?? '';
@@ -30,6 +33,17 @@ export function EnvironmentSection({
   onDiffModeChange,
   refresh,
   live,
+  githubAvailability,
+  githubAction,
+  githubError,
+  githubManualGuideOpened,
+  githubAuthCode,
+  githubAuthPopoverOpen,
+  githubReady,
+  onGithubSetupAction,
+  onShowGithubAuthPrompt,
+  onCloseGithubAuthPrompt,
+  onCancelGithubAuthentication,
   pr,
   onOpenPr,
   onOpenReview,
@@ -44,6 +58,17 @@ export function EnvironmentSection({
   onDiffModeChange: (mode: DiffStatMode) => void;
   refresh: () => void;
   live: boolean;
+  githubAvailability: GithubAvailability | null;
+  githubAction: GithubSetupAction;
+  githubError: string | null;
+  githubManualGuideOpened: boolean;
+  githubAuthCode: string | null;
+  githubAuthPopoverOpen: boolean;
+  githubReady: boolean;
+  onGithubSetupAction: () => void;
+  onShowGithubAuthPrompt: () => void;
+  onCloseGithubAuthPrompt: () => void;
+  onCancelGithubAuthentication: () => void;
   pr: PullRequest | null;
   onOpenPr: () => void;
   onOpenReview: () => void;
@@ -59,7 +84,9 @@ export function EnvironmentSection({
         icon={<Folders className="h-4 w-4" />}
         label={location}
         title={env?.repoRoot ?? cwd}
-        onClick={() => openCodebase(cwd)}
+        onClick={() => {
+          openCodebase(cwd);
+        }}
       />
 
       {!env ? (
@@ -82,7 +109,7 @@ export function EnvironmentSection({
           <DiffStat
             stat={diffStat}
             mode={diffMode}
-            baseRef={env?.base ?? env?.defaultRef}
+            baseRef={env.base ?? env.defaultRef}
             onModeChange={onDiffModeChange}
             onOpenReview={onOpenReview}
           />
@@ -91,15 +118,31 @@ export function EnvironmentSection({
             env={env}
             branches={branches}
             isGitHub={isGitHub}
-            hasPr={!!pr && (prKind(pr) === 'open' || prKind(pr) === 'draft')}
+            githubReady={githubReady}
+            hasPr={githubReady && !!pr && (prKind(pr) === 'open' || prKind(pr) === 'draft')}
             onChanged={refresh}
             onPrCreated={onPrCreated}
           />
 
-          {pr && (
+          {isGitHub && (
+            <GithubSetupCard
+              availability={githubAvailability}
+              action={githubAction}
+              error={githubError}
+              manualGuideOpened={githubManualGuideOpened}
+              authCode={githubAuthCode}
+              isAuthPopoverOpen={githubAuthPopoverOpen}
+              onPrimaryAction={onGithubSetupAction}
+              onShowAuthPrompt={onShowGithubAuthPrompt}
+              onCloseAuthPrompt={onCloseGithubAuthPrompt}
+              onCancelAuthentication={onCancelGithubAuthentication}
+            />
+          )}
+
+          {githubReady && pr && (
             <Row
               icon={<PrStateIcon kind={prKind(pr)} size={16} />}
-              label={`#${pr.number} ${pr.title}`}
+              label={`#${String(pr.number)} ${pr.title}`}
               title={`${pr.title} — view checks and comments`}
               onClick={onOpenPr}
               trailing={<ChevronRight className="h-3.5 w-3.5 text-droid-text-muted" />}

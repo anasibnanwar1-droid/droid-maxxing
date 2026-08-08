@@ -168,7 +168,7 @@ export function FeedbackModal({ initialReport, onClose }: FeedbackModalProps) {
               id="feedback-title"
               className="text-[22px] font-semibold tracking-[-0.02em] text-droid-text"
             >
-              Report sent
+              Report accepted
             </h2>
             <p className="mx-auto mt-2 max-w-md text-[13px] leading-5 text-droid-text-secondary">
               Keep this report ID if you need to follow up with support.

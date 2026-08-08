@@ -47,6 +47,10 @@ function diagnosticsOptions(sentry, overrides = {}) {
   };
 }
 
+function acceptedResponse(eventId = '00112233445566778899aabbccddeeff') {
+  return { ok: true, status: 200, json: async () => ({ id: eventId }) };
+}
+
 test('diagnostics identity is stable pseudonymous local state', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'droidex-diagnostics-'));
   const filePath = path.join(dir, 'diagnostics.json');
@@ -175,7 +179,7 @@ test('manual feedback uses a report-scoped identity while automatic diagnostics 
               : identityFs.readFile(),
           writeFile: async (filePath) => writes.push(filePath),
         },
-        fetch: async () => ({ ok: true, status: 200 }),
+        fetch: async () => acceptedResponse(),
       },
     ),
   );
@@ -229,7 +233,7 @@ test('manual feedback carries a report id and explicit technical diagnostics', a
       {
         fetch: async (url, request) => {
           requests.push({ url, request });
-          return { ok: true, status: 200 };
+          return acceptedResponse();
         },
       },
     ),
@@ -254,7 +258,16 @@ test('manual feedback carries a report id and explicit technical diagnostics', a
   const event = JSON.parse(envelopeBody.split('\n')[2]);
   assert.equal(event.event_id, '00112233445566778899aabbccddeeff');
   assert.equal(event.message, 'update button froze');
-  assert.equal(event.level, 'info');
+  assert.equal(event.level, 'error');
+  assert.deepEqual(event.exception, {
+    values: [
+      {
+        type: 'UserSubmittedReport',
+        value: 'update button froze',
+        mechanism: { type: 'droidex.feedback', handled: true },
+      },
+    ],
+  });
   assert.deepEqual(event.tags, {
     report_kind: 'manual_feedback',
     report_id: 'RPT-20260803-A1B2C3D4E5F6',
@@ -282,6 +295,20 @@ test('manual feedback rejects non-2xx Sentry responses', async () => {
     await assert.rejects(
       () => diagnostics.reportFeedback({ category: 'other', description: 'Useful details' }),
       new RegExp(`rejected by Sentry \\(${String(status)}\\)`),
+    );
+  }
+});
+
+test('manual feedback requires Sentry to acknowledge the submitted event id', async () => {
+  for (const response of [
+    { ok: true, status: 200, json: async () => ({}) },
+    { ok: true, status: 200, json: async () => ({ id: 'ffeeddccbbaa99887766554433221100' }) },
+    { ok: true, status: 200, json: async () => Promise.reject(new Error('invalid json')) },
+  ]) {
+    const diagnostics = createDiagnostics(diagnosticsOptions({}, { fetch: async () => response }));
+    await assert.rejects(
+      () => diagnostics.reportFeedback({ category: 'bug', description: 'Useful details' }),
+      /did not acknowledge this report/,
     );
   }
 });
@@ -505,7 +532,7 @@ test('manual feedback with attachments delivers session log and app state in env
       {
         fetch: async (url, request) => {
           requests.push({ url, request });
-          return { ok: true, status: 200 };
+          return acceptedResponse();
         },
       },
     ),
@@ -557,7 +584,7 @@ test('manual feedback with screenshot attaches raw PNG bytes to envelope', async
       {
         fetch: async (url, request) => {
           requests.push({ url, request });
-          return { ok: true, status: 200 };
+          return acceptedResponse();
         },
       },
     ),
@@ -596,7 +623,7 @@ test('manual feedback without attachments omits extra and contexts', async () =>
       {
         fetch: async (url, request) => {
           requests.push({ url, request });
-          return { ok: true, status: 200 };
+          return acceptedResponse();
         },
       },
     ),
@@ -621,7 +648,7 @@ test('manual feedback with all attachments delivers session log, app state, and 
       {
         fetch: async (url, request) => {
           requests.push({ url, request });
-          return { ok: true, status: 200 };
+          return acceptedResponse();
         },
       },
     ),

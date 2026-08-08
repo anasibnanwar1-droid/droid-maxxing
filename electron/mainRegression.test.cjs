@@ -84,6 +84,36 @@ test('manual feedback reports require the trusted renderer', () => {
   assert.match(handler, /diagnostics\.reportFeedback\(report,/);
 });
 
+test('GitHub setup handlers require the trusted renderer and teardown their process', () => {
+  for (const channel of [
+    'github-available',
+    'github-install',
+    'github-authenticate',
+    'github-cancel-setup',
+  ]) {
+    const handlerStart = mainSource.indexOf(`ipcMain.handle('${channel}'`);
+    const handlerEnd = mainSource.indexOf('\n  ipcMain.handle(', handlerStart + 1);
+    assert.notEqual(handlerStart, -1, `missing ${channel} handler`);
+    assert.match(
+      mainSource.slice(handlerStart, handlerEnd),
+      /assertMainRenderer\(event\)/,
+      `${channel} must authorize its sender`,
+    );
+  }
+
+  const authenticateStart = mainSource.indexOf("ipcMain.handle('github-authenticate'");
+  const authenticateEnd = mainSource.indexOf('\n  ipcMain.handle(', authenticateStart + 1);
+  const authenticateHandler = mainSource.slice(authenticateStart, authenticateEnd);
+  assert.match(authenticateHandler, /onDeviceCode/);
+  assert.match(authenticateHandler, /event\.sender\.send\('github-auth-code', \{ code \}\)/);
+
+  assert.match(mainSource, /app\.on\('before-quit',[\s\S]*?githubVcs\.cancelSetup\(\)/);
+  assert.match(
+    mainSource,
+    /const cleanupForRendererReplacement = \(\) => \{[\s\S]*?githubVcs\.cancelSetup\(\)/,
+  );
+});
+
 test('diagnostics initialize before app readiness and preferences require the trusted renderer', () => {
   const initializeAt = mainSource.indexOf(
     'const diagnosticsInitialization = diagnostics.initialize();',

@@ -35,6 +35,7 @@ const { autoUpdater } = require('electron-updater');
 const { createAppUpdater } = require('./appUpdater.cjs');
 const Sentry = require('@sentry/electron/main');
 const { createDiagnostics } = require('./diagnostics.cjs');
+const { showDesktopNotification } = require('./notifications.cjs');
 const APP_NAME = 'DROIDEX';
 const buildMetadata = readBuildMetadata();
 const terminalManager = createTerminalManager();
@@ -122,6 +123,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   sidecarSupervisor.stop();
+  githubVcs.cancelSetup();
   terminalManager.closeAll();
   terminalSubscriptions.clear();
   filesRootAccess.clear();
@@ -231,31 +233,16 @@ function registerIpc() {
       typeof payload.appSessionId === 'string' && payload.appSessionId.trim()
         ? payload.appSessionId.trim().slice(0, 200)
         : null;
-    if (typeof Notification.isSupported === 'function' && !Notification.isSupported()) {
-      console.warn('[notify] Notification API not supported on this platform');
-      return { shown: false, reason: 'unsupported' };
-    }
-    try {
-      // Dock icon is applied on launch / icon settings; reuse that path for the banner.
-      const iconPath = path.join(__dirname, 'assets', resolveAppIconFile(appIconMode));
-      const note = new Notification({
-        title,
-        body,
-        silent,
-        ...(fs.existsSync(iconPath) ? { icon: iconPath } : {}),
-      });
-      const activate = () => {
-        // Queue first so focus/show handlers can re-send if this IPC is dropped.
-        queueNotificationSessionOpen(appSessionId);
-      };
-      note.on('click', activate);
-      note.on('action', activate);
-      note.show();
-      return { shown: true };
-    } catch (err) {
-      console.warn('[notify] failed to show notification', err);
-      return { shown: false, reason: 'error' };
-    }
+    // Dock icon is applied on launch / icon settings; reuse that path for the banner.
+    const iconPath = path.join(__dirname, 'assets', resolveAppIconFile(appIconMode));
+    return showDesktopNotification(Notification, {
+      title,
+      body,
+      silent,
+      ...(fs.existsSync(iconPath) ? { icon: iconPath } : {}),
+      // Queue first so focus/show handlers can re-send if this IPC is dropped.
+      onActivate: () => queueNotificationSessionOpen(appSessionId),
+    });
   });
   // Renderer acks after applying SET_ACTIVE_SESSION so we stop re-delivering.
   ipcMain.handle('notification-activate-ack', (event, payload = {}) => {
@@ -312,7 +299,27 @@ function registerIpc() {
   ipcMain.handle('git-push', (_event, { dir, options }) => gitVcs.push(dir, options));
   ipcMain.handle('git-fetch', (_event, { dir }) => gitVcs.fetchRemotes(dir));
 
-  ipcMain.handle('github-available', () => githubVcs.available());
+  ipcMain.handle('github-available', (event) => {
+    assertMainRenderer(event);
+    return githubVcs.available();
+  });
+  ipcMain.handle('github-install', (event) => {
+    assertMainRenderer(event);
+    return githubVcs.install();
+  });
+  ipcMain.handle('github-authenticate', (event) => {
+    assertMainRenderer(event);
+    return githubVcs.authenticate({
+      onDeviceCode: (code) => {
+        if (!event.sender.isDestroyed()) event.sender.send('github-auth-code', { code });
+      },
+    });
+  });
+  ipcMain.handle('github-cancel-setup', (event) => {
+    assertMainRenderer(event);
+    githubVcs.cancelSetup();
+    return { ok: true };
+  });
   ipcMain.handle('github-detect-pr', (_event, { dir, options }) =>
     githubVcs.detectPr(dir, options),
   );
@@ -624,6 +631,7 @@ function installMainRendererLifecycle(contents) {
   const cleanupForRendererReplacement = () => {
     if (!hasLoadedMainFrame || cleanedForNavigation) return;
     cleanedForNavigation = true;
+    githubVcs.cancelSetup();
     closeRendererOwnedTerminals();
   };
 
