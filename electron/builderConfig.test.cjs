@@ -87,6 +87,21 @@ test('unsigned architecture builds select their matching Sparkle feed', () => {
   assert.equal(config.extraMetadata.sparkleFeedUrl, config.mac.extendInfo.SUFeedURL);
 });
 
+test('existing mac installs keep the stable application and updater identity', () => {
+  const config = loadConfig({});
+
+  assert.equal(config.appId, 'app.droidex');
+  assert.equal(config.productName, 'DROIDEX');
+  assert.equal(config.mac.artifactName, 'droidex-${arch}.${ext}');
+  assert.equal(config.dmg.artifactName, 'droidex-${arch}.${ext}');
+  assert.deepEqual(
+    config.mac.target.map((target) => target.target),
+    ['dmg', 'zip'],
+  );
+  assert.match(config.mac.extendInfo.SUFeedURL, /droidex-releases\/releases\/latest/);
+  assert.equal(config.mac.extendInfo.SUPublicEDKey, 'czgsBI/YO7amJbwhZidZSO0j7LU5A4NsU0No9fDemWU=');
+});
+
 test('signed mac builds enable notarization when every credential is present', () => {
   const config = loadConfig({
     APPLE_SIGNING_IDENTITY: 'Developer ID Application: Example (TEAMID)',
@@ -225,6 +240,8 @@ test('Sparkle checks in the background but never downloads updates automatically
 
 test('release automation publishes only verified unsigned Sparkle assets', () => {
   assert.match(releaseWorkflowSource, /DROIDEX_UNSIGNED_RELEASE_BUILD: '1'/);
+  assert.match(releaseWorkflowSource, /test -f "docs\/releases\/\$GITHUB_REF_NAME\.md"/);
+  assert.match(releaseWorkflowSource, /--notes-file "docs\/releases\/\$GITHUB_REF_NAME\.md"/);
   assert.match(
     releaseWorkflowSource,
     /SPARKLE_PRIVATE_KEY: \$\{\{ secrets\.SPARKLE_PRIVATE_KEY \}\}/,

@@ -44,8 +44,8 @@ administrator bypass. The workflow also requires the tagged commit to be
 exactly versioned and already contained in `origin/main`. Keep real secrets out
 of release notes and CI logs. The release token is exposed only to public
 release-repository checks during preflight, the final publish step, and
-marker-gated failed-draft cleanup. Private source checks continue to use the
-source repository's scoped workflow token.
+marker-gated failed-draft cleanup. Source-repository checks continue to use the
+workflow's scoped token.
 
 Release secrets also require a real approval boundary. Before pushing a release
 tag, configure a required environment reviewer and protected `main`/tag rules.
@@ -55,13 +55,13 @@ releases. A `v*` deployment policy limits eligible refs; it does not stop a
 write collaborator from changing a workflow.
 
 Run `npm run release:preflight:unsigned` for the current free distribution path.
-It verifies the private/public repository boundary, immutable public releases,
-the unsigned disclosure, exact private remote commit, Sparkle configuration,
+It verifies both repository identities and visibility, immutable public releases,
+the unsigned disclosure, exact remote commit, Sparkle configuration,
 architecture-specific signed feeds, checksums, DMGs, packaged native modules,
 and canonical SQLite schema.
 
 Run `npm run release:preflight` before a future Developer ID release. It verifies the
-private/public repository boundary, immutable release policy, environment tag
+repository identity and visibility, immutable release policy, environment tag
 protection, secret names (never values), local Developer ID identity, workflow
 syntax, exact `origin/main` commit, and fully verified local artifacts. Any
 failure blocks tagging.
@@ -100,7 +100,7 @@ Keep the private key only in the macOS Keychain and the protected
 `macos-release` GitHub environment.
 
 `.github/workflows/release-macos.yml` is the only production publisher. A tag
-whose name exactly matches the private source package version and is already
+whose name exactly matches the source package version and is already
 contained in `main` runs all release gates, builds the ad-hoc-signed Intel and
 Apple silicon packages, signs both Sparkle appcasts, verifies the artifacts,
 and generates `SHA256SUMS`.
@@ -111,8 +111,8 @@ operation. GitHub creates a draft, uploads exactly the two DMGs, two ZIPs, two
 appcasts, and `SHA256SUMS`, compares every remote digest with the local file,
 and publishes only after verification succeeds. Enable immutable releases on
 that public repository so published tags and assets cannot be replaced. The
-repository itself contains only public download documentation; its automatic
-source archives do not contain the private source repository.
+repository itself contains only public download documentation. Its automatic
+source archives contain only that documentation, never the application source.
 
 A future Developer ID release must deliberately convert this same workflow to
 the signed/notarized `DROIDEX_RELEASE_BUILD=1` path and run
@@ -121,7 +121,7 @@ electron-updater. Do not enable the free Sparkle and paid Developer ID paths for
 the same tag.
 
 Do not attach `builder-debug.yml`, source maps, `.env` files, certificates, or
-private source archives. Electron application JavaScript shipped inside the
+source archives. Electron application JavaScript shipped inside the
 DMG remains inspectable by users; keep secrets and privileged server logic out
 of the client.
 
@@ -212,7 +212,7 @@ Sentry messages as analytics events and does not track clicks, prompts, commands
 project names, file paths, browser activity, or session content. Add a dedicated
 privacy-reviewed analytics system before measuring feature funnels or retention.
 
-Connect the Sentry project to the private source repository using Sentry's
+Connect the private Sentry project to the source repository using Sentry's
 server-side GitHub integration and an issue alert rule. No GitHub token belongs
 in the DMG. Upload private source maps from release CI only; never attach source
 maps to the public GitHub release.

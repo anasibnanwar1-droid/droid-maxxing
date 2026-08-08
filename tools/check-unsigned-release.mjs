@@ -36,9 +36,9 @@ function check(name, run) {
   }
 }
 
-check('source repository is private', () => {
+check('source repository is public', () => {
   const repository = readJson('gh', ['repo', 'view', sourceRepository, '--json', 'visibility']);
-  if (repository.visibility !== 'PRIVATE') throw new Error(`found ${repository.visibility}`);
+  if (repository.visibility !== 'PUBLIC') throw new Error(`found ${repository.visibility}`);
   return sourceRepository;
 });
 
@@ -96,7 +96,7 @@ check(`${releaseTag} does not already exist`, () => {
   throw new Error('immutable release tag already exists');
 });
 
-check('release source is clean and preserved on its private remote branch', () => {
+check('release source is clean and preserved on its remote branch', () => {
   const status = command('git', ['status', '--porcelain']);
   if (status) throw new Error('working tree has uncommitted changes');
   const branch = command('git', ['branch', '--show-current']);
