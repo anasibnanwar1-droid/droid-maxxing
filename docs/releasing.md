@@ -1,9 +1,10 @@
 # Releasing DROIDEX
 
 This is the team checklist for publishing a DROIDEX macOS release. The source
-repository is currently private. Installers and update files are published from
-the public [`droidex-releases`](https://github.com/droidex-anas/droidex-releases)
-repository.
+repository is public. Installers and update files remain isolated in the public
+[`droidex-releases`](https://github.com/droidex-anas/droidex-releases)
+repository so the app consumes only the seven verified release assets, never
+source archives.
 
 ## Before you start
 
@@ -93,8 +94,8 @@ npm run release:verify:mac -- release --write-checksums
 npm run release:preflight:unsigned
 ```
 
-Every command must pass. The preflight verifies the private/public repository
-boundary, app versions, architecture-specific Sparkle feeds, EdDSA signatures,
+Every command must pass. The preflight verifies both repository identities and
+visibility, app versions, architecture-specific Sparkle feeds, EdDSA signatures,
 checksums, packaged native modules, and SQLite runtime.
 
 It uploads exactly these seven files to
@@ -111,7 +112,7 @@ SHA256SUMS
 ```
 
 Do not upload blockmaps, `latest-mac.yml`, app directories, source maps,
-certificates, environment files, or private source archives for the current
+certificates, environment files, or source archives for the current
 Sparkle release path.
 
 The permanent website download links are:
@@ -129,7 +130,7 @@ Those URLs do not change between versions.
 
 Use this only if the tag workflow cannot run and the release owner has approved
 a manual publication. Build and pass the unsigned preflight first, then create
-the draft from the private source checkout:
+the draft from the clean source checkout:
 
 ```bash
 DROIDEX_VERSION=1.0.2
@@ -226,48 +227,21 @@ tagging, run `npm run release:preflight`; then create and push the annotated
 `latest-mac.yml` and blockmaps instead of Sparkle appcasts. Do not run both
 distribution paths for one release.
 
-## Before making the source repository public
+## Public source repository controls
 
-Opening the repository is a separate release decision. Before changing its
-visibility:
+Repository visibility is part of the release contract. Keep the source
+repository public and the artifact-only `droidex-releases` repository public;
+the preflight fails if either changes unexpectedly. A public repository exposes
+its tracked files, Git history, issues, pull requests, Actions metadata, and
+source archives, so none may contain credentials, private reports, privileged
+server logic, or unpublished source maps.
 
-- choose and add the project license;
-- make a fresh clone pass install, test, build, Electron launch, and the quality
-  checks without relying on an author's machine;
-- run `quality:file-size`, `quality:tech-debt`, `quality:boundaries`,
-  `quality:deps`, `quality:deadcode`, and `quality:duplicates`; review the
-  findings instead of publishing generated reports as source;
-- review module ownership against `docs/architecture.md`, delete superseded
-  paths, and document any intentional debt that cannot be removed safely;
-- run a full history secret scan, not only a scan of the current files;
-- scan the current tracked tree for personal paths, email addresses, private
-  repository names, internal plans, reviewer artifacts, and machine-specific
-  instructions; remove or rewrite anything that is not public documentation;
-- rotate or revoke any credential that ever entered Git history, CI output, or
-  an issue;
-- confirm the app contains no privileged server credentials or private source
-  maps;
-- create `SECURITY.md` with a working private vulnerability-reporting channel;
-- audit or remove existing issues, pull requests, comments, diffs, attachments,
-  Discussions, Actions logs and artifacts, releases, wiki pages, projects, bot
-  comments, and deployment logs that would become public; if that collaboration
-  history cannot be made safe, publish a reviewed clean-history repository
-  instead;
-- review CI workflows, repository variables, environments, branch protection,
-  and issue templates for public-safe wording;
-- decide which Sentry project data remains private and verify reports cannot be
-  opened from public issue links;
-- inspect a test source archive from GitHub before announcing the repository;
-- update and test `tools/check-unsigned-release.mjs` and
-  `tools/check-release-environment.mjs`, which intentionally require the source
-  repository to be private today; decide whether the two-repository release
-  boundary remains canonical after open-sourcing; and
-- update the public releases README so it links to the newly public source and
-  explains where security reports belong.
-
-The Electron application code inside a shipped DMG is already technically
-inspectable. Repository privacy protects development history and collaboration;
-it is not a place to store secrets.
+Before every release, keep secret scanning and CodeQL green, review generated
+security findings, and confirm the packaged artifacts contain no source-repo
+URLs, machine paths, environment files, source maps, or credentials. Keep Sentry
+reports and release secrets in their private services. The application must use
+only the signed appcasts and archives from `droidex-releases`; GitHub source
+archives are never update payloads.
 
 For detailed release controls, failure recovery, permissions, diagnostics, and
 the paid signing path, see

@@ -41,7 +41,7 @@ function check(name, run) {
   }
 }
 
-check('source repository is private', () => {
+check('source repository is public', () => {
   const repository = readJson('gh', [
     'repo',
     'view',
@@ -49,7 +49,7 @@ check('source repository is private', () => {
     '--json',
     'visibility',
   ]);
-  if (repository.visibility !== 'PRIVATE') throw new Error(`found ${repository.visibility}`);
+  if (repository.visibility !== 'PUBLIC') throw new Error(`found ${repository.visibility}`);
   return sourceRepository;
 });
 

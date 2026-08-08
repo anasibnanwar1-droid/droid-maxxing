@@ -8,7 +8,8 @@ These runbooks cover local development and release triage for DROIDEX.
    `/feedback` submission.
 2. Search the private Sentry project by `report_id`. Use `installation_id` only
    when correlating multiple reports from the same pseudonymous installation.
-3. Link or create the corresponding issue in the private source repository.
+3. Create only a sanitized source-repository issue when public tracking is useful.
+   Keep the report ID, description, and attachments in private Sentry.
 4. Keep report descriptions and crash attachments out of the public releases
    repository.
 
@@ -69,13 +70,13 @@ These runbooks cover local development and release triage for DROIDEX.
 
 ## Publish a macOS release
 
-1. Confirm the private source version is final and the release branch checks are green.
+1. Confirm the source version is final and the release branch checks are green.
 2. Confirm the protected `macos-release` GitHub environment contains the public
    Sentry DSN and Sparkle private key documented in
    `docs/deployment-observability.md`.
 3. Build both architectures with `DROIDEX_UNSIGNED_RELEASE_BUILD=1`, generate
    the two signed appcasts, and write `SHA256SUMS`.
-4. Push the exact private release branch, then run the executable unsigned
+4. Push the exact release branch, then run the executable unsigned
    release preflight and resolve every failure:
    ```bash
    npm run release:preflight:unsigned
