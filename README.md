@@ -24,6 +24,14 @@ For renderer-only development, use:
 npm run dev
 ```
 
+## GitHub pull requests
+
+For GitHub repositories, the Context panel shows pull requests, checks, and
+review comments through GitHub CLI. If `gh` is missing or signed out, DROIDEX
+shows the recovery action in Context. It can install `gh` through an existing
+Homebrew installation; otherwise it opens GitHub's official installation page.
+Authentication always completes through GitHub CLI's browser/device flow.
+
 ## Useful commands
 
 | Command | Purpose |
