@@ -1,15 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '../hooks/useStore';
 import { useSessionLive } from '../hooks/useSessionLive';
 import { useGitEnvironment } from '../hooks/useGitEnvironment';
 import { useSessionWorkingDirectory } from '../hooks/useSessionWorkingDirectory';
 import { usePullRequest } from '../hooks/usePullRequest';
-import { interruptChild } from '../lib/commands';
 import { resolveReasoningEffortDisplay } from '../lib/reasoningEffort';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Hash, Loader2, ChevronRight, CornerDownRight, Square, FileText } from 'lucide-react';
+import { Hash, Loader2, ChevronRight, FileText } from 'lucide-react';
 import { ModelIcon, providerOf } from './ModelIcon';
 import NotesSection from './NotesSection';
+import { SubagentsSection } from './SubagentsPanel';
 import { Row, SectionHeader, Divider } from './environment/primitives';
 import { EnvironmentSection } from './environment/EnvironmentSection';
 import { PullRequestPanel } from './environment/PullRequestPanel';
@@ -17,82 +17,9 @@ import type { DiffStatMode } from '../types/vcs';
 import { diffModeToReviewScope } from '../lib/reviewScopes';
 import {
   childSessionIsLive,
-  childSessionLabel,
-  childSessionMeta,
-  orderedChildSessions,
+  spawnedChildSessions,
   visibleSessionTarget,
 } from '../lib/childSessions';
-
-// Parent-owned children are shown only in the right context panel.
-function ChildSessionRow({
-  parentAppSessionId,
-  childSessionId,
-  label,
-  meta,
-  prompt,
-  running,
-  selected,
-  depth,
-  onClick,
-  onStop,
-}: {
-  parentAppSessionId: string;
-  childSessionId: string;
-  label: string;
-  meta?: string;
-  prompt?: string;
-  running: boolean;
-  selected: boolean;
-  depth: number;
-  onClick: () => void;
-  onStop?: () => void;
-}) {
-  return (
-    <div
-      data-testid="child-session-row"
-      data-parent-app-session-id={parentAppSessionId}
-      data-child-session-id={childSessionId}
-      className={`group w-full flex items-center gap-1.5 pr-2 py-1.5 rounded-lg transition-colors ${
-        selected ? 'bg-droid-elevated/70' : 'hover:bg-droid-elevated/40'
-      }`}
-      style={{ paddingLeft: 16 + depth * 14 }}
-    >
-      <button onClick={onClick} className="flex min-w-0 flex-1 items-start gap-1.5 text-left">
-        <CornerDownRight
-          className={`mt-0.5 w-3 h-3 shrink-0 ${selected ? 'text-droid-accent' : 'text-droid-text-muted/60'}`}
-        />
-        <span className="min-w-0 flex-1">
-          <span
-            className={`block truncate text-[12px] ${selected ? 'text-droid-text' : 'text-droid-text-muted group-hover:text-droid-text-secondary'}`}
-          >
-            {label}
-          </span>
-          {meta && (
-            <span className="mt-0.5 block truncate text-[10px] text-droid-text-muted/70">
-              {meta}
-            </span>
-          )}
-          {prompt && (
-            <span className="mt-0.5 block truncate text-[10.5px] text-droid-text-muted/80">
-              {prompt}
-            </span>
-          )}
-        </span>
-      </button>
-      {running && <Loader2 className="w-3 h-3 shrink-0 animate-spin text-droid-accent" />}
-      {running && onStop && (
-        <button
-          type="button"
-          title="Stop child session"
-          onClick={onStop}
-          className="shrink-0 rounded p-1 text-droid-text-muted transition-colors hover:bg-droid-elevated hover:text-droid-text"
-        >
-          <Square className="h-3 w-3" />
-        </button>
-      )}
-    </div>
-  );
-}
 
 export default function RightPanel() {
   const { state, dispatch } = useStore();
@@ -128,10 +55,23 @@ export default function RightPanel() {
   // backend `streaming` flag and terminal phases, so the spinner stops on reply.
   const working = useSessionLive(activeSession?.appSessionId ?? null);
 
-  // Child sessions spawned here (the same source the sidebar uses).
-  const childSessions = activeSession
-    ? orderedChildSessions(Object.values(state.childSessions[activeSession.appSessionId] ?? {}))
-    : [];
+  // Subagents spawned by this session, shown in the panel's Subagents section
+  // (which owns their display order). Derived from the spawn events the same way
+  // the feed's subagents card is, so both surfaces list a new agent at the same
+  // moment instead of the panel waiting for the store to register it.
+  const activeAppSessionId = activeSession?.appSessionId;
+  const transcript = activeAppSessionId ? state.transcripts[activeAppSessionId] : undefined;
+  const childSessions = useMemo(
+    () =>
+      activeAppSessionId
+        ? spawnedChildSessions(
+            transcript ?? [],
+            Object.values(state.childSessions[activeAppSessionId] ?? {}),
+            working,
+          )
+        : [],
+    [activeAppSessionId, transcript, state.childSessions, working],
+  );
   // Index access on these records is typed as always-present; Partial keeps the
   // lookup honest without changing runtime behavior.
   const childRuntimeByParent: Partial<typeof state.childRuntime> = state.childRuntime;
@@ -141,7 +81,6 @@ export default function RightPanel() {
       childRuntimeByParent[childSession.parentAppSessionId]?.[childSession.childSessionId],
     ),
   );
-  const [childSessionsOpen, setChildSessionsOpen] = useState(true);
 
   const modelInfo = activeSession?.modelId
     ? state.models.find((m) => m.id === activeSession.modelId)
@@ -221,88 +160,32 @@ export default function RightPanel() {
                   label={modelLabel}
                   meta={reasoningEffort}
                 />
+              </div>
+            )}
 
-                {/* Child sessions — collapsible, nested under the model */}
-                {childSessions.length > 0 && (
-                  <div>
-                    <button
-                      onClick={() => {
-                        setChildSessionsOpen((open) => !open);
-                      }}
-                      className="w-full flex items-center gap-1.5 px-3 py-1.5 text-left"
-                    >
-                      <ChevronRight
-                        className={`w-3.5 h-3.5 text-droid-text-muted transition-transform ${childSessionsOpen ? 'rotate-90' : ''}`}
-                      />
-                      <span className="text-[12px] font-medium text-droid-text-muted">
-                        Child sessions
-                      </span>
-                      <span className="tabular-nums text-[11px] text-droid-text-muted/70">
-                        {childSessions.length}
-                      </span>
-                      {childSessionsRunning && (
-                        <Loader2 className="ml-auto w-3 h-3 shrink-0 animate-spin text-droid-accent" />
-                      )}
-                    </button>
-                    <AnimatePresence initial={false}>
-                      {childSessionsOpen && (
-                        <motion.div
-                          initial={{ height: 0, opacity: 0 }}
-                          animate={{ height: 'auto', opacity: 1 }}
-                          exit={{ height: 0, opacity: 0 }}
-                          className="overflow-hidden"
-                        >
-                          {childSessions.map((childSession, index) => (
-                            <ChildSessionRow
-                              key={childSession.childSessionId}
-                              parentAppSessionId={childSession.parentAppSessionId}
-                              childSessionId={childSession.childSessionId}
-                              label={childSessionLabel(childSession, index)}
-                              meta={childSessionMeta(
-                                childSession,
-                                state.models.find((model) => model.id === childSession.modelId)
-                                  ?.displayName ?? childSession.modelId,
-                              )}
-                              prompt={childSession.prompt}
-                              running={childSessionIsLive(
-                                childSession,
-                                childRuntimeByParent[childSession.parentAppSessionId]?.[
-                                  childSession.childSessionId
-                                ],
-                              )}
-                              depth={0}
-                              selected={selectedAgent === childSession.childSessionId}
-                              onClick={() => {
-                                dispatch({
-                                  type: 'SELECT_CHILD',
-                                  selection:
-                                    selectedAgent === childSession.childSessionId
-                                      ? null
-                                      : {
-                                          parentAppSessionId: childSession.parentAppSessionId,
-                                          childSessionId: childSession.childSessionId,
-                                        },
-                                });
-                              }}
-                              onStop={
-                                visibleTarget.kind === 'child' &&
-                                visibleTarget.childSessionId === childSession.childSessionId &&
-                                visibleTarget.canInterrupt
-                                  ? () => {
-                                      interruptChild(
-                                        childSession.parentAppSessionId,
-                                        childSession.childSessionId,
-                                      );
-                                    }
-                                  : undefined
-                              }
-                            />
-                          ))}
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </div>
-                )}
+            {/* Subagents — keyed by session so the show-more fold resets on a
+                session switch instead of leaking into the next session. */}
+            {activeSession && childSessions.length > 0 && (
+              <div>
+                <Divider />
+                <SubagentsSection
+                  key={activeSession.appSessionId}
+                  childSessions={childSessions}
+                  models={state.models}
+                  selectedChildSessionId={selectedAgent}
+                  onSelect={(child) => {
+                    dispatch({
+                      type: 'SELECT_CHILD',
+                      selection:
+                        selectedAgent === child.childSessionId
+                          ? null
+                          : {
+                              parentAppSessionId: child.parentAppSessionId,
+                              childSessionId: child.childSessionId,
+                            },
+                    });
+                  }}
+                />
               </div>
             )}
 

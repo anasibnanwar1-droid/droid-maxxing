@@ -47,6 +47,7 @@ import {
   transcriptForVisibleSession,
   visibleSessionIsPending,
   visibleSessionTarget,
+  type ChildSessionActivity,
 } from '../lib/childSessions';
 import { sessionIsLive } from '../lib/sessions';
 import { MessageFeed } from './chat';
@@ -73,18 +74,10 @@ function ChatArea({
   pending: boolean;
   onOpenDiff?: (c: FileChange) => void;
   onOpenChildSession?: (target: { toolUseId?: string; label?: string }) => void;
-  childSessionActivity?: (target: { toolUseId?: string; label?: string }) =>
-    | {
-        status?: 'running' | 'paused' | 'completed';
-        startedAt?: number;
-        latest?: {
-          kind: TranscriptEvent['kind'];
-          text?: string;
-          toolName?: string;
-          toolArgs?: unknown;
-        };
-      }
-    | undefined;
+  childSessionActivity?: (target: {
+    toolUseId?: string;
+    label?: string;
+  }) => ChildSessionActivity | undefined;
   big?: boolean;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -863,9 +856,9 @@ export default function MissionControl() {
 
   const childSessionActivity = useCallback(
     (target: { toolUseId?: string; label?: string }) => {
-      return childSessionActivityForTarget(childSessions, allTx, state.childRuntime, target);
+      return childSessionActivityForTarget(childSessions, allTx, target);
     },
-    [childSessions, allTx, state.childRuntime],
+    [childSessions, allTx],
   );
   const isLive = mission ? sessionIsLive(mission) : false;
   const phaseLabel = mission

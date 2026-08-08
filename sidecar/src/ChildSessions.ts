@@ -20,6 +20,7 @@ import {
   findChildByProvider,
   findChildBySpawn,
   persistedChild,
+  restoredChildStatus,
   type ChildIdentity,
   type ChildOpenAttempt,
   type ChildRuntimeState,
@@ -70,8 +71,10 @@ export class ChildSessions {
 
   list(parentAppSessionId: string): ChildSessionSummary[] {
     const parent = this.parents.get(parentAppSessionId);
-    const children = parent?.children.values() ?? this.d.history.childSessions(parentAppSessionId);
-    return [...children].map(childSummary);
+    if (parent) return [...parent.children.values()].map(childSummary);
+    return this.d.history
+      .childSessions(parentAppSessionId)
+      .map((record) => childSummary({ ...record, status: restoredChildStatus(record.status) }));
   }
 
   admitChildObservation(observation: ChildSpawnObservation): ChildIdentity | undefined {
@@ -109,6 +112,11 @@ export class ChildSessions {
     if (spawnKey) parent.pendingSpawns.delete(spawnKey);
     const child =
       spawnChild ?? providerChild ?? this.createChild(parent, observation.role, spawnLink);
+    // Poll-style observations (TaskOutput) carry their own call's tool_use id,
+    // not the spawn's; only a link that matched an observed spawn call (pending)
+    // may key a child that already has one. Trusting the poll's id would rekey
+    // the child away from the transcript event its UI row is anchored to.
+    const linkForApply = pending || !child.spawnLink ? spawnLink : child.spawnLink;
     const previousProviderSessionId = child.runtime?.session.sessionId ?? child.providerSessionId;
     if (previousProviderSessionId && previousProviderSessionId !== providerSessionId) {
       child.retiredProviderSessionIds.add(previousProviderSessionId);
@@ -128,9 +136,12 @@ export class ChildSessions {
       }
       child.providerSessionId = providerSessionId;
       child.status = 'running';
-      child.label = observation.label ?? pending?.label ?? child.label;
+      // First label wins: the spawn call's label is set at admission, and
+      // later poll observations echo the same metadata with different casing.
+      child.label ??= observation.label ?? pending?.label;
       child.prompt = observation.prompt ?? pending?.prompt ?? child.prompt;
-      child.spawnLink = spawnLink ?? child.spawnLink;
+      child.spawnLink = linkForApply ?? child.spawnLink;
+      child.activity = observation.activity ?? child.activity;
       child.transcriptAvailable = true;
       child.startedAt ??= this.d.now();
       this.commit(child);
@@ -469,7 +480,11 @@ export class ChildSessions {
       child.modelId = settings.modelId;
       child.reasoningEffort = settings.reasoningEffort;
       child.autonomy = actual.autonomy;
-      child.status = 'paused';
+      // Opening a runtime is how the app *watches* a child. A child the harness
+      // is still driving (a background Task) keeps working while we mirror it,
+      // so observing it must not report it as idle; only a turn we drive, an
+      // interrupt, or a settlement may settle its status.
+      if (child.status !== 'running') child.status = 'paused';
       child.transcriptAvailable = true;
       let active: ChildAutomaticCompactionTarget | undefined;
       runtime.unsubscribe = loaded.onNotification((note: Record<string, unknown>) => {
@@ -691,6 +706,9 @@ export class ChildSessions {
   private complete(parent: ParentChildSessions, child?: ChildSessionState): void {
     if (!child || child.status === 'completed') return;
     child.status = 'completed';
+    // Activity describes a moment that has passed; keeping the last poll's line
+    // would leave a finished subagent reading as still working.
+    child.activity = undefined;
     this.commit(child);
     void this.closeWhenIdle(child.identity);
   }

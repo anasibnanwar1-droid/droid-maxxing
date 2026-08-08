@@ -1,6 +1,6 @@
 import type { FactorySession } from './DroidRuntime.js';
 import type { PersistedChildSession, PersistedChildSpawnLink } from './history.js';
-import type { Autonomy, ReasoningEffort, SessionSummary } from './protocol.js';
+import type { Autonomy, ChildActivity, ReasoningEffort, SessionSummary } from './protocol.js';
 import { normalizeAutonomy, reasoningValue, type SessionInitResult } from './sessionHelpers.js';
 /* eslint-disable @typescript-eslint/no-unused-vars -- persisted-only fields are intentionally omitted. */
 export interface ChildIdentity {
@@ -20,6 +20,10 @@ export interface ChildSpawnObservation {
   label?: string;
   prompt?: string;
   done?: boolean;
+  // Latest activity observed for this child (a poll's status, plus the last line
+  // it had produced). Live-only: never persisted, since it describes a moment
+  // rather than the session.
+  activity?: ChildActivity;
 }
 export interface ChildParentLease {
   summary: SessionSummary;
@@ -56,6 +60,9 @@ export interface ChildSessionState {
   spawnLink?: PersistedChildSession['spawnLink'];
   transcriptAvailable: boolean;
   startedAt?: number;
+  // See ChildSpawnObservation.activity: live-only, so it is absent after a
+  // restart even though the child itself is restored from history.
+  activity?: ChildActivity;
   runtimeGeneration: number;
   configurationGeneration: number;
   retiredProviderSessionIds: Set<string>;
@@ -100,11 +107,21 @@ export function childSettingsFromInit(init: SessionInitResult): ChildSettings {
   };
 }
 
+/** Nothing in this process is driving a child that comes back from history: the
+    session that was streaming it died with the lease that persisted it, so a
+    stored 'running' would read as work in flight forever. */
+export function restoredChildStatus(
+  status: PersistedChildSession['status'],
+): PersistedChildSession['status'] {
+  return status === 'running' ? 'paused' : status;
+}
+
 export function childStateFromRecord(record: PersistedChildSession): ChildSessionState {
   const { parentAppSessionId, childSessionId, updatedAt: _updatedAt, ...persisted } = record;
   return {
     identity: childIdentity(parentAppSessionId, childSessionId),
     ...persisted,
+    status: restoredChildStatus(persisted.status),
     runtimeGeneration: 1,
     configurationGeneration: 1,
     retiredProviderSessionIds: new Set(),
@@ -140,11 +157,15 @@ export function persistedChild(child: ChildSessionState): PersistedChildSession 
 export function childSummary(child: ChildSessionState | PersistedChildSession) {
   const record = 'identity' in child ? persistedChild(child) : child;
   const { providerSessionId: _provider, updatedAt: _updatedAt, ...summary } = record;
-  // Autonomy is runtime-scoped: only a live child reports its confirmed value.
-  if ('identity' in child && child.runtime && child.autonomy) {
-    return { ...summary, autonomy: child.autonomy };
-  }
-  return summary;
+  // Activity is live-only state, so it comes from the in-memory child rather
+  // than the persisted record.
+  const live = 'identity' in child ? child : undefined;
+  return {
+    ...summary,
+    // Autonomy is runtime-scoped: only a live child reports its confirmed value.
+    ...(live?.runtime && live.autonomy ? { autonomy: live.autonomy } : {}),
+    ...(live?.activity ? { activity: live.activity } : {}),
+  };
 }
 
 export function findChildByProvider(

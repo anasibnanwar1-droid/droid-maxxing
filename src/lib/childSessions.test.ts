@@ -10,11 +10,15 @@ import {
   childSessionMeta,
   childRuntimeSubmitTarget,
   commitChildPromptAfterBaseline,
+  childSessionKey,
   findChildSessionForTarget,
+  isPendingChildPlaceholder,
   mergeChildSessionSpawn,
   orderedChildSessions,
   selectedChildForParent,
   shouldOpenSelectedChild,
+  spawnedChildSessions,
+  workingFirstChildSessions,
   transcriptForVisibleSession,
   visibleSessionCanCompact,
   visibleSessionIsPending,
@@ -62,9 +66,25 @@ test('mergeChildSessionSpawn merges a description-only delta with a later label-
   });
 });
 
-test('mergeChildSessionSpawn returns the latest event untouched when it already carries both fields', () => {
+test('mergeChildSessionSpawn keeps the latest args when they already carry both fields', () => {
   const next = spawn({ subagent_type: 'worker', description: 'do X' });
-  assert.equal(mergeChildSessionSpawn(spawn({ subagent_type: 'worker' }), next), next);
+  assert.deepEqual(
+    childSessionInfo(mergeChildSessionSpawn(spawn({ subagent_type: 'worker' }), next).toolArgs),
+    { label: 'worker', description: 'do X' },
+  );
+});
+
+test('a spawn is timed from its first delta, not from the last one to stream in', () => {
+  const first = spawn({ subagent_type: 'worker' });
+  // Deltas of one spawn can stream over a second or more; timing the row from
+  // the last of them would start it late and shorten the card's total.
+  const late = { ...spawn({ description: 'do X' }), id: 'late', ts: 4_000 };
+  assert.equal(mergeChildSessionSpawn(first, late).ts, first.ts);
+  // Both merge paths preserve it: this one needs no arg rebuild at all.
+  assert.equal(
+    mergeChildSessionSpawn(first, { ...late, toolArgs: { subagent_type: 'worker' } }).ts,
+    first.ts,
+  );
 });
 
 test('childSessionLatest surfaces a failed tool result as a failure, not stale activity', () => {
@@ -187,7 +207,96 @@ test('child ordering gives unlabeled siblings one stable label across surfaces',
   );
 });
 
-test('historical running child activity is paused without an authoritative runtime', () => {
+test('spawned sessions cover a spawn the store has not registered yet', () => {
+  const spawnA = ev({
+    id: 'e1',
+    sourceSessionId: 'orc',
+    role: 'primary',
+    ts: 10,
+    kind: 'tool_call',
+    toolName: 'Task',
+    toolUseId: 'tool-a',
+    toolArgs: { subagent_type: 'explorer' },
+  });
+  // Streaming deltas arrive as further tool_call events on the same tool-use id:
+  // one agent, with the fields spread across them merged.
+  const spawnADelta = { ...spawnA, id: 'e2', ts: 11, toolArgs: { description: 'read the code' } };
+  const registered = {
+    parentAppSessionId: 'app-1',
+    childSessionId: 'child-a',
+    role: 'worker' as const,
+    status: 'running' as const,
+    modelId: 'model-default',
+    transcriptAvailable: true,
+    spawnLink: { kind: 'tool-use' as const, id: 'tool-a' },
+    startedAt: 50,
+  };
+
+  const pending = spawnedChildSessions([spawnA, spawnADelta], [], true);
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0].label, 'explorer');
+  assert.equal(pending[0].prompt, 'read the code');
+  assert.equal(pending[0].status, 'running');
+  assert.ok(isPendingChildPlaceholder(pending[0]));
+
+  // Once the session registers, the same spawn resolves to it — same row key, so
+  // the panel swaps the row's contents instead of replacing the row.
+  const resolved = spawnedChildSessions([spawnA], [registered], true);
+  assert.deepEqual(
+    resolved.map((child) => child.childSessionId),
+    ['child-a'],
+  );
+  assert.equal(childSessionKey(pending[0]), childSessionKey(resolved[0]));
+  // The spawn event's time is the true start, not the store's later stamp.
+  assert.equal(resolved[0].startedAt, 10);
+});
+
+test('spawned sessions keep a child whose spawn is outside the loaded transcript', () => {
+  const restored = {
+    parentAppSessionId: 'app-1',
+    childSessionId: 'child-old',
+    role: 'worker' as const,
+    status: 'completed' as const,
+    modelId: 'model-default',
+    transcriptAvailable: true,
+    spawnLink: { kind: 'tool-use' as const, id: 'tool-old' },
+    startedAt: 5,
+  };
+  assert.deepEqual(
+    spawnedChildSessions([], [restored], false).map((child) => child.childSessionId),
+    ['child-old'],
+  );
+});
+
+test('the panel order pins working agents above finished ones without renumbering', () => {
+  const base = {
+    parentAppSessionId: 'app-1',
+    role: 'worker' as const,
+    modelId: 'model-default',
+    transcriptAvailable: true,
+  };
+  const rows = workingFirstChildSessions([
+    { ...base, childSessionId: 'c1', status: 'completed', startedAt: 10 },
+    { ...base, childSessionId: 'c2', status: 'running', startedAt: 20 },
+    { ...base, childSessionId: 'c3', status: 'paused', startedAt: 30 },
+    { ...base, childSessionId: 'c4', status: 'pending', startedAt: 40 },
+    { ...base, childSessionId: 'c5', status: 'running', startedAt: 50 },
+  ]);
+  assert.deepEqual(
+    rows.map((row) => [row.child.childSessionId, row.name]),
+    [
+      // Working first, then queued, then idle, then done; spawn order (and the
+      // name it numbered) survives inside each group.
+      ['c2', 'Worker 2'],
+      ['c5', 'Worker 5'],
+      ['c4', 'Worker 4'],
+      ['c3', 'Worker 3'],
+      ['c1', 'Worker 1'],
+    ],
+  );
+});
+
+test('running child activity stays running even without an open runtime', () => {
   const child = {
     parentAppSessionId: 'parent-a',
     childSessionId: 'child-a',
@@ -198,18 +307,16 @@ test('historical running child activity is paused without an authoritative runti
     spawnLink: { kind: 'tool-use' as const, id: 'tool-a' },
   };
 
+  // Autonomous subagents never open a runtime; the store status is authoritative.
   assert.equal(
-    childSessionActivityForTarget([child], [], {}, { toolUseId: 'tool-a' })?.status,
-    'paused',
+    childSessionActivityForTarget([child], [], { toolUseId: 'tool-a' })?.status,
+    'running',
   );
   assert.equal(
-    childSessionActivityForTarget(
-      [child],
-      [],
-      { 'parent-a': { 'child-a': { available: true } } },
-      { toolUseId: 'tool-a' },
-    )?.status,
-    'running',
+    childSessionActivityForTarget([{ ...child, status: 'paused' as const }], [], {
+      toolUseId: 'tool-a',
+    })?.status,
+    'paused',
   );
 });
 

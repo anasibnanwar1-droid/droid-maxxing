@@ -14,6 +14,15 @@ import type {
   ProgressEntry,
   TranscriptEvent,
 } from './protocol.js';
+import { trimmedString as str } from './values.js';
+import {
+  detectChildSession,
+  isTaskToolName,
+  slimChildSessionArgs,
+  taskPrompt,
+  taskResultChildUpdate,
+  type ChildSessionSignal,
+} from './subagentSignals.js';
 
 let seq = 0;
 const nextId = () => `${Date.now().toString(36)}-${(seq++).toString(36)}`;
@@ -80,27 +89,9 @@ export interface NormalizedEvent {
     providerSessionId: string;
     exitCode?: number;
   };
-  childSession?: {
-    providerSessionId?: string;
-    toolUseId?: string;
-    label?: string;
-    prompt?: string;
-    done?: boolean;
-  };
+  childSession?: ChildSessionSignal;
   tokens?: { tokensIn: number; tokensOut: number; contextTokens?: number };
   done?: boolean;
-}
-
-function str(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
-}
-
-function taskPrompt(input: Record<string, unknown>): string | undefined {
-  for (const key of ['prompt', 'task', 'instructions', 'message', 'description', 'input']) {
-    const value = str(input[key]);
-    if (value) return value;
-  }
-  return undefined;
 }
 
 function toolUseIdFrom(...values: unknown[]): string | undefined {
@@ -109,49 +100,6 @@ function toolUseIdFrom(...values: unknown[]): string | undefined {
     if (id) return id;
   }
   return undefined;
-}
-
-// The SDK subagent spawn is the `Task` tool. Match it as a whole word so
-// unrelated tools whose names merely contain "task" (e.g. `create_task`) are
-// never mistaken for a subagent.
-const isTaskToolName = (name: unknown): boolean =>
-  typeof name === 'string' && /\btask\b/i.test(name);
-
-// A standard chat can spawn Factory subagents via the Task tool; those surface
-// as ToolProgress events carrying raw `subagentSessionId` metadata.
-function detectChildSession(
-  toolName: unknown,
-  input: Record<string, unknown>,
-  providerSessionId: string | undefined,
-  toolUseId: string | undefined,
-): NormalizedEvent['childSession'] | undefined {
-  const isTask =
-    isTaskToolName(toolName) ||
-    typeof input.subagent_type === 'string' ||
-    typeof input.subagentType === 'string';
-  if (!isTask && !providerSessionId) return undefined;
-  const label =
-    str(input.subagent_type) ??
-    str(input.subagentType) ??
-    str(input.description) ??
-    (typeof toolName === 'string' ? toolName : undefined);
-  return { providerSessionId, toolUseId, label, prompt: taskPrompt(input) };
-}
-
-// The primary session's Task tool_call carries the entire subagent prompt in its
-// input. That prompt belongs in the subagent's own pane, not the main feed, so
-// we keep only the lightweight label fields on the transcript copy.
-function slimChildSessionArgs(input: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const key of ['subagent_type', 'subagentType', 'description']) {
-    if (typeof input[key] === 'string') out[key] = input[key];
-  }
-  return out;
-}
-
-function taskResultProviderSessionId(content: unknown): string | undefined {
-  if (typeof content !== 'string') return undefined;
-  return content.match(/^session_id:[ \t]*(\S+)(?:\r?\n|$)/)?.[1];
 }
 
 // Translate a single SDK stream event into zero-or-one normalized bridge updates.
@@ -210,10 +158,14 @@ export function normalizeStreamEvent(
     const label = str(params.subagent_type) ?? str(params.subagentType);
     const prompt = taskPrompt(params);
     if (!subagentSessionId && !label && !prompt) return null;
+    // Poll-style progress (e.g. TaskOutput's "Reading task output") carries the
+    // polling call's tool_use id, not the spawn's. Only spawn-style progress
+    // (identified by subagent params) may key the child by that id.
+    const isSpawnProgress = Boolean(label ?? prompt);
     return {
       childSession: {
         providerSessionId: subagentSessionId,
-        toolUseId: eventToolUseId,
+        ...(isSpawnProgress && eventToolUseId ? { toolUseId: eventToolUseId } : {}),
         label,
         prompt,
       },
@@ -260,38 +212,37 @@ export function normalizeStreamEvent(
     case 'tool_result': {
       const isTask = isTaskToolName(ev.toolName);
       const toolUseId = toolUseIdFrom((ev as { toolUseId?: string }).toolUseId, eventToolUseId);
-      const resultProviderSessionId =
-        subagentSessionId ??
-        (isTask && !ev.isError ? taskResultProviderSessionId(ev.content) : undefined);
-      // A successful subagent Task result is just the subagent's output, so it
-      // surfaces only as a completion signal and never leaks into the main feed.
-      // A *failed* spawn must stay visible, so keep its error transcript.
-      if (resultProviderSessionId || isTask) {
-        const done = {
-          childSession: {
-            providerSessionId: resultProviderSessionId,
-            toolUseId,
-            done: true,
-          },
-        };
-        if (!ev.isError) return done;
-        return {
-          ...done,
-          transcript: transcript(appSessionId, sourceProviderSessionId, role, 'tool_result', {
-            toolName: ev.toolName,
-            text: typeof ev.content === 'string' ? ev.content : JSON.stringify(ev.content),
-            isError: true,
-          }),
-        };
-      }
-      return {
-        transcript: transcript(appSessionId, sourceProviderSessionId, role, 'tool_result', {
+      const taskUpdate = ev.isError ? undefined : taskResultChildUpdate(ev.toolName, ev.content);
+      const resultProviderSessionId = subagentSessionId ?? taskUpdate?.providerSessionId;
+      const resultTranscript = () =>
+        transcript(appSessionId, sourceProviderSessionId, role, 'tool_result', {
           toolName: ev.toolName,
           text: typeof ev.content === 'string' ? ev.content : JSON.stringify(ev.content),
           isError: ev.isError,
           ...(toolUseId ? { toolUseId } : {}),
-        }),
-      };
+        });
+      // A successful subagent Task result is just the subagent's output, so it
+      // surfaces only as a completion signal and never leaks into the main feed.
+      // A *failed* spawn must stay visible, so keep its error transcript.
+      if (resultProviderSessionId || isTask) {
+        const signal = {
+          childSession: {
+            providerSessionId: resultProviderSessionId,
+            // Only a Task tool's own result can be the spawn result; poll and
+            // notification results must never rekey the child's spawn link.
+            ...(isTask && taskUpdate?.isSpawnResult !== false && toolUseId ? { toolUseId } : {}),
+            done: taskUpdate?.done ?? true,
+            ...(taskUpdate?.activity ? { activity: taskUpdate.activity } : {}),
+          },
+        };
+        // A non-spawn result that merely *references* a subagent (a TaskOutput
+        // poll) keeps its transcript: it carries the child's status signal, and
+        // the feed, not the bridge, decides whether the body is worth showing.
+        if (!isTask) return { ...signal, transcript: resultTranscript() };
+        if (!ev.isError) return signal;
+        return { ...signal, transcript: resultTranscript() };
+      }
+      return { transcript: resultTranscript() };
     }
     case 'error':
       return {
