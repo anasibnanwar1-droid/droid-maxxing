@@ -102,6 +102,20 @@ test('a spawn the store has not registered yet renders but cannot be opened', ()
   assert.match(html, /<button[^>]*disabled/);
 });
 
+test('the open agent stays visible even when it belongs behind the fold', () => {
+  const rest = Array.from({ length: 6 }, () => child('completed'));
+  const target = child('completed', { label: 'last-finisher' });
+  const html = renderSection([...rest, target], {
+    selectedChildSessionId: target.childSessionId,
+  });
+  const rows = [...html.matchAll(/data-child-session-id="([^"]+)"/g)].map((m) => m[1]);
+  // Five rows fit before the fold; the selected sixth is kept alongside them so
+  // the panel never shows an agent's transcript with no row to point at.
+  assert.equal(rows.length, 6);
+  assert.ok(rows.includes(target.childSessionId));
+  assert.ok(textOf(html).includes('Show 1 more'));
+});
+
 test('the selected row is highlighted', () => {
   const target = child('running');
   const html = renderSection([child('running'), target], {

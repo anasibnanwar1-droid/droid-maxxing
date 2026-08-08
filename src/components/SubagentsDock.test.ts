@@ -361,6 +361,71 @@ test('a poll after the parent stopped talking still shows the parent working', (
   assert.ok(text.includes('Checking subagents'));
 });
 
+test('a poll behind a running wave card does not add a second live cue', () => {
+  // The card at the tail already reports the wave with its own status pills and
+  // timers, so announcing the check as well would say the same thing twice.
+  const events = [
+    userMsg('go'),
+    spawn('t1', 'explorer'),
+    ev({
+      kind: 'tool_call',
+      toolName: 'TaskOutput',
+      toolUseId: 'p1',
+      toolArgs: { task_id: 'abc' },
+    }),
+  ];
+  const text = textOf(
+    renderToStaticMarkup(
+      createElement(MessageFeed, {
+        events,
+        pending: true,
+        onOpenChildSession: () => {},
+        subagentsDock: { sessions: [childSession('explorer', 't1', 'running')], models: [] },
+        childSessionActivity: () => ({ status: 'running' }),
+      }),
+    ),
+  );
+  assert.ok(text.includes('Subagents'));
+  assert.ok(!text.includes('Checking subagents'));
+
+  // Once the wave settles, the card stops animating and the cue is the only
+  // thing left to say the parent is still working.
+  const settled = textOf(
+    renderToStaticMarkup(
+      createElement(MessageFeed, {
+        events,
+        pending: true,
+        onOpenChildSession: () => {},
+        subagentsDock: { sessions: [childSession('explorer', 't1', 'completed')], models: [] },
+        childSessionActivity: () => ({ status: 'completed' }),
+      }),
+    ),
+  );
+  assert.ok(settled.includes('Checking subagents'));
+});
+
+test('a poll between two spawn batches keeps them in one wave card', () => {
+  // The poll is bookkeeping the card already speaks for, so it must not split
+  // the turn's agents into two cards; the card stays where the spawning began.
+  const items = buildFeed(
+    [
+      userMsg('go'),
+      spawn('t1', 'explorer'),
+      ev({ kind: 'tool_call', toolName: 'TaskOutput', toolUseId: 'p1', toolArgs: {} }),
+      ev({ kind: 'tool_result', toolUseId: 'p1', text: 'Task ID: abc\nStatus: completed' }),
+      spawn('t2', 'worker'),
+    ],
+    { childSessionCards: true, groupChildSessions: true },
+  );
+  const waves = items.filter((item) => item.type === 'child_sessions');
+  assert.equal(waves.length, 1);
+  if (waves[0].type === 'child_sessions')
+    assert.deepEqual(
+      waves[0].events.map((e) => e.toolUseId),
+      ['t1', 't2'],
+    );
+});
+
 test('only a suppressed poll at the tail redirects the working cue', () => {
   const poll = ev({ kind: 'tool_call', toolName: 'TaskOutput', toolUseId: 'p1', toolArgs: {} });
   const pollResult = ev({ kind: 'tool_result', toolUseId: 'p1', text: 'Status: running' });

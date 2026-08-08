@@ -2,7 +2,7 @@
 // session with a pixel-creature identity, a quiet status readout, and a
 // "Show N more" fold so long waves don't flood the panel. Working agents are
 // ordered first, so the fold only ever hides agents that have stopped.
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { Check } from 'lucide-react';
 import type { ChildSessionInfo } from '../hooks/useStore';
@@ -104,7 +104,17 @@ export function SubagentsSection({
   const [showAll, setShowAll] = useState(false);
   const reduceMotion = useReducedMotion();
   const ordered = workingFirstChildSessions(childSessions);
-  const visible = showAll ? ordered : ordered.slice(0, VISIBLE_LIMIT);
+  const visible = useMemo(() => {
+    if (showAll) return ordered;
+    const head = ordered.slice(0, VISIBLE_LIMIT);
+    // The agent whose transcript the app is currently showing must stay on
+    // screen; hiding its row behind the fold leaves the selection unexplained.
+    const selected = ordered.findIndex(
+      ({ child }) => child.childSessionId === selectedChildSessionId,
+    );
+    return selected < VISIBLE_LIMIT ? head : [...head, ordered[selected]];
+  }, [ordered, showAll, selectedChildSessionId]);
+  const hidden = ordered.length - visible.length;
 
   return (
     <div>
@@ -139,7 +149,7 @@ export function SubagentsSection({
           ))}
         </AnimatePresence>
       </div>
-      {ordered.length > VISIBLE_LIMIT && (
+      {(hidden > 0 || (showAll && ordered.length > VISIBLE_LIMIT)) && (
         <button
           type="button"
           onClick={() => {
@@ -147,7 +157,7 @@ export function SubagentsSection({
           }}
           className="w-full px-3 py-1.5 text-left text-[12px] text-droid-text-muted transition-colors hover:text-droid-text-secondary"
         >
-          {showAll ? 'Show less' : `Show ${String(ordered.length - VISIBLE_LIMIT)} more`}
+          {showAll ? 'Show less' : `Show ${String(hidden)} more`}
         </button>
       )}
     </div>

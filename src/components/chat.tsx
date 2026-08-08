@@ -1536,9 +1536,15 @@ export function trailingSubagentPoll(
     if (isCancellationArtifact(e)) continue;
     if (e.kind === 'tool_call') return isSubagentBookkeepingTool(e.toolName) ? e : undefined;
     if (e.kind !== 'tool_result' || !e.toolUseId) return undefined;
-    // A replayed result carries no toolName, so correlate it back to its call.
-    const call = events.find((c) => c.kind === 'tool_call' && c.toolUseId === e.toolUseId);
-    return call && isSubagentBookkeepingTool(call.toolName) ? call : undefined;
+    // A replayed result carries no toolName, so correlate it back to its call —
+    // scanning backward from the result, since the call is always just behind it
+    // and a forward scan would walk the whole transcript on every render.
+    for (let j = i - 1; j >= 0; j--) {
+      const call = events[j];
+      if (call.kind !== 'tool_call' || call.toolUseId !== e.toolUseId) continue;
+      return isSubagentBookkeepingTool(call.toolName) ? call : undefined;
+    }
+    return undefined;
   }
   return undefined;
 }
@@ -2665,8 +2671,13 @@ export function MessageFeed({
       (last.type === 'message' && last.event.author !== 'user'));
   // While the parent polls its subagents nothing in the feed represents that
   // work, so the cue speaks for it and the settled tail stops animating.
-  const subagentPoll = trailingSubagentPoll(events, dockEnabled);
-  const showWorking = pending && (!!subagentPoll || !tailSelfIndicates);
+  const subagentPoll = useMemo(
+    () => trailingSubagentPoll(events, dockEnabled),
+    [events, dockEnabled],
+  );
+  // A dock tail whose children are still running already speaks for the wave
+  // with its own pills, timers and total, so the poll cue would only repeat it.
+  const showWorking = pending && (subagentPoll ? !lastDockRunning : !tailSelfIndicates);
   const workingLabel = subagentPoll
     ? 'Checking subagents'
     : last?.type === 'tools'
