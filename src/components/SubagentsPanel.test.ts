@@ -82,6 +82,26 @@ test('no fold at or below the visible limit', () => {
   assert.ok(!textOf(html).includes('Show'));
 });
 
+test('a working agent stays above the fold when finished agents spawned first', () => {
+  const done = Array.from({ length: 6 }, () => child('completed'));
+  const working = child('running', { label: 'late-worker' });
+  const html = renderSection([...done, working]);
+  const rows = [...html.matchAll(/data-child-session-id="([^"]+)"/g)].map((m) => m[1]);
+  assert.equal(rows.length, 5);
+  // The still-working agent leads the list instead of being pushed behind
+  // "Show 2 more" by the six agents that already finished.
+  assert.equal(rows[0], working.childSessionId);
+  assert.ok(textOf(html).includes('Show 2 more'));
+});
+
+test('a spawn the store has not registered yet renders but cannot be opened', () => {
+  const html = renderSection([
+    child('running', { childSessionId: 'pending-tool-a', label: 'explorer' }),
+  ]);
+  assert.ok(textOf(html).includes('explorer'));
+  assert.match(html, /<button[^>]*disabled/);
+});
+
 test('the selected row is highlighted', () => {
   const target = child('running');
   const html = renderSection([child('running'), target], {

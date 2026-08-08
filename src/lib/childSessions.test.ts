@@ -10,11 +10,15 @@ import {
   childSessionMeta,
   childRuntimeSubmitTarget,
   commitChildPromptAfterBaseline,
+  childSessionKey,
   findChildSessionForTarget,
+  isPendingChildPlaceholder,
   mergeChildSessionSpawn,
   orderedChildSessions,
   selectedChildForParent,
   shouldOpenSelectedChild,
+  spawnedChildSessions,
+  workingFirstChildSessions,
   transcriptForVisibleSession,
   visibleSessionCanCompact,
   visibleSessionIsPending,
@@ -183,6 +187,95 @@ test('child ordering gives unlabeled siblings one stable label across surfaces',
     [
       ['worker-earlier', 'Worker 1'],
       ['worker-later', 'Worker 2'],
+    ],
+  );
+});
+
+test('spawned sessions cover a spawn the store has not registered yet', () => {
+  const spawnA = ev({
+    id: 'e1',
+    sourceSessionId: 'orc',
+    role: 'primary',
+    ts: 10,
+    kind: 'tool_call',
+    toolName: 'Task',
+    toolUseId: 'tool-a',
+    toolArgs: { subagent_type: 'explorer' },
+  });
+  // Streaming deltas arrive as further tool_call events on the same tool-use id:
+  // one agent, with the fields spread across them merged.
+  const spawnADelta = { ...spawnA, id: 'e2', ts: 11, toolArgs: { description: 'read the code' } };
+  const registered = {
+    parentAppSessionId: 'app-1',
+    childSessionId: 'child-a',
+    role: 'worker' as const,
+    status: 'running' as const,
+    modelId: 'model-default',
+    transcriptAvailable: true,
+    spawnLink: { kind: 'tool-use' as const, id: 'tool-a' },
+    startedAt: 50,
+  };
+
+  const pending = spawnedChildSessions([spawnA, spawnADelta], [], true);
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0].label, 'explorer');
+  assert.equal(pending[0].prompt, 'read the code');
+  assert.equal(pending[0].status, 'running');
+  assert.ok(isPendingChildPlaceholder(pending[0]));
+
+  // Once the session registers, the same spawn resolves to it — same row key, so
+  // the panel swaps the row's contents instead of replacing the row.
+  const resolved = spawnedChildSessions([spawnA], [registered], true);
+  assert.deepEqual(
+    resolved.map((child) => child.childSessionId),
+    ['child-a'],
+  );
+  assert.equal(childSessionKey(pending[0]), childSessionKey(resolved[0]));
+  // The spawn event's time is the true start, not the store's later stamp.
+  assert.equal(resolved[0].startedAt, 10);
+});
+
+test('spawned sessions keep a child whose spawn is outside the loaded transcript', () => {
+  const restored = {
+    parentAppSessionId: 'app-1',
+    childSessionId: 'child-old',
+    role: 'worker' as const,
+    status: 'completed' as const,
+    modelId: 'model-default',
+    transcriptAvailable: true,
+    spawnLink: { kind: 'tool-use' as const, id: 'tool-old' },
+    startedAt: 5,
+  };
+  assert.deepEqual(
+    spawnedChildSessions([], [restored], false).map((child) => child.childSessionId),
+    ['child-old'],
+  );
+});
+
+test('the panel order pins working agents above finished ones without renumbering', () => {
+  const base = {
+    parentAppSessionId: 'app-1',
+    role: 'worker' as const,
+    modelId: 'model-default',
+    transcriptAvailable: true,
+  };
+  const rows = workingFirstChildSessions([
+    { ...base, childSessionId: 'c1', status: 'completed', startedAt: 10 },
+    { ...base, childSessionId: 'c2', status: 'running', startedAt: 20 },
+    { ...base, childSessionId: 'c3', status: 'paused', startedAt: 30 },
+    { ...base, childSessionId: 'c4', status: 'pending', startedAt: 40 },
+    { ...base, childSessionId: 'c5', status: 'running', startedAt: 50 },
+  ]);
+  assert.deepEqual(
+    rows.map((row) => [row.child.childSessionId, row.name]),
+    [
+      // Working first, then queued, then idle, then done; spawn order (and the
+      // name it numbered) survives inside each group.
+      ['c2', 'Worker 2'],
+      ['c5', 'Worker 5'],
+      ['c4', 'Worker 4'],
+      ['c3', 'Worker 3'],
+      ['c1', 'Worker 1'],
     ],
   );
 });

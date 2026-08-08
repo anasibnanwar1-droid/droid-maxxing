@@ -1,6 +1,6 @@
 import type { ChildStatus, ProgressEntry, TranscriptEvent } from '../types/bridge';
 import type { ChildAccess, ChildSessionInfo } from '../hooks/useStore';
-import { childSessionInfo, toolMeta, CAT_LABEL } from './tools';
+import { childSessionInfo, isChildSessionTool, toolMeta, CAT_LABEL } from './tools';
 
 // A single Task spawn streams many tool_call/tool_call_delta events sharing one
 // toolUseId; the subagent_type (label) and description can arrive in separate
@@ -281,6 +281,62 @@ export function resolveWaveSessions(
       return { ...registered, startedAt: spawn.ts };
     return registered ?? pendingChildSession(spawn, live);
   });
+}
+
+// Every subagent this session has spawned, whether or not the store has caught
+// up. The feed card and the context panel must list the same agents at the same
+// moment, and the store only registers a background Task once its provider
+// session id is observed — which can lag the whole run — so both surfaces derive
+// their rows from the spawn events and let registration fill the detail in.
+export function spawnedChildSessions(
+  transcript: readonly TranscriptEvent[],
+  childSessions: readonly ChildSessionInfo[],
+  live = false,
+): ChildSessionInfo[] {
+  const spawns = new Map<string, TranscriptEvent>();
+  for (const event of transcript) {
+    if (event.kind !== 'tool_call' || !isChildSessionTool(event.toolName, event.toolArgs)) continue;
+    const key = event.toolUseId ?? event.id;
+    const merged = spawns.get(key);
+    spawns.set(key, merged ? mergeChildSessionSpawn(merged, event) : event);
+  }
+  const resolved = resolveWaveSessions([...spawns.values()], childSessions, live);
+  const seen = new Set(resolved.map((child) => child.childSessionId));
+  // A registered child whose spawn scrolled out of the loaded transcript window
+  // (paged or compacted history) still belongs to the session.
+  return [...resolved, ...childSessions.filter((child) => !seen.has(child.childSessionId))];
+}
+
+// A placeholder's childSessionId is replaced by the real one when the store
+// registers the session, but its spawn link never changes; keying rows by the
+// link keeps a row — and its creature avatar — identical across that swap.
+export function childSessionKey(child: ChildSessionInfo): string {
+  return child.spawnLink?.kind === 'tool-use' ? child.spawnLink.id : child.childSessionId;
+}
+
+const STATUS_PRIORITY: Record<ChildStatus, number> = {
+  running: 0,
+  pending: 1,
+  paused: 2,
+  completed: 3,
+};
+
+export type NamedChildSession = { child: ChildSessionInfo; name: string; key: string };
+
+// Panel display order: whatever is still working sits on top, so a live agent is
+// never pushed behind the fold by agents that already finished.
+export function workingFirstChildSessions(
+  childSessions: readonly ChildSessionInfo[],
+): NamedChildSession[] {
+  // Fallback names are numbered from spawn order, so reordering by status must
+  // not renumber anyone: "Worker 2" stays Worker 2 when Worker 1 finishes.
+  return orderedChildSessions(childSessions)
+    .map((child, index) => ({
+      child,
+      name: childSessionLabel(child, index),
+      key: childSessionKey(child),
+    }))
+    .sort((a, b) => STATUS_PRIORITY[a.child.status] - STATUS_PRIORITY[b.child.status]);
 }
 
 // Placeholder ids carry this prefix; unresolved spawns can't be opened.

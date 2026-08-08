@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '../hooks/useStore';
 import { useSessionLive } from '../hooks/useSessionLive';
 import { useGitEnvironment } from '../hooks/useGitEnvironment';
@@ -15,7 +15,11 @@ import { EnvironmentSection } from './environment/EnvironmentSection';
 import { PullRequestPanel } from './environment/PullRequestPanel';
 import type { DiffStatMode } from '../types/vcs';
 import { diffModeToReviewScope } from '../lib/reviewScopes';
-import { childSessionIsLive, visibleSessionTarget } from '../lib/childSessions';
+import {
+  childSessionIsLive,
+  spawnedChildSessions,
+  visibleSessionTarget,
+} from '../lib/childSessions';
 
 export default function RightPanel() {
   const { state, dispatch } = useStore();
@@ -52,10 +56,22 @@ export default function RightPanel() {
   const working = useSessionLive(activeSession?.appSessionId ?? null);
 
   // Subagents spawned by this session, shown in the panel's Subagents section
-  // (which owns their display order).
-  const childSessions = activeSession
-    ? Object.values(state.childSessions[activeSession.appSessionId] ?? {})
-    : [];
+  // (which owns their display order). Derived from the spawn events the same way
+  // the feed's subagents card is, so both surfaces list a new agent at the same
+  // moment instead of the panel waiting for the store to register it.
+  const activeAppSessionId = activeSession?.appSessionId;
+  const transcript = activeAppSessionId ? state.transcripts[activeAppSessionId] : undefined;
+  const childSessions = useMemo(
+    () =>
+      activeAppSessionId
+        ? spawnedChildSessions(
+            transcript ?? [],
+            Object.values(state.childSessions[activeAppSessionId] ?? {}),
+            working,
+          )
+        : [],
+    [activeAppSessionId, transcript, state.childSessions, working],
+  );
   // Index access on these records is typed as always-present; Partial keeps the
   // lookup honest without changing runtime behavior.
   const childRuntimeByParent: Partial<typeof state.childRuntime> = state.childRuntime;

@@ -1,11 +1,17 @@
 // Subagents section of the right context panel: one row per spawned child
 // session with a pixel-creature identity, a quiet status readout, and a
-// "Show N more" fold so long waves don't flood the panel.
+// "Show N more" fold so long waves don't flood the panel. Working agents are
+// ordered first, so the fold only ever hides agents that have stopped.
 import { useState } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { Check } from 'lucide-react';
 import type { ChildSessionInfo } from '../hooks/useStore';
 import type { ChildStatus, ModelInfo } from '../types/bridge';
-import { childSessionLabel, childSessionMeta, orderedChildSessions } from '../lib/childSessions';
+import {
+  childSessionMeta,
+  isPendingChildPlaceholder,
+  workingFirstChildSessions,
+} from '../lib/childSessions';
 import { AgentAvatar } from './AgentAvatar';
 import { SectionHeader } from './environment/primitives';
 
@@ -35,18 +41,19 @@ function RowStatus({ status }: { status: ChildStatus }) {
 
 function SubagentRow({
   child,
-  index,
+  label,
+  seed,
   models,
   selected,
   onSelect,
 }: {
   child: ChildSessionInfo;
-  index: number;
+  label: string;
+  seed: string;
   models: ModelInfo[];
   selected: boolean;
   onSelect: (child: ChildSessionInfo) => void;
 }) {
-  const label = childSessionLabel(child, index);
   const model = models.find((m) => m.id === child.modelId);
   const meta = childSessionMeta(child, model?.displayName ?? child.modelId);
   return (
@@ -59,14 +66,16 @@ function SubagentRow({
     >
       <button
         type="button"
+        // A spawn the store has not registered yet has no session to open.
+        disabled={isPendingChildPlaceholder(child)}
         onClick={() => {
           onSelect(child);
         }}
         title={child.prompt ? `${meta}\n${child.prompt}` : meta}
-        className="flex min-w-0 flex-1 items-center gap-2.5 px-3 py-2 text-left"
+        className="flex min-w-0 flex-1 items-center gap-2.5 px-3 py-2 text-left disabled:cursor-default"
       >
         <span className="shrink-0 transition-[filter] group-hover:brightness-125">
-          <AgentAvatar seed={child.childSessionId} size={16} working={child.status === 'running'} />
+          <AgentAvatar seed={seed} size={16} working={child.status === 'running'} />
         </span>
         <span
           className={`min-w-0 flex-1 truncate text-[12.5px] font-medium ${
@@ -93,23 +102,42 @@ export function SubagentsSection({
   onSelect: (child: ChildSessionInfo) => void;
 }) {
   const [showAll, setShowAll] = useState(false);
-  const ordered = orderedChildSessions(childSessions);
+  const reduceMotion = useReducedMotion();
+  const ordered = workingFirstChildSessions(childSessions);
   const visible = showAll ? ordered : ordered.slice(0, VISIBLE_LIMIT);
 
   return (
     <div>
       <SectionHeader label="Subagents" />
       <div>
-        {visible.map((child, index) => (
-          <SubagentRow
-            key={child.childSessionId}
-            child={child}
-            index={index}
-            models={models}
-            selected={child.childSessionId === selectedChildSessionId}
-            onSelect={onSelect}
-          />
-        ))}
+        {/* Rows animate in as agents spawn and slide when one finishes and drops
+            below the still-working ones; `layout` does the reordering so nothing
+            jumps. */}
+        <AnimatePresence initial={false}>
+          {visible.map(({ child, name, key }) => (
+            <motion.div
+              key={key}
+              layout={reduceMotion ? false : 'position'}
+              initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6 }}
+              animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0 }}
+              // Leaving rows only fade: a row usually leaves because it dropped
+              // behind the fold, and sliding it anywhere would suggest it moved.
+              exit={{ opacity: 0 }}
+              transition={
+                reduceMotion ? { duration: 0.12 } : { type: 'spring', stiffness: 420, damping: 34 }
+              }
+            >
+              <SubagentRow
+                child={child}
+                label={name}
+                seed={key}
+                models={models}
+                selected={child.childSessionId === selectedChildSessionId}
+                onSelect={onSelect}
+              />
+            </motion.div>
+          ))}
+        </AnimatePresence>
       </div>
       {ordered.length > VISIBLE_LIMIT && (
         <button
