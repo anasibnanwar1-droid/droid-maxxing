@@ -191,10 +191,28 @@
     animation: dot-pulse 0.9s ease-in-out infinite;
   }
 
+  /* Subagent avatar pixels: a diagonal shimmer sweep while the agent works.
+     Per-pixel animation-delay (set inline) moves the wave across the creature. */
+  @keyframes agent-pixel-shimmer {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.25;
+    }
+  }
+
+  .agent-avatar-pixel {
+    animation: agent-pixel-shimmer 1.4s ease-in-out infinite;
+  }
+
   /* Infinite status indicators must respect reduced-motion preferences. */
   @media (prefers-reduced-motion: reduce) {
     .caret-blink,
-    .dot-pulse {
+    .dot-pulse,
+    .shimmer-text,
+    .agent-avatar-pixel {
       animation: none;
     }
   }
