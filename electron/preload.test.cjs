@@ -43,15 +43,25 @@ test('native browser IPC carries browserSessionId', async () => {
   assert.equal('sessionId' in calls[0].payload, false);
 });
 
-test('git turn baseline IPC carries appSessionId', async () => {
+test('git turn baseline IPC carries its provisional owner', async () => {
   const { api, calls } = loadApi();
 
-  await api.gitMarkTurnStart('/repo', 'app-1');
+  await api.gitMarkTurnStart('/repo', 'client-1');
 
   assert.equal(calls[0].channel, 'git-mark-turn-start');
   assert.equal(calls[0].payload.dir, '/repo');
+  assert.equal(calls[0].payload.ownerId, 'client-1');
+});
+
+test('git turn baseline adoption IPC correlates client and app session identities', async () => {
+  const { api, calls } = loadApi();
+
+  await api.gitAdoptTurnBaseline('/repo', 'client-1', 'app-1');
+
+  assert.equal(calls[0].channel, 'git-adopt-turn-baseline');
+  assert.equal(calls[0].payload.dir, '/repo');
+  assert.equal(calls[0].payload.clientRef, 'client-1');
   assert.equal(calls[0].payload.appSessionId, 'app-1');
-  assert.equal('sessionId' in calls[0].payload, false);
 });
 
 test('app icon IPC carries the selected mode', async () => {

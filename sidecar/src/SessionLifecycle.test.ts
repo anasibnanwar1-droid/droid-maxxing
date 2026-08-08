@@ -391,6 +391,7 @@ test('create and cold resume publish only after registration', async () => {
     resumed.events.slice(-2).map((event) => event.type),
     ['session.created', 'session.updated'],
   );
+  assert.equal(resumed.runtime.loadCalls[0]?.handlers.cwd, '/workspace');
   assert.equal(resumed.publicationRegistration.every(Boolean), true);
 });
 
@@ -433,7 +434,13 @@ test('create failure closes started MCP resources without publishing', async () 
     false,
   );
   assert.equal(
-    harness.events.some((event) => event.type === 'error' && event.message === 'create failed'),
+    harness.events.some(
+      (event) =>
+        event.type === 'error' &&
+        event.code === 'session.create_failed' &&
+        event.clientRef === 'client-1' &&
+        event.message === 'create failed',
+    ),
     true,
   );
 });

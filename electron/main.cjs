@@ -292,8 +292,11 @@ function registerIpc() {
   ipcMain.handle('git-diff-stat', (_event, { dir, options }) => gitVcs.diffStat(dir, options));
   ipcMain.handle('git-diff-files', (_event, { dir, options }) => gitVcs.diffFiles(dir, options));
   ipcMain.handle('git-file-diff', (_event, { dir, options }) => gitVcs.fileDiff(dir, options));
-  ipcMain.handle('git-mark-turn-start', (_event, { dir, appSessionId }) =>
-    gitVcs.markTurnStart(dir, appSessionId),
+  ipcMain.handle('git-mark-turn-start', (_event, { dir, ownerId }) =>
+    gitVcs.markTurnStart(dir, ownerId),
+  );
+  ipcMain.handle('git-adopt-turn-baseline', (_event, { dir, clientRef, appSessionId }) =>
+    gitVcs.adoptTurnBaseline(dir, clientRef, appSessionId),
   );
   ipcMain.handle('git-create-branch', (_event, { dir, options }) =>
     gitVcs.createBranch(dir, options),

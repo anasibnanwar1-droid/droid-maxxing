@@ -60,6 +60,8 @@ test('bridge refreshes sidecar identity before reconnecting', { concurrency: fal
     const first = FakeWebSocket.instances.at(-1);
     assert.ok(first);
     assert.equal(first.url, 'ws://127.0.0.1:43001?token=first-token');
+    assert.equal(bridge.sendIfConnected({ type: 'runtime.status' }), false);
+    assert.deepEqual(first.sent, []);
     first.close();
     assert.equal(reconnects.length, 1);
 
@@ -69,6 +71,12 @@ test('bridge refreshes sidecar identity before reconnecting', { concurrency: fal
     const second = FakeWebSocket.instances.at(-1);
     assert.ok(second);
     assert.equal(second.url, 'ws://127.0.0.1:43002?token=second-token');
+    second.open();
+    assert.equal(bridge.sendIfConnected({ type: 'runtime.status' }), true);
+    assert.deepEqual(
+      second.sent.map((command) => JSON.parse(command)),
+      [{ type: 'runtime.status' }],
+    );
   } finally {
     Object.assign(globalThis, { WebSocket: OldWebSocket });
   }
@@ -77,18 +85,28 @@ test('bridge refreshes sidecar identity before reconnecting', { concurrency: fal
 test('[R1] Renderer command round trip', { concurrency: false }, async () => {
   const oldWindow = globalThis.window;
   const OldWebSocket = globalThis.WebSocket;
+  const baselineAdoptions: unknown[][] = [];
   try {
     FakeWebSocket.instances = [];
     Object.assign(globalThis, {
       window: {
         droidControl: {
           bridgeInfo: async () => ({ port: 43123, token: 'r1-token' }),
+          gitAdoptTurnBaseline: async (...args: unknown[]) => {
+            baselineAdoptions.push(args);
+            return { ok: true };
+          },
         },
       },
       WebSocket: FakeWebSocket,
     });
-    const { createSession, interruptVisibleSession, openChild, updateChildSettings } =
-      await import('./commands.js');
+    const {
+      createSession,
+      interruptVisibleSession,
+      openChild,
+      reanchorSessionsForWorktreeRemoval,
+      updateChildSettings,
+    } = await import('./commands.js');
     const { bridge } = await import('./bridge.js');
     const seen: ServerEvent[] = [];
     const unsubscribe = bridge.subscribe((event) => seen.push(event));
@@ -148,6 +166,26 @@ test('[R1] Renderer command round trip', { concurrency: false }, async () => {
       type: 'session.interrupt',
       appSessionId: 'r1',
     });
+    const reanchoring = reanchorSessionsForWorktreeRemoval('/repo/.worktrees/feature', '/repo');
+    const reanchorCommand = JSON.parse(socket.sent[5] ?? '') as {
+      type: string;
+      requestId: string;
+      fromCwd: string;
+      toCwd: string;
+    };
+    assert.deepEqual(reanchorCommand, {
+      type: 'sessions.reanchorCwd',
+      requestId: reanchorCommand.requestId,
+      fromCwd: '/repo/.worktrees/feature',
+      toCwd: '/repo',
+    });
+    socket.message({
+      type: 'sessions.cwdReanchored',
+      requestId: reanchorCommand.requestId,
+      ok: true,
+      count: 2,
+    });
+    assert.equal(await reanchoring, 2);
     const session = {
       appSessionId: 'r1',
       providerSessionId: 'provider-r1',
@@ -156,7 +194,7 @@ test('[R1] Renderer command round trip', { concurrency: false }, async () => {
       role: 'primary',
       title: 'R1',
       goal: 'hello',
-      cwd: '',
+      cwd: '/repo',
       autonomy: 'low',
       phase: 'intake',
       features: [],
@@ -168,10 +206,11 @@ test('[R1] Renderer command round trip', { concurrency: false }, async () => {
     } as const;
 
     socket.message({ type: 'session.created', clientRef: 'r1-create', session });
-    assert.equal(seen.length, 1);
+    assert.deepEqual(baselineAdoptions, [['/repo', 'r1-create', 'r1']]);
+    assert.equal(seen.length, 2);
     unsubscribe();
     socket.message({ type: 'session.updated', session });
-    assert.equal(seen.length, 1);
+    assert.equal(seen.length, 2);
     assert.equal(FakeWebSocket.instances.length, 1);
   } finally {
     Object.assign(globalThis, { window: oldWindow, WebSocket: OldWebSocket });

@@ -87,6 +87,43 @@ test('a primary error fails only the primary session', () => {
   assert.equal(next.sessions['app-1']?.phase, 'failed');
 });
 
+test('a create failure clears only its matching pending first message', () => {
+  const withFirst = reducer(initialState, {
+    type: 'SET_PENDING_COMPOSE',
+    clientRef: 'client-1',
+    text: 'first',
+    skills: [],
+    files: [],
+  });
+  const withBoth = reducer(withFirst, {
+    type: 'SET_PENDING_COMPOSE',
+    clientRef: 'client-2',
+    text: 'second',
+    skills: [],
+    files: [],
+  });
+  const failure = {
+    type: 'error' as const,
+    code: 'session.create_failed',
+    clientRef: 'client-1',
+    message: 'Could not create session',
+  };
+  const action = adaptEvent(failure);
+  assert.ok(action);
+  assert.deepEqual(action, {
+    type: 'SESSION_CREATE_FAILED',
+    clientRef: 'client-1',
+    message: failure.message,
+  });
+
+  const next = reducer(withBoth, action);
+  assert.deepEqual(Object.keys(next.pendingCompose), ['client-2']);
+  assert.equal(next.pendingCompose['client-2']?.text, 'second');
+  assert.equal(next.sessions, withBoth.sessions);
+  assert.equal(next.activeAppSessionId, withBoth.activeAppSessionId);
+  assert.equal(toastMessageForEvent(failure), failure.message);
+});
+
 test('a matching child-open error settles access without failing the parent session', () => {
   const action = adaptEvent({
     type: 'child.error',

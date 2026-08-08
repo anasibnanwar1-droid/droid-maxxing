@@ -279,6 +279,45 @@ test('failed summary persistence leaves live state unchanged and unpublished', (
   assert.deepEqual(published, []);
 });
 
+test('reanchorHistoricalCwd moves idle sessions and preserves nested directories', () => {
+  const historical = [
+    summary('at-root', { cwd: '/repo/.worktrees/feature', updatedAt: 7 }),
+    summary('nested', { cwd: '/repo/.worktrees/feature/packages/app', updatedAt: 8 }),
+    summary('sibling', { cwd: '/repo/.worktrees/feature-next', updatedAt: 9 }),
+  ];
+  const { history, published, registry } = createHarness({ ordinary: historical });
+
+  const updated = registry.reanchorHistoricalCwd('/repo/.worktrees/feature', '/repo');
+
+  assert.deepEqual(
+    updated.map((session) => [session.appSessionId, session.cwd, session.updatedAt]),
+    [
+      ['at-root', '/repo', 7],
+      ['nested', '/repo/packages/app', 8],
+    ],
+  );
+  assert.equal(registry.resolveSummary('at-root')?.cwd, '/repo');
+  assert.equal(registry.resolveSummary('nested')?.cwd, '/repo/packages/app');
+  assert.equal(registry.resolveSummary('sibling')?.cwd, '/repo/.worktrees/feature-next');
+  assert.deepEqual(published, updated);
+  assert.deepEqual(history.persisted, updated);
+});
+
+test('reanchorHistoricalCwd refuses to move a worktree used by a live session', () => {
+  const historical = summary('historical', { cwd: '/repo/.worktrees/feature' });
+  const { history, published, registry } = createHarness({ ordinary: [historical] });
+  registry.register(live(summary('live', { cwd: '/repo/.worktrees/feature/subdir' })));
+  history.persisted.length = 0;
+
+  assert.throws(
+    () => registry.reanchorHistoricalCwd('/repo/.worktrees/feature', '/repo'),
+    /live session is still using/i,
+  );
+  assert.deepEqual(history.persisted, []);
+  assert.deepEqual(published, []);
+  assert.equal(registry.resolveSummary('historical')?.cwd, '/repo/.worktrees/feature');
+});
+
 test('replaceProvider retains the alias chain and supports live and historical sessions', () => {
   let timestamp = 10;
   const historical = summary('historical-app', {

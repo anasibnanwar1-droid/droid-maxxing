@@ -629,7 +629,7 @@ export default function PromptInput({
       clearAfterSubmit();
       // Snapshot the tree before the agent's first turn so the Review "Last
       // turn" scope only attributes changes this session actually makes.
-      await markGitTurnStart(dir);
+      await markGitTurnStart(dir, clientRef);
       createSession({
         clientRef,
         cwd: dir,
@@ -660,7 +660,7 @@ export default function PromptInput({
       registerPending(clientRef);
       // Clear before the baseline await (see above) so fast typing isn't lost.
       clearAfterSubmit();
-      if (dir) await markGitTurnStart(dir);
+      if (dir) await markGitTurnStart(dir, clientRef);
       createSession({
         clientRef,
         cwd: dir,

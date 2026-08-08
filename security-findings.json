@@ -1,56 +1,46 @@
 {
-  "scan_id": "scan-2026-07-25-055",
-  "scan_date": "2026-07-25T17:33:59Z",
-  "scan_type": "pr",
-  "commit_range": "origin/main..working-tree",
-  "pr_number": 55,
+  "scan_id": "scan-2026-08-07-responsive-worktree-settings",
+  "scan_date": "2026-08-07T16:48:10Z",
+  "scan_type": "working",
+  "commit_range": "HEAD..working-tree",
+  "pr_number": null,
   "threat_model_version": "1.0.0",
   "findings": [],
   "reviewed_candidates": [
     {
-      "id": "files-path-traversal-toctou",
+      "id": "dirty-worktree-force-removal-tampering",
       "disposition": "mitigated",
-      "reason": "Root-token authorization, lexical and realpath confinement, symlink-walk checks, O_NOFOLLOW, and post-open device/inode verification prevent file-content disclosure outside the authorized root."
+      "reason": "The UI derives the removal path from Git's registered worktree list, checks the target for uncommitted files, and only sends force=true after a second explicit Delete anyway action. The existing Electron Git boundary rejects targets that are not registered non-main worktrees."
     },
     {
-      "id": "terminal-shell-args-env-override",
-      "disposition": "not-reachable",
-      "reason": "Renderer IPC forwards only missionId, cwd, cols, and rows; internal shell, args, and env overrides are not exposed through the production bridge."
-    },
-    {
-      "id": "terminal-environment-inheritance",
-      "disposition": "accepted-functionality",
-      "reason": "The PTY is an explicitly user-opened local shell, the sender is authorized, and inherited launch environment values are already available to that same local user."
-    },
-    {
-      "id": "native-browser-ipc-authorization",
+      "id": "unmerged-branch-destruction",
       "disposition": "mitigated",
-      "reason": "All new privileged native-browser IPC handlers authorize the main renderer; child-view events are mapped back to an owned native browser session."
+      "reason": "Forced worktree deletion does not force branch deletion. Cleanup continues to use git branch -d, and the integration test verifies that a dirty worktree can be explicitly removed while its unmerged branch remains."
     },
     {
-      "id": "browser-inspection-information-disclosure",
+      "id": "worktree-metadata-xss",
       "disposition": "mitigated",
-      "reason": "Inspection and design payloads remove script, style, and noscript text, redact sensitive fields and attributes, sanitize URL-bearing attributes, and bound returned text and HTML."
+      "reason": "Worktree paths, branch names, pull request state, and conversation titles are rendered as ordinary React text. The redesign adds no raw HTML, URL navigation, shell construction, or executable interpolation."
     },
     {
-      "id": "browser-diagnostic-secret-leakage-redos",
+      "id": "dirty-preflight-toctou",
+      "disposition": "accepted",
+      "reason": "The uncommitted-file count is a preflight snapshot and can become stale before confirmation. This does not cross an authorization boundary: dirty removal always requires the explicit destructive confirmation, and the main process revalidates the registered worktree target immediately before removal."
+    },
+    {
+      "id": "stale-dirty-check-result",
       "disposition": "mitigated",
-      "reason": "Diagnostic URLs and console messages redact credential-like values with bounded linear scanning, and network and console buffers are capped."
+      "reason": "Each dirty-status preflight captures a request generation. Canceling the dialog or starting a newer check invalidates older results before they can update or authorize the current confirmation."
     },
     {
-      "id": "docx-preview-active-content",
+      "id": "pull-request-enrichment-resource-use",
       "disposition": "mitigated",
-      "reason": "DOCX preview removes active elements, rejects unsafe CSS constructs, disables alt-chunk rendering, and sanitizes generated content before insertion."
+      "reason": "Core worktree inventory renders before optional pull-request metadata. Metadata lookups are bounded to six concurrent requests, operate only on Git-registered worktrees, and use the existing load generation to prevent stale results from replacing newer state."
     },
     {
-      "id": "legacy-renderer-xss-and-ipc-risks",
-      "disposition": "pre-existing",
-      "reason": "Unsafe SVG/Mermaid rendering and legacy unguarded IPC channels predate this PR; the PR does not introduce or weaken those paths."
-    },
-    {
-      "id": "browser-file-url-and-shared-partition",
-      "disposition": "pre-existing-accepted-risk",
-      "reason": "Local file navigation and a shared persistent browser partition are documented product trade-offs that predate the scanned change set."
+      "id": "progressive-reveal-resource-use",
+      "disposition": "accepted",
+      "reason": "The initial view renders only five worktrees per repository. Explicitly expanding a repository performs local matching over its registered worktrees and in-memory sessions; no new listener, polling loop, or attacker-controlled allocation is introduced."
     }
   ],
   "summary": {
@@ -69,7 +59,7 @@
       "DoS": 0,
       "ElevationOfPrivilege": 0
     },
-    "files_analyzed": 96
+    "files_analyzed": 8
   },
   "thresholds": {
     "block_merge": ["CRITICAL"],

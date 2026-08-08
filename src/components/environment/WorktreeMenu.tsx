@@ -7,7 +7,22 @@ import { activeSessionCwds } from '../../lib/sessions';
 import { utilityTerminalCwds } from '../../lib/utilityPanel';
 import { useBusyAction } from '../../hooks/useBusyAction';
 import { toast } from '../../lib/toast';
+import { reanchorSessionsForWorktreeRemoval } from '../../lib/commands';
+import { removeWorktreeAndReanchor } from '../../lib/worktreeRemoval';
 import type { GitBranchList, GitEnvironment, GitWorktree } from '../../types/vcs';
+
+function notifyWorktreeRemoved(reanchored: number, reanchorFailed: boolean): void {
+  if (reanchorFailed) {
+    toast.error('Worktree removed, but linked chats could not be moved to main');
+    return;
+  }
+  const sessionsLabel = reanchored === 1 ? 'chat now uses' : 'chats now use';
+  const message =
+    reanchored > 0
+      ? `Worktree removed; ${String(reanchored)} historical ${sessionsLabel} the main checkout`
+      : 'Worktree removed';
+  toast.success(message);
+}
 
 export function WorktreeMenu({
   cwd,
@@ -52,6 +67,7 @@ export function WorktreeMenu({
   };
 
   const current = worktrees.find((w) => w.isCurrent);
+  const mainWorktree = worktrees.find((w) => w.isMain);
   const others = worktrees.filter((w) => !w.isCurrent && !w.bare && w.path);
   const sessionCwds = useMemo(
     () =>
@@ -87,9 +103,21 @@ export function WorktreeMenu({
     run(async () => {
       setRemoving(path);
       try {
-        const res = await removeGitWorktree(cwd, { path });
+        const mainPath = mainWorktree?.path;
+        if (!mainPath) {
+          toast.error('Could not find the main checkout for this repository');
+          return;
+        }
+        const {
+          result: res,
+          reanchored,
+          reanchorFailed,
+        } = await removeWorktreeAndReanchor(
+          () => removeGitWorktree(cwd, { path }),
+          () => reanchorSessionsForWorktreeRemoval(path, mainPath),
+        );
         if (res.ok) {
-          toast.success('Worktree removed');
+          notifyWorktreeRemoved(reanchored, reanchorFailed);
           onChanged();
         } else if (
           res.reason === 'git_error' &&
@@ -97,10 +125,10 @@ export function WorktreeMenu({
         ) {
           toast.error('Worktree has changes — commit or discard first');
         } else {
-          toast.error(res.message || 'Could not remove worktree');
+          toast.error(res.message ?? 'Could not remove worktree');
         }
-      } catch {
-        toast.error('Could not remove worktree');
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Could not prepare worktree removal');
       } finally {
         setRemoving(null);
       }
@@ -121,7 +149,7 @@ export function WorktreeMenu({
         } else if (res.reason === 'exists') {
           toast.error('A worktree already exists at that path');
         } else {
-          toast.error(res.message || 'Could not create worktree');
+          toast.error(res.message ?? 'Could not create worktree');
         }
       } catch {
         toast.error('Could not create worktree');
@@ -140,7 +168,9 @@ export function WorktreeMenu({
     <>
       <button
         ref={anchorRef}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          setOpen((v) => !v);
+        }}
         aria-expanded={open}
         aria-haspopup="dialog"
         title="Worktrees"
@@ -171,7 +201,9 @@ export function WorktreeMenu({
 
       <Popover
         open={open}
-        onClose={() => setOpen(false)}
+        onClose={() => {
+          setOpen(false);
+        }}
         anchorRef={anchorRef}
         label="Worktrees"
         align="right"
@@ -206,7 +238,9 @@ export function WorktreeMenu({
               className="group flex items-center gap-2 px-2.5 py-1.5 transition-colors hover:bg-droid-elevated/60"
             >
               <button
-                onClick={() => w.path && openInNewChat(w.path, w.branch)}
+                onClick={() => {
+                  if (w.path) openInNewChat(w.path, w.branch);
+                }}
                 title="Open this worktree in a new chat"
                 className="flex min-w-0 flex-1 items-center gap-2 text-left"
               >
@@ -246,7 +280,9 @@ export function WorktreeMenu({
                     <Check className="h-3.5 w-3.5" strokeWidth={3} />
                   </button>
                   <button
-                    onClick={() => setConfirming(null)}
+                    onClick={() => {
+                      setConfirming(null);
+                    }}
                     title="Cancel"
                     className="rounded p-1 text-droid-text-muted hover:bg-droid-elevated"
                   >
@@ -255,7 +291,9 @@ export function WorktreeMenu({
                 </div>
               ) : (
                 <button
-                  onClick={() => w.path && setConfirming(w.path)}
+                  onClick={() => {
+                    if (w.path) setConfirming(w.path);
+                  }}
                   disabled={busy}
                   title="Remove worktree"
                   className="shrink-0 rounded p-1 text-droid-text-muted/0 transition-colors group-hover:text-droid-text-muted hover:!text-droid-orange disabled:opacity-40"
@@ -273,13 +311,17 @@ export function WorktreeMenu({
               <input
                 autoFocus
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) => {
+                  setName(e.target.value);
+                }}
                 onKeyDown={(e) => e.key === 'Enter' && !pickingBase && void doCreate()}
                 placeholder="new-branch-name"
                 className="w-full rounded-md bg-droid-bg/60 px-2 py-1 text-[12px] text-droid-text placeholder:text-droid-text-muted/70 focus:outline-none"
               />
               <button
-                onClick={() => setPickingBase((v) => !v)}
+                onClick={() => {
+                  setPickingBase((v) => !v);
+                }}
                 className="flex w-full items-center gap-1.5 rounded-md bg-droid-bg/40 px-2 py-1 text-[11.5px] text-droid-text-secondary hover:bg-droid-bg/60"
               >
                 <span className="text-droid-text-muted">Base</span>
@@ -313,7 +355,9 @@ export function WorktreeMenu({
               )}
               <div className="flex items-center justify-end gap-1.5">
                 <button
-                  onClick={() => setCreating(false)}
+                  onClick={() => {
+                    setCreating(false);
+                  }}
                   className="rounded-md px-2 py-1 text-[11px] text-droid-text-muted hover:text-droid-text"
                 >
                   Cancel

@@ -176,6 +176,43 @@ test('resume keeps the historical updatedAt so reading never reorders the sideba
   assert.equal(resumed.summary.createdAt, 100);
 });
 
+test('resume keeps an app-reanchored cwd instead of restoring stale provider metadata', () => {
+  const historical: SessionSummary = {
+    appSessionId: 'app-session',
+    providerSessionId: 'provider-session',
+    sessionPurpose: 'chat',
+    interactionMode: 'auto',
+    role: 'primary',
+    title: 'Recovered chat',
+    goal: '',
+    cwd: '/repo',
+    workspaceKind: 'folder',
+    autonomy: 'low',
+    phase: 'paused',
+    features: [],
+    tokensIn: 0,
+    tokensOut: 0,
+    contextTokens: 0,
+    createdAt: 1,
+    updatedAt: 1,
+  };
+
+  const resumed = buildResumedSession({
+    init: {
+      cwd: '/repo/.worktrees/deleted',
+      session: { cwd: '/repo/.worktrees/deleted' },
+    },
+    historical,
+    appSessionId: historical.appSessionId,
+    providerSessionId: historical.providerSessionId ?? historical.appSessionId,
+    defaults: {},
+    maxContextTokensForModel: () => undefined,
+    now: 2,
+  });
+
+  assert.equal(resumed.summary.cwd, '/repo');
+});
+
 test('a child provider cannot be resumed as a top-level session', () => {
   assert.throws(
     () =>

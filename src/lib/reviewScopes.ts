@@ -36,7 +36,13 @@ export function diffModeToReviewScope(mode: DiffStatMode): DiffScope {
 // the app restarted and no baseline exists) the file drops out of the list.
 // Falling through to broader scopes still lands the user on the file's current
 // diff instead of leaving them on an unrelated file list.
-const REVIEW_FOCUS_SCOPE_CHAIN: DiffScope[] = ['last_turn', 'uncommitted', 'worktree'];
+const REVIEW_FOCUS_SCOPE_CHAIN: DiffScope[] = [
+  'last_turn',
+  'uncommitted',
+  'worktree',
+  'branch',
+  'commit',
+];
 
 // The next scope to try for a focus request, or null when the chain is
 // exhausted (or the current scope is not part of the chain, e.g. the user

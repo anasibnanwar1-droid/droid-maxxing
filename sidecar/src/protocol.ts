@@ -561,6 +561,7 @@ export type ClientCommand =
   | { type: 'session.compact'; appSessionId: string; customInstructions?: string }
   | { type: 'session.fork'; appSessionId: string }
   | { type: 'session.rename'; appSessionId: string; title: string }
+  | { type: 'sessions.reanchorCwd'; requestId: string; fromCwd: string; toCwd: string }
   | { type: 'session.rewindInfo'; appSessionId: string }
   | { type: 'session.rewind'; appSessionId: string; rewindId?: string }
   | { type: 'session.close'; appSessionId: string }
@@ -733,6 +734,13 @@ export type ServerEvent =
   | { type: 'session.created'; clientRef: string; session: SessionSummary }
   | { type: 'session.updated'; session: SessionSummary }
   | { type: 'session.closed'; appSessionId: string }
+  | {
+      type: 'sessions.cwdReanchored';
+      requestId: string;
+      ok: boolean;
+      count: number;
+      message?: string;
+    }
   | ChildUpdatedEvent
   | ChildErrorEvent
   | { type: 'event.appended'; event: TranscriptEvent }
@@ -764,6 +772,7 @@ export type ServerEvent =
   | {
       type: 'error';
       code?: string;
+      clientRef?: string;
       appSessionId?: string;
       providerSessionId?: string;
       message: string;

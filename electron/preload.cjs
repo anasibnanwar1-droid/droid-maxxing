@@ -38,8 +38,9 @@ contextBridge.exposeInMainWorld('droidControl', {
   gitDiffStat: (dir, options) => ipcRenderer.invoke('git-diff-stat', { dir, options }),
   gitDiffFiles: (dir, options) => ipcRenderer.invoke('git-diff-files', { dir, options }),
   gitFileDiff: (dir, options) => ipcRenderer.invoke('git-file-diff', { dir, options }),
-  gitMarkTurnStart: (dir, appSessionId) =>
-    ipcRenderer.invoke('git-mark-turn-start', { dir, appSessionId }),
+  gitMarkTurnStart: (dir, ownerId) => ipcRenderer.invoke('git-mark-turn-start', { dir, ownerId }),
+  gitAdoptTurnBaseline: (dir, clientRef, appSessionId) =>
+    ipcRenderer.invoke('git-adopt-turn-baseline', { dir, clientRef, appSessionId }),
   gitCreateBranch: (dir, options) => ipcRenderer.invoke('git-create-branch', { dir, options }),
   gitCheckout: (dir, options) => ipcRenderer.invoke('git-checkout', { dir, options }),
   gitCreateWorktree: (dir, options) => ipcRenderer.invoke('git-create-worktree', { dir, options }),

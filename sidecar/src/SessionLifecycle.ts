@@ -184,7 +184,13 @@ export class SessionLifecycle {
       this.driveInBackground(appSessionId, command.goal);
     } catch (error) {
       await this.cleanupFailedOpen(pendingMcpServers, pendingSession, pendingLiveSession);
-      if (!isOpenAdmissionClosed(error)) d.emitError({ message: errMsg(error) });
+      if (!isOpenAdmissionClosed(error)) {
+        d.emitError({
+          code: 'session.create_failed',
+          clientRef: command.clientRef,
+          message: errMsg(error),
+        });
+      }
     }
   }
 
@@ -234,6 +240,7 @@ export class SessionLifecycle {
         permissionHandler: d.makePermissionHandler(ref),
         askUserHandler: d.makeAskUserHandler(ref),
         mcpServers: mcp.configs,
+        cwd: historical?.cwd,
       });
       pendingSession = session;
       const defaults = await d.getFactoryDefaults();

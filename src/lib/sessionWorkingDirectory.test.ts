@@ -58,6 +58,19 @@ test('uses a linked worktree named in an execution working directory', () => {
   assert.equal(sessionWorkingDirectory(main, transcript, worktrees), linked);
 });
 
+test('keeps a session in a linked worktree nested beneath the main worktree', () => {
+  const nested = `${main}/.worktrees/reload-issue`;
+  const registered = [worktrees[0], { ...worktrees[1], path: nested, branch: 'reload-issue' }];
+  const transcript = [
+    tool('1', 'write_file', {
+      file_path: `${nested}/src/app.ts`,
+      content: 'export {}',
+    }),
+  ];
+
+  assert.equal(sessionWorkingDirectory(nested, transcript, registered), nested);
+});
+
 test('detects the worktree created by a git worktree command', () => {
   const transcript = [
     tool('1', 'exec_command', {

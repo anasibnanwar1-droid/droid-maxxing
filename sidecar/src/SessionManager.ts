@@ -503,6 +503,25 @@ export class SessionManager {
       case 'session.rename':
         await this.renameSession(cmd.appSessionId, cmd.title);
         return;
+      case 'sessions.reanchorCwd':
+        try {
+          const sessions = this.registry.reanchorHistoricalCwd(cmd.fromCwd, cmd.toCwd);
+          this.emit({
+            type: 'sessions.cwdReanchored',
+            requestId: cmd.requestId,
+            ok: true,
+            count: sessions.length,
+          });
+        } catch (error) {
+          this.emit({
+            type: 'sessions.cwdReanchored',
+            requestId: cmd.requestId,
+            ok: false,
+            count: 0,
+            message: errMsg(error),
+          });
+        }
+        return;
       case 'session.rewindInfo':
         await this.withSession(cmd.appSessionId, (session) => session.getRewindInfo({} as never));
         return;
@@ -1533,6 +1552,7 @@ export class SessionManager {
 
   private emitError(error: {
     code?: string;
+    clientRef?: string;
     providerSessionId?: string;
     appSessionId?: string;
     message: string;

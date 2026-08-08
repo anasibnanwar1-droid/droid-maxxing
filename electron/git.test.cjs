@@ -5,7 +5,15 @@ const fsp = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 
-const { diffFiles, fileDiff, markTurnStart } = require('./git.cjs');
+const {
+  adoptTurnBaseline,
+  branches,
+  createWorktree,
+  diffFiles,
+  fileDiff,
+  markTurnStart,
+  removeWorktree,
+} = require('./git.cjs');
 
 // Integration tests for the last_turn review scope, driven through the module's
 // public API against real scratch repositories. Each scenario gets its own
@@ -102,26 +110,29 @@ test('last_turn follows the latest baseline once a newer turn begins', async () 
   assert.deepEqual(pathsOf(res), []);
 });
 
-test('the repo-level baseline is a fallback only for sessions without their own', async () => {
+test('concurrent first turns adopt separate client baselines', async () => {
   const dir = await makeRepo();
   await write(dir, 'seed.txt', 'seed\n');
   await commitAll(dir, 'init');
 
-  // First prompt of a brand-new session: no appSessionId exists yet, so the
-  // baseline is stored under the repo-level key.
-  await markTurnStart(dir);
-  await write(dir, 'created.txt', 'new\n');
+  await markTurnStart(dir, 'client-a');
+  await write(dir, 'a.txt', 'a\n');
+  await markTurnStart(dir, 'client-b');
+  await write(dir, 'b.txt', 'b\n');
 
-  // A session without its own baseline (the new session, once it has an ID)
-  // falls back to the repo-level mark and sees the turn's work.
-  let res = await diffFiles(dir, { mode: 'last_turn', appSessionId: 'brand-new-session' });
-  assert.ok(pathsOf(res).includes('created.txt'));
+  assert.deepEqual(await adoptTurnBaseline(dir, 'client-a', 'session-a'), { ok: true });
+  assert.deepEqual(await adoptTurnBaseline(dir, 'client-b', 'session-b'), { ok: true });
+  assert.deepEqual(
+    pathsOf(await diffFiles(dir, { mode: 'last_turn', appSessionId: 'session-a' })),
+    ['a.txt', 'b.txt'],
+  );
+  assert.deepEqual(
+    pathsOf(await diffFiles(dir, { mode: 'last_turn', appSessionId: 'session-b' })),
+    ['b.txt'],
+  );
 
-  // A session with its own baseline never reads the repo-level mark, so work
-  // that predates its first turn stays out of its last-turn view.
-  await markTurnStart(dir, 'session-b');
-  res = await diffFiles(dir, { mode: 'last_turn', appSessionId: 'session-b' });
-  assert.deepEqual(pathsOf(res), []);
+  // Adoption moves rather than copies the provisional entry.
+  assert.deepEqual(await adoptTurnBaseline(dir, 'client-a', 'session-c'), { ok: false });
 });
 
 test('last_turn fileDiff renders a file created during the turn', async () => {
@@ -150,4 +161,152 @@ test('last_turn works in an unborn repo via the write-tree baseline', async () =
   await write(dir, 'first.txt', 'x\n');
   const res = await diffFiles(dir, { mode: 'last_turn', appSessionId: 'session-a' });
   assert.ok(pathsOf(res).includes('first.txt'));
+});
+
+test('a created worktree keeps its review diff after its base branch merges it', async () => {
+  const dir = await makeRepo();
+  await write(dir, 'seed.txt', 'seed\n');
+  await commitAll(dir, 'init');
+  const baseCommit = (await git(dir, ['rev-parse', 'HEAD'])).trim();
+  const baseBranch = (await git(dir, ['branch', '--show-current'])).trim();
+
+  const created = await createWorktree(dir, {
+    branch: 'feature/review-after-merge',
+    base: baseBranch,
+    newBranch: true,
+  });
+  assert.equal(created.ok, true);
+  assert.equal(
+    created.path,
+    path.join(await fsp.realpath(dir), '.worktrees', 'feature-review-after-merge'),
+  );
+
+  await write(created.path, 'feature.txt', 'kept for historical review\n');
+  await commitAll(created.path, 'feature');
+  const featureCommit = (await git(created.path, ['rev-parse', 'HEAD'])).trim();
+
+  // Simulate main fast-forwarding when the branch is merged. The worktree
+  // remains open on the feature branch, and Review must still show what that
+  // session produced rather than comparing two refs that now point together.
+  await git(dir, ['update-ref', `refs/heads/${baseBranch}`, featureCommit, baseCommit]);
+
+  for (const mode of ['branch', 'worktree']) {
+    const files = await diffFiles(created.path, { mode });
+    assert.deepEqual(pathsOf(files), ['feature.txt'], `${mode} scope lost the merged change`);
+
+    const rendered = await fileDiff(created.path, { mode, path: 'feature.txt' });
+    assert.match(rendered.diff, /\+kept for historical review/);
+  }
+});
+
+test('worktree removal deletes only a branch Git confirms is merged', async () => {
+  const unmergedRoot = await makeRepo();
+  await write(unmergedRoot, 'base.txt', 'base\n');
+  await commitAll(unmergedRoot, 'base');
+  const unmerged = await createWorktree(unmergedRoot, {
+    branch: 'unmerged-feature',
+    base: 'HEAD',
+    newBranch: true,
+  });
+  assert.equal(unmerged.ok, true);
+  await write(unmerged.path, 'feature.txt', 'feature\n');
+  await commitAll(unmerged.path, 'feature');
+  assert.equal(
+    (await branches(unmergedRoot)).local.find((branch) => branch.name === 'unmerged-feature')
+      ?.merged,
+    false,
+  );
+
+  const kept = await removeWorktree(unmergedRoot, {
+    path: unmerged.path,
+    deleteBranch: true,
+  });
+  assert.equal(kept.ok, true);
+  assert.equal(kept.branchDeleted, false);
+  assert.match(kept.message, /branch was kept/i);
+  assert.equal(
+    (await git(unmergedRoot, ['branch', '--list', 'unmerged-feature'])).trim(),
+    'unmerged-feature',
+  );
+
+  const mergedRoot = await makeRepo();
+  await write(mergedRoot, 'base.txt', 'base\n');
+  await commitAll(mergedRoot, 'base');
+  const merged = await createWorktree(mergedRoot, {
+    branch: 'merged-feature',
+    base: 'HEAD',
+    newBranch: true,
+  });
+  assert.equal(merged.ok, true);
+  await write(merged.path, 'feature.txt', 'feature\n');
+  await commitAll(merged.path, 'feature');
+  await git(mergedRoot, ['merge', '--ff-only', 'merged-feature']);
+  assert.equal(
+    (await branches(mergedRoot)).local.find((branch) => branch.name === 'merged-feature')?.merged,
+    true,
+  );
+
+  const deleted = await removeWorktree(mergedRoot, {
+    path: merged.path,
+    deleteBranch: true,
+  });
+  assert.equal(deleted.ok, true);
+  assert.equal(deleted.branchDeleted, true);
+  assert.equal((await git(mergedRoot, ['branch', '--list', 'merged-feature'])).trim(), '');
+});
+
+test('dirty worktree removal requires force and still keeps an unmerged branch', async () => {
+  const root = await makeRepo();
+  await write(root, 'base.txt', 'base\n');
+  await commitAll(root, 'base');
+  const created = await createWorktree(root, {
+    branch: 'dirty-feature',
+    base: 'HEAD',
+    newBranch: true,
+  });
+  assert.equal(created.ok, true);
+  await write(created.path, 'feature.txt', 'committed feature\n');
+  await commitAll(created.path, 'feature');
+  await write(created.path, 'unsaved.txt', 'do not discard without confirmation\n');
+
+  const blocked = await removeWorktree(root, {
+    path: created.path,
+    deleteBranch: true,
+  });
+  assert.equal(blocked.ok, false);
+  assert.equal(
+    (await fsp.readFile(path.join(created.path, 'unsaved.txt'), 'utf8')).trim(),
+    'do not discard without confirmation',
+  );
+
+  const removed = await removeWorktree(root, {
+    path: created.path,
+    deleteBranch: true,
+    force: true,
+  });
+  assert.equal(removed.ok, true);
+  assert.equal(removed.branchDeleted, false);
+  assert.equal((await git(root, ['branch', '--list', 'dirty-feature'])).trim(), 'dirty-feature');
+});
+
+test('uncommitted file entries all render a current diff', async () => {
+  const dir = await makeRepo();
+  await write(dir, 'edited.txt', 'before\n');
+  await write(dir, 'deleted.txt', 'remove me\n');
+  await write(dir, 'renamed.txt', 'rename me\n');
+  await commitAll(dir, 'init');
+
+  await write(dir, 'edited.txt', 'after\n');
+  await fsp.rm(path.join(dir, 'deleted.txt'));
+  await git(dir, ['mv', 'renamed.txt', 'moved.txt']);
+  await write(dir, 'untracked.txt', 'brand new\n');
+
+  const result = await diffFiles(dir, { mode: 'uncommitted' });
+  assert.deepEqual(pathsOf(result), ['deleted.txt', 'edited.txt', 'moved.txt', 'untracked.txt']);
+  assert.equal(result.files.find((file) => file.path === 'moved.txt')?.status, 'renamed');
+
+  for (const file of result.files) {
+    const rendered = await fileDiff(dir, { mode: 'uncommitted', path: file.path });
+    assert.notEqual(rendered.diff, '', `${file.status} ${file.path} had no diff`);
+  }
 });

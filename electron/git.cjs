@@ -315,13 +315,21 @@ function storedBase(root, branch) {
   return tryRun(root, ['config', `branch.${branch}.droidcontrolBase`]);
 }
 
+function storedBaseCommit(root, branch) {
+  if (!branch) return Promise.resolve(null);
+  return tryRun(root, ['config', `branch.${branch}.droidcontrolBaseCommit`]);
+}
+
 // The ref the current branch was forked from: the user's chosen base (persisted
-// at creation), verified to still exist, else the repo's default branch. Diffs
-// and Review scopes compare against this so a branch cut from `develop` is not
-// measured against main (which would surface unrelated changes).
+// at creation), with its immutable commit preferred for diffs. Keeping the
+// selected ref separately lets the UI still display "main" or "origin/main",
+// while the comparison remains useful after that ref advances through a merge.
 function effectiveBaseRef(root) {
   return cachedRead(root, 'baseRef', async () => {
     const branch = await tryRun(root, ['symbolic-ref', '--short', 'HEAD']);
+    const forkCommit = branch ? await storedBaseCommit(root, branch) : null;
+    if (forkCommit && (await tryRun(root, ['rev-parse', '--verify', '--quiet', forkCommit])))
+      return forkCommit;
     const stored = branch ? await storedBase(root, branch) : null;
     if (stored && (await tryRun(root, ['rev-parse', '--verify', '--quiet', stored]))) return stored;
     return resolveBaseRef(root);
@@ -331,7 +339,9 @@ function effectiveBaseRef(root) {
 async function rememberBase(root, branch, base) {
   if (!branch || !base) return;
   try {
+    const commit = await tryRun(root, ['rev-parse', '--verify', `${base}^{commit}`]);
     await run(root, ['config', `branch.${branch}.droidcontrolBase`, base]);
+    if (commit) await run(root, ['config', `branch.${branch}.droidcontrolBaseCommit`, commit]);
   } catch {
     // non-fatal: base display simply falls back to the upstream ref
   }
@@ -429,13 +439,22 @@ async function branches(dir) {
 }
 
 async function branchesOf(root) {
-  const current = await tryRun(root, ['rev-parse', '--abbrev-ref', 'HEAD']);
   const sep = '\u0001';
-  const localOut = await tryRun(root, [
-    'for-each-ref',
-    `--format=%(refname:short)${sep}%(upstream:short)${sep}%(upstream:track)${sep}%(HEAD)${sep}%(committerdate:unix)${sep}%(contents:subject)`,
-    'refs/heads',
+  const [current, localOut, remoteOut, mergedOut] = await Promise.all([
+    tryRun(root, ['rev-parse', '--abbrev-ref', 'HEAD']),
+    tryRun(root, [
+      'for-each-ref',
+      `--format=%(refname:short)${sep}%(upstream:short)${sep}%(upstream:track)${sep}%(HEAD)${sep}%(committerdate:unix)${sep}%(contents:subject)`,
+      'refs/heads',
+    ]),
+    tryRun(root, ['for-each-ref', '--format=%(refname:short)', 'refs/remotes']),
+    tryRun(root, ['for-each-ref', '--merged=HEAD', '--format=%(refname:short)', 'refs/heads']),
   ]);
+  const merged = new Set(
+    String(mergedOut || '')
+      .split('\n')
+      .filter(Boolean),
+  );
   const local = String(localOut || '')
     .split('\n')
     .filter(Boolean)
@@ -448,13 +467,9 @@ async function branchesOf(root) {
         current: headMark === '*',
         committerDate: Number.parseInt(date, 10) || 0,
         subject: subject || '',
+        merged: merged.has(name),
       };
     });
-  const remoteOut = await tryRun(root, [
-    'for-each-ref',
-    '--format=%(refname:short)',
-    'refs/remotes',
-  ]);
   const remote = String(remoteOut || '')
     .split('\n')
     // Drop the remote HEAD pointer: refs/remotes/origin/HEAD shortens to either
@@ -906,7 +921,7 @@ async function createWorktree(dir, { branch, base, newBranch = false, location }
   }
 }
 
-async function removeWorktree(dir, { path: target, force = false } = {}) {
+async function removeWorktree(dir, { path: target, force = false, deleteBranch = false } = {}) {
   const root = await repoRootOf(dir);
   if (!root) return { ok: false, reason: 'not_a_repo' };
   if (!target)
@@ -933,7 +948,21 @@ async function removeWorktree(dir, { path: target, force = false } = {}) {
   try {
     await run(root, ['worktree', 'remove', ...(force ? ['--force'] : []), '--', resolvedTarget]);
     invalidateReads(root);
-    return { ok: true };
+    if (!deleteBranch || !match.branch) return { ok: true, branch: match.branch };
+    try {
+      // `-d` is intentionally non-forcing: Git refuses to delete a branch that
+      // is not merged into the main checkout's current branch.
+      await run(root, ['branch', '-d', '--', match.branch]);
+      invalidateReads(root);
+      return { ok: true, branch: match.branch, branchDeleted: true };
+    } catch (err) {
+      return {
+        ok: true,
+        branch: match.branch,
+        branchDeleted: false,
+        message: `Worktree removed, but branch was kept: ${sanitizeGitError(err.message)}`,
+      };
+    }
   } catch (err) {
     return { ok: false, reason: 'git_error', message: sanitizeGitError(err.message) };
   }
@@ -1051,12 +1080,13 @@ const REVIEW_SCOPES = [
 
 // Per-worktree baseline captured at the start of an agent turn so the
 // "Last turn" scope can diff the working tree against that point in time.
-// Keyed by `${root}\u0000${appSessionId}` so two sessions sharing a repo don't
-// clobber each other's baseline.
+// A new session starts under its clientRef, then adopts the entry under its
+// appSessionId once creation succeeds. This keeps concurrent first turns in
+// the same worktree isolated without a shared repo-level fallback.
 const turnBaselines = new Map();
 
-function turnBaselineKey(root, appSessionId) {
-  return `${root}\u0000${appSessionId ?? ''}`;
+function turnBaselineKey(root, ownerId) {
+  return `${root}\u0000${ownerId}`;
 }
 
 function normalizeScope(value) {
@@ -1205,11 +1235,7 @@ async function scopeRange(root, scope, appSessionId) {
     return { args: [base || (hasHead ? 'HEAD' : EMPTY_TREE)], base, includeUntracked: true };
   }
   if (scope === 'last_turn') {
-    // Try the session-scoped baseline first, then fall back to the repo-level
-    // key (used by the first turn of a brand-new session before it has an ID).
-    const entry =
-      turnBaselines.get(turnBaselineKey(root, appSessionId)) ??
-      turnBaselines.get(turnBaselineKey(root, undefined));
+    const entry = appSessionId ? turnBaselines.get(turnBaselineKey(root, appSessionId)) : undefined;
     if (!entry) {
       // No turn baseline for this session (app restarted, session restored
       // from history): approximate with HEAD for tracked work only. Folding
@@ -1336,9 +1362,9 @@ async function fileSignature(root, rel) {
   }
 }
 
-async function markTurnStart(dir, appSessionId) {
+async function markTurnStart(dir, ownerId) {
   const root = await repoRootOf(dir);
-  if (!root) return { ok: false };
+  if (!root || !ownerId) return { ok: false };
   let baseline = await tryRun(root, ['stash', 'create']);
   if (!baseline) baseline = await tryRun(root, ['rev-parse', 'HEAD']);
   // Unborn repo (no commits yet): `stash create` and `rev-parse HEAD` both fail,
@@ -1380,13 +1406,24 @@ async function markTurnStart(dir, appSessionId) {
   );
   const priorUntracked = new Map(priorNames.map((rel, i) => [rel, sigs[i]]));
   if (baseline)
-    setRepoCache(turnBaselines, turnBaselineKey(root, appSessionId), {
+    setRepoCache(turnBaselines, turnBaselineKey(root, ownerId), {
       baseline,
       priorUntracked,
       untrackedTruncated,
       priorUntrackedNames,
     });
   return { ok: !!baseline, baseline: baseline || null };
+}
+
+async function adoptTurnBaseline(dir, clientRef, appSessionId) {
+  const root = await repoRootOf(dir);
+  if (!root || !clientRef || !appSessionId) return { ok: false };
+  const sourceKey = turnBaselineKey(root, clientRef);
+  const entry = turnBaselines.get(sourceKey);
+  if (!entry) return { ok: false };
+  turnBaselines.delete(sourceKey);
+  setRepoCache(turnBaselines, turnBaselineKey(root, appSessionId), entry);
+  return { ok: true };
 }
 
 module.exports = {
@@ -1404,6 +1441,7 @@ module.exports = {
   diffFiles,
   fileDiff,
   markTurnStart,
+  adoptTurnBaseline,
   createBranch,
   checkout,
   createWorktree,

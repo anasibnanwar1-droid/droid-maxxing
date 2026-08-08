@@ -399,9 +399,9 @@ function resumedLocation(
     historical?.workspaceKind === 'none'
       ? ''
       : firstNonEmpty(
+          historical?.cwd,
           stringValue(input.init.cwd),
           stringValue(input.init.session?.cwd),
-          historical?.cwd,
         );
   const title = firstNonEmpty(
     stringValue(input.init.session?.title),
